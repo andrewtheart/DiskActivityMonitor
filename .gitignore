@@ -3,8 +3,9 @@ bin/
 obj/
 publish/
 
-## Installer build artifacts
-installer/Output/
+## Installer build artifacts (keep the compiled Setup EXEs, ignore everything else)
+installer/Output/*
+!installer/Output/*.exe
 installer/publish/
 
 ## IDE / editor

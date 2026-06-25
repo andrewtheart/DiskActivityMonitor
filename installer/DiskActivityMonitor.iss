@@ -6,6 +6,9 @@
 #ifndef AppVersion
   #define AppVersion "1.0.0"
 #endif
+#ifndef AppArch
+  #define AppArch "x64"
+#endif
 
 #define AppName "Disk Activity Monitor"
 #define ServiceName "DiskActivityMonitor"
@@ -23,7 +26,7 @@ DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 OutputDir=Output
-OutputBaseFilename=DiskActivityMonitor-Setup-{#AppVersion}
+OutputBaseFilename=DiskActivityMonitor-Setup-{#AppVersion}-{#AppArch}
 SetupIconFile=..\assets\app.ico
 UninstallDisplayIcon={app}\app.ico
 UninstallDisplayName={#AppName}
@@ -31,8 +34,10 @@ WizardStyle=modern
 Compression=lzma2/max
 SolidCompression=yes
 PrivilegesRequired=admin
+#if AppArch == "x64"
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+#endif
 ; We stop the service / tray ourselves in [Code], so don't let Inno prompt to close apps.
 CloseApplications=no
 

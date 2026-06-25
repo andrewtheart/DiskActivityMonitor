@@ -47,6 +47,20 @@ warns you when a drive or process crosses a threshold you set.
 
 ---
 
+## Download
+
+Self-contained installers (no .NET runtime required on the target machine):
+
+| Architecture | Installer |
+|---|---|
+| **x64** (64-bit Intel/AMD) | [`DiskActivityMonitor-Setup-1.0.0-x64.exe`](installer/Output/DiskActivityMonitor-Setup-1.0.0-x64.exe) |
+| **x86** (32-bit) | [`DiskActivityMonitor-Setup-1.0.0-x86.exe`](installer/Output/DiskActivityMonitor-Setup-1.0.0-x86.exe) |
+
+The installer registers a Windows Service (auto-start), adds a Start Menu shortcut, and
+optionally creates a startup entry so the tray dashboard launches at sign-in.
+
+---
+
 ## Requirements
 
 - Windows 10/11
