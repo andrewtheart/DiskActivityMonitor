@@ -1,0 +1,29 @@
+## .NET build output
+bin/
+obj/
+publish/
+
+## Installer build artifacts
+installer/Output/
+installer/publish/
+
+## IDE / editor
+.vs/
+.idea/
+*.user
+*.suo
+*.sln.docstates
+
+## OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+## Local runtime artifacts
+*.db
+*.db-wal
+*.db-shm
+*.log
+
+## Scratch / analysis files not part of the project
+SNIPPINGTOOL_ANALYSIS.MD

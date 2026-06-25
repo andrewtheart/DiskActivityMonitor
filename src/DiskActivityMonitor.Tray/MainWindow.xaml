@@ -1,0 +1,499 @@
+<Window x:Class="DiskActivityMonitor.Tray.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ctl="clr-namespace:DiskActivityMonitor.Tray.Controls"
+        Title="Disk Activity Monitor" Height="720" Width="940"
+        MinHeight="560" MinWidth="760"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        Background="{StaticResource WindowBg}"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True">
+
+    <!-- WindowChrome gives a frameless window without the 1px white DWM frame line that
+         WindowStyle=None otherwise shows at the top. CaptionHeight=0 leaves dragging to our
+         own handler; ResizeBorderThickness keeps the window resizable. -->
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="0" GlassFrameThickness="0" ResizeBorderThickness="6" CornerRadius="0" />
+    </WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <Style x:Key="DarkTextBox" TargetType="TextBox">
+            <Setter Property="Background" Value="#15181B" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+            <Setter Property="BorderBrush" Value="{StaticResource CardBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="6,4" />
+            <Setter Property="CaretBrush" Value="{StaticResource TextPrimary}" />
+            <Setter Property="Width" Value="90" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+        </Style>
+        <Style x:Key="FieldLabel" TargetType="TextBlock" BasedOn="{StaticResource Caption}">
+            <Setter Property="Margin" Value="0,0,0,3" />
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Custom title bar (the OS title bar is removed); drag anywhere on this strip to move the window -->
+        <Grid Grid.Row="0" Height="30" Background="{StaticResource WindowBg}"
+              MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Button Grid.Column="1" Style="{StaticResource CloseButton}" Height="30" VerticalAlignment="Top"
+                    WindowChrome.IsHitTestVisibleInChrome="True"
+                    Content="&#x2715;" ToolTip="Close" Click="Close_Click" />
+        </Grid>
+
+        <!-- Body -->
+        <Grid Grid.Row="1" Margin="16,2,16,16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- Header -->
+            <Grid Grid.Row="0" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock Text="Disk Activity Monitor" Style="{StaticResource H1}" />
+                <TextBlock x:Name="SubtitleText" Style="{StaticResource Caption}"
+                           Text="Tracking SSD write volume to protect drive endurance" Margin="0,2,0,0" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="Disk" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <ComboBox x:Name="DiskSelector" Width="280" DisplayMemberPath="Display"
+                          SelectionChanged="DiskSelector_SelectionChanged" />
+                <Button Content="Refresh" Style="{StaticResource ToolButton}" Margin="10,0,0,0" Click="Refresh_Click" />
+                <Button x:Name="GearButton" Style="{StaticResource ToolButton}" Margin="8,0,0,0" Click="Gear_Click"
+                        ToolTip="Settings" Padding="6">
+                    <Viewbox Width="16" Height="16">
+                        <Path Fill="{StaticResource TextPrimary}"
+                              Data="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z" />
+                    </Viewbox>
+                </Button>
+            </StackPanel>
+        </Grid>
+
+        <ScrollViewer x:Name="BodyScroller" Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <Grid>
+            <StackPanel x:Name="DashboardPanel">
+
+                <!-- Summary cards -->
+                <Grid Margin="0,0,0,14">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="1.4*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Style="{StaticResource Card}" Grid.Column="0" Margin="0,0,7,0">
+                        <StackPanel>
+                            <TextBlock Text="WRITTEN TODAY" Style="{StaticResource Caption}" />
+                            <TextBlock x:Name="TodayMetric" Style="{StaticResource Metric}" Text="-" Margin="0,4,0,0" />
+                            <TextBlock x:Name="TodayReadSub" Style="{StaticResource Caption}" Text="read -" Margin="0,2,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Card}" Grid.Column="1" Margin="7,0,7,0">
+                        <StackPanel>
+                            <TextBlock Text="LAST 24 HOURS" Style="{StaticResource Caption}" />
+                            <TextBlock x:Name="Day24Metric" Style="{StaticResource Metric}" Text="-" Margin="0,4,0,0" />
+                            <TextBlock x:Name="Day24ReadSub" Style="{StaticResource Caption}" Text="read -" Margin="0,2,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Card}" Grid.Column="2" Margin="7,0,7,0">
+                        <StackPanel>
+                            <TextBlock Text="LAST 7 DAYS" Style="{StaticResource Caption}" />
+                            <TextBlock x:Name="Week7Metric" Style="{StaticResource Metric}" Text="-" Margin="0,4,0,0" />
+                            <TextBlock x:Name="Week7AvgSub" Style="{StaticResource Caption}" Text="avg -/day" Margin="0,2,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Card}" Grid.Column="3" Margin="7,0,0,0">
+                        <StackPanel>
+                            <TextBlock Text="SSD ENDURANCE" Style="{StaticResource Caption}" />
+                            <TextBlock x:Name="WearMetric" Style="{StaticResource Metric}" Text="-" Margin="0,4,0,0" />
+                            <TextBlock x:Name="WearSub" Style="{StaticResource Caption}" TextWrapping="Wrap"
+                                       Text="Projected lifespan at the current write rate." Margin="0,2,0,0" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <!-- SSD endurance detail -->
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <!-- Header: title + rated-TBW badge -->
+                        <Grid>
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="SSD endurance" />
+                                <TextBlock x:Name="EnduranceDiskText" Style="{StaticResource Caption}" Margin="0,2,0,0" Text="" />
+                            </StackPanel>
+                            <Border HorizontalAlignment="Right" VerticalAlignment="Top" Background="#2A2E34"
+                                    CornerRadius="11" Padding="11,4">
+                                <TextBlock x:Name="EnduranceRatedText" Text="750 TBW rated"
+                                           Foreground="{StaticResource TextSecondary}" FontSize="12" />
+                            </Border>
+                        </Grid>
+
+                        <!-- Two headline metrics: lifetime wear (SMART) and projected lifespan -->
+                        <Grid Margin="0,18,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="28" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="DRIVE LIFE USED" Style="{StaticResource Caption}" />
+                                <TextBlock x:Name="SmartWearValue" Style="{StaticResource Metric}" Text="-" Margin="0,4,0,10" />
+                                <Grid Height="8">
+                                    <Border Background="#15181B" CornerRadius="4"
+                                            BorderBrush="{StaticResource CardBorder}" BorderThickness="1" />
+                                    <Grid Margin="1">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition x:Name="SmartWearFillCol" Width="0*" />
+                                            <ColumnDefinition x:Name="SmartWearRestCol" Width="100*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border Grid.Column="0" CornerRadius="4">
+                                            <Border.Background>
+                                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                                    <GradientStop Color="#3FB950" Offset="0" />
+                                                    <GradientStop Color="#E04A4A" Offset="1" />
+                                                </LinearGradientBrush>
+                                            </Border.Background>
+                                        </Border>
+                                    </Grid>
+                                </Grid>
+                                <TextBlock x:Name="SmartWearText" Style="{StaticResource Caption}" TextWrapping="Wrap"
+                                           Margin="0,7,0,0" Text="from the drive's SMART data" />
+                                <TextBlock x:Name="SmartWearLifeText" Foreground="{StaticResource TextPrimary}"
+                                           FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap"
+                                           Margin="0,8,0,0" Text="" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="PROJECTED LIFESPAN" Style="{StaticResource Caption}" />
+                                <TextBlock x:Name="EnduranceProjValue" Style="{StaticResource Metric}" Text="-" Margin="0,4,0,10" />
+                                <TextBlock x:Name="EnduranceProjSub" Style="{StaticResource Caption}" TextWrapping="Wrap"
+                                           Text="at the current write rate" />
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Average write rate -->
+                        <Border Background="#15181B" CornerRadius="8" Padding="14,11" Margin="0,18,0,0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Avg written" VerticalAlignment="Center" Margin="0,0,18,0"
+                                           Foreground="{StaticResource TextSecondary}" />
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock x:Name="EnduranceAvgHour" Style="{StaticResource H2}" Text="-" />
+                                    <TextBlock Text="per hour" Style="{StaticResource Caption}" Margin="0,1,0,0" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock x:Name="EnduranceAvgDay" Style="{StaticResource H2}" Text="-" />
+                                    <TextBlock Text="per day" Style="{StaticResource Caption}" Margin="0,1,0,0" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="3">
+                                    <TextBlock x:Name="EnduranceAvgWeek" Style="{StaticResource H2}" Text="-" />
+                                    <TextBlock Text="per week" Style="{StaticResource Caption}" Margin="0,1,0,0" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <TextBlock x:Name="EnduranceConsumedText" Style="{StaticResource Caption}" TextWrapping="Wrap"
+                                   Opacity="0.75" Margin="0,12,0,0" Text="-" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Trend chart -->
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock x:Name="TrendTitle" Style="{StaticResource H2}" Text="Write volume per hour" />
+                                <TextBlock Style="{StaticResource Caption}" Text="Bars show bytes written to the device in each bucket" Margin="0,2,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <ToggleButton x:Name="Btn24h" Style="{StaticResource ToggleTool}" Content="24h" Click="Range_Click" />
+                                <ToggleButton x:Name="Btn30d" Style="{StaticResource ToggleTool}" Content="30d" Margin="6,0,0,0" Click="Range_Click" />
+                                <ToggleButton x:Name="Btn12w" Style="{StaticResource ToggleTool}" Content="12w" Margin="6,0,0,0" Click="Range_Click" />
+                            </StackPanel>
+                        </Grid>
+                        <ctl:BarChart x:Name="Chart" Height="230" Margin="0,12,0,0" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Processes + Alerts -->
+                <Grid Margin="0,0,0,14">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Style="{StaticResource Card}" Grid.Column="0" Margin="0,0,7,0">
+                        <StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Style="{StaticResource H2}" Text="Top writing processes" VerticalAlignment="Center" />
+                                <ComboBox x:Name="ProcessRangeSelector" Grid.Column="1" Width="150"
+                                          DisplayMemberPath="Label"
+                                          SelectionChanged="ProcessRange_SelectionChanged" />
+                            </Grid>
+                            <TextBlock Style="{StaticResource Caption}" Text="I/O write bytes - a close proxy for disk pressure" Margin="0,2,0,10" />
+                            <ItemsControl x:Name="ProcessList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,3">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="150" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                            <Border Grid.Column="1" Height="14" CornerRadius="3" HorizontalAlignment="Left"
+                                                    Width="{Binding BarWidth}" VerticalAlignment="Center">
+                                                <Border.Background>
+                                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                                        <GradientStop Color="#4FC3F7" Offset="0" />
+                                                        <GradientStop Color="#2979FF" Offset="1" />
+                                                    </LinearGradientBrush>
+                                                </Border.Background>
+                                            </Border>
+                                            <TextBlock Grid.Column="2" Text="{Binding WriteText}" VerticalAlignment="Center"
+                                                       Margin="8,0,0,0" Foreground="{StaticResource TextSecondary}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock x:Name="ProcessEmpty" Style="{StaticResource Caption}"
+                                       Text="No significant process writes recorded yet." Visibility="Collapsed" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Card}" Grid.Column="1" Margin="7,0,0,0">
+                        <StackPanel>
+                            <Grid>
+                                <TextBlock Style="{StaticResource H2}" Text="Recent alerts" VerticalAlignment="Center" />
+                                <TextBlock Style="{StaticResource Caption}" Text="Last hour" VerticalAlignment="Center"
+                                           HorizontalAlignment="Right" Foreground="{StaticResource TextSecondary}" />
+                            </Grid>
+                            <ItemsControl x:Name="AlertList" Margin="0,10,0,0">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="#15181B" CornerRadius="6" Padding="10,7" Margin="0,0,0,7">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="4" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Background="{Binding SeverityBrush}" CornerRadius="2" Margin="0,0,9,0" />
+                                                <StackPanel Grid.Column="1">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Grid.Column="0" Text="{Binding Title}" FontWeight="SemiBold"
+                                                                   TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
+                                                        <TextBlock Grid.Column="1" Text="{Binding TimeText}" VerticalAlignment="Center"
+                                                                   Foreground="{StaticResource TextSecondary}" FontSize="11" />
+                                                    </Grid>
+                                                    <TextBlock Text="{Binding Message}" TextWrapping="Wrap"
+                                                               Foreground="{StaticResource TextSecondary}" FontSize="11.5" Margin="0,2,0,0" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock x:Name="AlertEmpty" Style="{StaticResource Caption}"
+                                       Text="No alerts in the last hour. All monitored drives are within thresholds." />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </StackPanel>
+
+            <StackPanel x:Name="SettingsPanel" Visibility="Collapsed">
+                <!-- Settings page header -->
+                <Grid Margin="0,0,0,14">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="Settings" Style="{StaticResource H1}" />
+                        <TextBlock Style="{StaticResource Caption}" Margin="0,2,0,0"
+                                   Text="Thresholds, auto-suspend rules, and per-drive endurance." />
+                    </StackPanel>
+                    <Button Grid.Column="1" Style="{StaticResource ToolButton}" VerticalAlignment="Center"
+                            Click="Gear_Click" Content="&#x2190;  Dashboard" ToolTip="Back to dashboard" />
+                </Grid>
+
+                <!-- Auto-suspend rules -->
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource H2}" Text="Auto-suspend rules" />
+                        <TextBlock Style="{StaticResource Caption}" Margin="0,2,0,12" TextWrapping="Wrap"
+                                   Text="Suspend a process when it writes more than its limit in a rolling hour. New rules ask for confirmation first; tick Auto to suspend without asking." />
+                        <WrapPanel Margin="0,0,0,10">
+                            <StackPanel Margin="0,0,16,8">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="Add a seen process" />
+                                <StackPanel Orientation="Horizontal">
+                                    <ComboBox x:Name="ProcessPickList" Width="200" />
+                                    <Button Content="Add" Style="{StaticResource ToolButton}" Margin="8,0,0,0" Click="AddSeenRule_Click" />
+                                </StackPanel>
+                            </StackPanel>
+                            <StackPanel Margin="0,0,16,8">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="Or pick an executable on disk" />
+                                <Button Content="Browse for .exe..." Style="{StaticResource ToolButton}" Click="BrowseExe_Click" />
+                            </StackPanel>
+                        </WrapPanel>
+
+                        <ItemsControl x:Name="SuspendRuleList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="#15181B" CornerRadius="6" Padding="10,7" Margin="0,0,0,6">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{Binding ProcessName}" VerticalAlignment="Center"
+                                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding ExecutablePath}" />
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
+                                                <TextBlock Text="limit" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                                <TextBox Text="{Binding ThresholdText, Mode=TwoWay}" Width="56" Style="{StaticResource DarkTextBox}" />
+                                                <TextBlock Text="GB/h" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" Margin="6,0,0,0" />
+                                            </StackPanel>
+                                            <CheckBox Grid.Column="2" Content="Auto (skip prompt)" IsChecked="{Binding IsAuto, Mode=TwoWay}"
+                                                      Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" Margin="16,0,0,0" />
+                                            <CheckBox Grid.Column="3" Content="Enabled" IsChecked="{Binding Enabled, Mode=TwoWay}"
+                                                      Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" Margin="16,0,0,0" />
+                                            <Button Grid.Column="4" Style="{StaticResource DismissButton}" Content="&#x2715;"
+                                                    ToolTip="Remove this rule" VerticalAlignment="Center" Margin="12,0,0,0" Click="RemoveRule_Click" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock x:Name="SuspendRuleEmpty" Style="{StaticResource Caption}" Text="No auto-suspend rules yet." />
+
+                        <TextBlock x:Name="SuspendedHeader" Style="{StaticResource FieldLabel}" Text="Currently suspended"
+                                   Margin="0,14,0,4" Visibility="Collapsed" />
+                        <ItemsControl x:Name="SuspendedList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="#15181B" CornerRadius="6" Padding="10,6" Margin="0,0,0,6">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Display}" />
+                                            <Button Grid.Column="1" Content="Resume" Style="{StaticResource ToolButton}" Click="ResumeProc_Click" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                            <Button Content="Save rules" Style="{StaticResource ToolButton}" Click="SaveRules_Click" />
+                            <TextBlock x:Name="SuspendStatus" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="12,0,0,0" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- Settings -->
+                <Border Style="{StaticResource Card}" Margin="0,0,0,4">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource H2}" Text="Settings &amp; thresholds" />
+                        <TextBlock Style="{StaticResource Caption}" Margin="0,2,0,12"
+                                   Text="Thresholds are in GB. Alerts fire when rolling-window writes exceed them." />
+                        <WrapPanel>
+                            <StackPanel Margin="0,0,24,12">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="SSD warn / hour (GB)" />
+                                <TextBox x:Name="TxtWarnHour" Style="{StaticResource DarkTextBox}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,24,12">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="SSD warn / day (GB)" />
+                                <TextBox x:Name="TxtWarnDay" Style="{StaticResource DarkTextBox}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,24,12">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="SSD critical / day (GB)" />
+                                <TextBox x:Name="TxtCritDay" Style="{StaticResource DarkTextBox}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,24,12">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="Process warn / hour (GB)" />
+                                <TextBox x:Name="TxtProcHour" Style="{StaticResource DarkTextBox}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,24,12">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="All processes warn / hour (GB)" />
+                                <TextBox x:Name="TxtAllProcHour" Style="{StaticResource DarkTextBox}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,24,12">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="Alert cooldown (min)" />
+                                <TextBox x:Name="TxtCooldown" Style="{StaticResource DarkTextBox}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,24,12">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="Sample interval (s)" />
+                                <TextBox x:Name="TxtInterval" Style="{StaticResource DarkTextBox}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,24,12">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="Dashboard refresh (s)" />
+                                <TextBox x:Name="TxtRefresh" Style="{StaticResource DarkTextBox}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,24,12">
+                                <TextBlock x:Name="TbwLabel" Style="{StaticResource FieldLabel}" Text="TBW rating for this disk (TB)" />
+                                <TextBox x:Name="TxtTbw" Style="{StaticResource DarkTextBox}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,24,12">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="Upper TBW (optional)" />
+                                <TextBox x:Name="TxtTbwUpper" Style="{StaticResource DarkTextBox}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,24,12">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="Endurance warn (years left)" />
+                                <TextBox x:Name="TxtEnduranceWarnYears" Style="{StaticResource DarkTextBox}" />
+                            </StackPanel>
+                        </WrapPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                            <CheckBox x:Name="ChkNotify" Content="Show desktop notifications" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" />
+                            <Button Content="Save settings" Style="{StaticResource ToolButton}" Margin="20,0,0,0" Click="Save_Click" />
+                            <TextBlock x:Name="SaveStatus" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="12,0,0,0" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+            </Grid>
+        </ScrollViewer>
+        </Grid>
+    </Grid>
+</Window>

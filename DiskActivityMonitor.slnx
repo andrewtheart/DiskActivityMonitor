@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DiskActivityMonitor.Core/DiskActivityMonitor.Core.csproj" />
+    <Project Path="src/DiskActivityMonitor.Service/DiskActivityMonitor.Service.csproj" />
+    <Project Path="src/DiskActivityMonitor.Tray/DiskActivityMonitor.Tray.csproj" />
+    <Project Path="src/DiskActivityMonitor.Cli/DiskActivityMonitor.Cli.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DiskActivityMonitor.Tests/DiskActivityMonitor.Tests.csproj" />
+  </Folder>
+</Solution>
