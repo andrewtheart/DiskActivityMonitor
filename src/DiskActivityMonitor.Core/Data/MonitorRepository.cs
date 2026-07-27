@@ -307,6 +307,28 @@ public sealed class MonitorRepository
         return (r.GetInt64(0), r.GetInt64(1));
     }
 
+    /// <summary>
+    /// Per-minute total I/O (read + write bytes) for a disk over a period. One entry per recorded
+    /// minute; minutes with no activity are simply absent (callers treat them as zero).
+    /// </summary>
+    public List<long> GetDiskMinuteTotals(string diskId, DateTime fromUtc, DateTime toUtc)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT read_bytes + write_bytes
+            FROM disk_minute
+            WHERE disk_id = $id AND ts_min >= $from AND ts_min < $to;
+            """;
+        cmd.Parameters.AddWithValue("$id", diskId);
+        cmd.Parameters.AddWithValue("$from", ToUnix(fromUtc));
+        cmd.Parameters.AddWithValue("$to", ToUnix(toUtc));
+        var list = new List<long>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) list.Add(r.GetInt64(0));
+        return list;
+    }
+
     /// <summary>Earliest minute recorded for a disk (used to scope "since monitoring began").</summary>
     public DateTime? GetEarliestSample(string diskId)
     {

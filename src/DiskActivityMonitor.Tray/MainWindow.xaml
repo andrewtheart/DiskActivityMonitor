@@ -263,6 +263,54 @@
                     </StackPanel>
                 </Border>
 
+                <!-- Throughput (MB/s): average / median / peak over a period -->
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="Disk throughput (MB/s)" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,2,0,0"
+                                           Text="Average, median and busiest-minute I/O rate over the selected period" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <ToggleButton x:Name="TpBtn1h" Style="{StaticResource ToggleTool}" Content="1h" Click="ThroughputRange_Click" />
+                                <ToggleButton x:Name="TpBtn24h" Style="{StaticResource ToggleTool}" Content="24h" Margin="6,0,0,0" Click="ThroughputRange_Click" />
+                                <ToggleButton x:Name="TpBtn7d" Style="{StaticResource ToggleTool}" Content="7d" Margin="6,0,0,0" Click="ThroughputRange_Click" />
+                                <ToggleButton x:Name="TpBtn30d" Style="{StaticResource ToggleTool}" Content="30d" Margin="6,0,0,0" Click="ThroughputRange_Click" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid Margin="0,16,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="AVERAGE" Style="{StaticResource Caption}" />
+                                <TextBlock x:Name="ThroughputAvg" Style="{StaticResource Metric}" Text="-" Margin="0,4,0,0" />
+                                <TextBlock Text="MB/s" Style="{StaticResource Caption}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="MEDIAN" Style="{StaticResource Caption}" />
+                                <TextBlock x:Name="ThroughputMedian" Style="{StaticResource Metric}" Text="-" Margin="0,4,0,0" />
+                                <TextBlock Text="MB/s" Style="{StaticResource Caption}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="PEAK" Style="{StaticResource Caption}" />
+                                <TextBlock x:Name="ThroughputPeak" Style="{StaticResource Metric}" Text="-" Margin="0,4,0,0" />
+                                <TextBlock Text="MB/s &#183; busiest minute" Style="{StaticResource Caption}" />
+                            </StackPanel>
+                        </Grid>
+
+                        <ctl:BarChart x:Name="ThroughputChart" Height="150" Margin="0,16,0,0" />
+                    </StackPanel>
+                </Border>
+
                 <!-- Processes + Alerts -->
                 <Grid Margin="0,0,0,14">
                     <Grid.ColumnDefinitions>

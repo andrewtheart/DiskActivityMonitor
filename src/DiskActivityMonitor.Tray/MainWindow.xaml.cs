@@ -62,6 +62,7 @@ public partial class MainWindow : Window
     };
 
     private TimeSpan _processWindow = TimeSpan.FromHours(24);
+    private TimeSpan _throughputWindow = TimeSpan.FromHours(24);
 
     /// <summary>Editable view-model for one auto-suspend rule row.</summary>
     private sealed class SuspendRuleVm
@@ -91,6 +92,7 @@ public partial class MainWindow : Window
         Icon = TrayIconFactory.CreateImageSource(TrayIconFactory.Ok);
 
         Btn24h.IsChecked = true;
+        TpBtn24h.IsChecked = true;
         ProcessRangeSelector.ItemsSource = ProcessRanges;
         ProcessRangeSelector.SelectedItem = ProcessRanges.First(r => r.Span == _processWindow);
         SuspendRuleList.ItemsSource = _suspendRules;
@@ -186,10 +188,57 @@ public partial class MainWindow : Window
 
         UpdateSummary(disk);
         UpdateChart(disk);
+        UpdateThroughput(disk);
         UpdateProcesses();
         UpdateAlerts();
         RefreshSuspended();
     }
+
+    // ----------------------------------------------------------- Throughput (MB/s) stats
+
+    private void ThroughputRange_Click(object sender, RoutedEventArgs e)
+    {
+        _throughputWindow =
+            sender == TpBtn1h ? TimeSpan.FromHours(1) :
+            sender == TpBtn7d ? TimeSpan.FromDays(7) :
+            sender == TpBtn30d ? TimeSpan.FromDays(30) :
+            TimeSpan.FromHours(24);
+        TpBtn1h.IsChecked = sender == TpBtn1h;
+        TpBtn24h.IsChecked = sender == TpBtn24h;
+        TpBtn7d.IsChecked = sender == TpBtn7d;
+        TpBtn30d.IsChecked = sender == TpBtn30d;
+        var disk = SelectedDisk;
+        if (disk is not null) UpdateThroughput(disk);
+    }
+
+    /// <summary>Computes and renders average / median / peak I/O throughput (MB/s) for the selected window.</summary>
+    private void UpdateThroughput(DiskInfo disk)
+    {
+        var nowUtc = DateTime.UtcNow;
+        var perMinute = _repo.GetDiskMinuteTotals(disk.DiskId, nowUtc - _throughputWindow, nowUtc);
+        int totalMinutes = (int)Math.Round(_throughputWindow.TotalMinutes);
+        var stats = ThroughputStats.Compute(perMinute, totalMinutes);
+
+        ThroughputAvg.Text = FormatMbps(stats.AverageMbps);
+        ThroughputMedian.Text = FormatMbps(stats.MedianMbps);
+        ThroughputPeak.Text = FormatMbps(stats.PeakMbps);
+
+        var bars = new List<ChartBar>
+        {
+            new("Average", stats.AverageMbps),
+            new("Median", stats.MedianMbps),
+            new("Peak", stats.PeakMbps, Highlight: true),
+        };
+        ThroughputChart.SetData(bars, v => $"{FormatMbps(v)} MB/s");
+    }
+
+    private static string FormatMbps(double mbps) => mbps switch
+    {
+        >= 100 => mbps.ToString("0"),
+        >= 10 => mbps.ToString("0.#"),
+        > 0 => mbps.ToString("0.##"),
+        _ => "0",
+    };
 
     private void UpdateSummary(DiskInfo disk)
     {
