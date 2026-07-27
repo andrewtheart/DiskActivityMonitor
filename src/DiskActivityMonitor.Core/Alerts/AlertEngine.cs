@@ -120,9 +120,9 @@ public sealed class AlertEngine
                 value: p.WriteBytes,
                 thresholdBytes: procThreshold,
                 severity: AlertSeverity.Warning,
-                title: $"Process '{p.ProcessName}' is writing heavily",
+                title: $"Process '{p.ProcessName}' is requesting heavy file writes",
                 buildMessage: (v, t) =>
-                    $"{p.ProcessName} I/O writes \u2014 {FormatBreakdown(nowUtc, (f, to) => _repo.GetProcessWrite(p.ProcessName, f, to))} (threshold {ByteFormat.Humanize(t)}/h).");
+                    $"{p.ProcessName} logical file-write requests \u2014 {FormatBreakdown(nowUtc, (f, to) => _repo.GetProcessWrite(p.ProcessName, f, to))} (threshold {ByteFormat.Humanize(t)}/h). Physical disk writes may be lower.");
         }
 
         // Combined: all processes together in the last hour.
@@ -132,9 +132,9 @@ public sealed class AlertEngine
             value: allHourWrite,
             thresholdBytes: cfg.AllProcessesWarnGbPerHour * ByteFormat.GiB,
             severity: AlertSeverity.Warning,
-            title: "All processes combined are writing heavily",
+            title: "All processes combined are requesting heavy file writes",
             buildMessage: (v, t) =>
-                $"All processes combined I/O writes \u2014 {FormatBreakdown(nowUtc, (f, to) => _repo.GetAllProcessesWrite(f, to))} (threshold {ByteFormat.Humanize(t)}/h).");
+                $"All processes combined logical file-write requests \u2014 {FormatBreakdown(nowUtc, (f, to) => _repo.GetAllProcessesWrite(f, to))} (threshold {ByteFormat.Humanize(t)}/h). Physical disk writes may be lower.");
 
         return raised;
     }

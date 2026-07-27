@@ -325,12 +325,14 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource H2}" Text="Top writing processes" VerticalAlignment="Center" />
+                                <TextBlock Style="{StaticResource H2}" Text="Top application write requests" VerticalAlignment="Center" />
                                 <ComboBox x:Name="ProcessRangeSelector" Grid.Column="1" Width="150"
                                           DisplayMemberPath="Label"
                                           SelectionChanged="ProcessRange_SelectionChanged" />
                             </Grid>
-                            <TextBlock Style="{StaticResource Caption}" Text="I/O write bytes - a close proxy for disk pressure" Margin="0,2,0,10" />
+                            <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
+                                       Text="Logical file-write bytes requested by each process - useful for finding culprits, but not physical disk writes or SSD wear. svchost shows its hosted service when known."
+                                       Margin="0,2,0,10" />
                             <ItemsControl x:Name="ProcessList">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
@@ -340,7 +342,8 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding Name}" ToolTip="{Binding Name}"
+                                                       TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
                                             <Border Grid.Column="1" Height="14" CornerRadius="3" HorizontalAlignment="Left"
                                                     Width="{Binding BarWidth}" VerticalAlignment="Center">
                                                 <Border.Background>

@@ -198,13 +198,14 @@ internal static class CliRunner
         var nowUtc = DateTime.UtcNow;
         var procs = repo.GetTopProcesses(nowUtc.AddMinutes(-minutes), nowUtc, count);
 
-        Out.Header($"Top {count} processes by writes — last {minutes} min");
+        Out.Header($"Top {count} processes by logical file-write requests — last {minutes} min");
+        Out.Dim("Application-requested file I/O; physical disk writes and SSD wear may be lower.");
         if (procs.Count == 0) { Out.Dim("No process activity recorded in this window."); return 0; }
         var rows = procs.Select(p => (IReadOnlyList<string>)new[]
         {
             p.ProcessName, ByteFormat.Humanize(p.WriteBytes), ByteFormat.Humanize(p.ReadBytes),
         }).ToList();
-        Out.Table(new[] { "Process", "Written", "Read" }, rows, new[] { false, true, true });
+        Out.Table(new[] { "Process / service", "Logical writes", "Logical reads" }, rows, new[] { false, true, true });
         return 0;
     }
 
@@ -216,12 +217,13 @@ internal static class CliRunner
         var end = MinuteFloorUtc(DateTime.UtcNow);
         (string Label, int Minutes)[] windows = { ("1m", 1), ("5m", 5), ("15m", 15), ("30m", 30), ("1h", 60), ("24h", 1440) };
 
-        Out.Header($"'{name}' — writes by window");
+        Out.Header($"'{name}' — logical file-write requests by window");
+        Out.Dim("Application-requested file I/O; physical disk writes and SSD wear may be lower.");
         var rows = windows.Select(w => (IReadOnlyList<string>)new[]
         {
             w.Label, ByteFormat.Humanize(repo.GetProcessWrite(name, end.AddMinutes(-w.Minutes), end)),
         }).ToList();
-        Out.Table(new[] { "Window", "Written" }, rows, new[] { false, true });
+        Out.Table(new[] { "Window", "Logical writes" }, rows, new[] { false, true });
         return 0;
     }
 

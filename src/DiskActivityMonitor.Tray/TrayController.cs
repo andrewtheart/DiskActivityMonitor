@@ -223,8 +223,8 @@ internal sealed class TrayController : IDisposable
         try
         {
             new ToastContentBuilder()
-                .AddText($"{rule.ProcessName} is writing heavily")
-                .AddText($"{rule.ProcessName} has written {ByteFormat.Humanize(written)} in the last hour (limit {rule.ThresholdGbPerHour:0.#} GB/h). Suspend it to stop further disk writes?")
+                .AddText($"{rule.ProcessName} is requesting heavy file writes")
+                .AddText($"{rule.ProcessName} requested {ByteFormat.Humanize(written)} of logical file writes in the last hour (limit {rule.ThresholdGbPerHour:0.#} GB/h). Physical disk writes may be lower. Suspend it?")
                 .SetToastDuration(ToastDuration.Long)
                 .AddButton(new ToastButton()
                     .SetContent("Suspend now")
@@ -240,8 +240,8 @@ internal sealed class TrayController : IDisposable
         {
             LogToastError($"suspend-confirm:{rule.ProcessName}", ex);
             if (!_notifyIcon.Visible) _notifyIcon.Visible = true;
-            _notifyIcon.ShowBalloonTip(8000, $"{rule.ProcessName} writing heavily",
-                $"Wrote {ByteFormat.Humanize(written)} in the last hour. Open the dashboard to suspend it.", ToolTipIcon.Warning);
+            _notifyIcon.ShowBalloonTip(8000, $"{rule.ProcessName} requesting heavy file writes",
+                $"Requested {ByteFormat.Humanize(written)} of logical file writes in the last hour. Open the dashboard to suspend it.", ToolTipIcon.Warning);
         }
     }
 
@@ -249,7 +249,7 @@ internal sealed class TrayController : IDisposable
     private void ShowAutoSuspendedToast(AutoSuspendRule rule, long written, ProcessControl.Result result)
     {
         string body = result.Affected > 0
-            ? $"{rule.ProcessName} was suspended after writing {ByteFormat.Humanize(written)} in the last hour (limit {rule.ThresholdGbPerHour:0.#} GB/h)."
+            ? $"{rule.ProcessName} was suspended after requesting {ByteFormat.Humanize(written)} of logical file writes in the last hour (limit {rule.ThresholdGbPerHour:0.#} GB/h)."
             : result.AccessDenied
                 ? $"{rule.ProcessName} exceeded its write limit but could not be suspended (access denied - it may require elevation)."
                 : $"{rule.ProcessName} exceeded its write limit but is no longer running.";

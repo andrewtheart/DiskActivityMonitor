@@ -17,9 +17,9 @@ public sealed class DiskSample
 }
 
 /// <summary>
-/// Per-process I/O byte totals over one minute bucket. Used to attribute disk pressure
-/// to the noisiest processes. Note: Windows I/O counters include file, pipe and device
-/// I/O, so this is a close proxy for - but not identical to - physical disk writes.
+/// Per-process logical I/O byte totals over one minute bucket. Used to identify software that
+/// generates file-write pressure. These are application-requested bytes above the cache/storage
+/// stack, not physical-disk bytes; the fallback reader additionally includes pipe/device I/O.
 /// </summary>
 public sealed class ProcessIoSample
 {

@@ -118,8 +118,10 @@ folder if you also want to discard the data.
 - **Summary cards**: written today, last 24h, last 7 days, and an endurance/projection card.
 - **Trend chart**: toggle **24h / 30d / 12w**. Bars are bytes written to the device in each
   bucket; the current bucket is highlighted.
-- **Top writing processes**: I/O write bytes over the last 24h (a close upper-bound proxy for
-  disk writes).
+- **Top application write requests**: logical file-write bytes requested by each process over
+  the selected window. This identifies software generating write pressure, but is not a physical
+  SSD-wear figure. Service-host processes are labeled with the hosted service when known (for
+  example, `svchost (SDRSVC: Windows Backup)`).
 - **Recent alerts**: a rolling one-hour log of fired alerts that auto-age out. The tray icon
   color resets to green when no alerts remain in the window.
 - **Settings**: thresholds (in GB), sample interval, desktop notifications, and the selected
@@ -203,8 +205,9 @@ flowchart LR
   integrated over each sampling interval. These reflect bytes that actually reached the
   device, which is what matters for SSD wear.
 - **Per-process** numbers come from the Windows kernel ETW `FileIO` provider: the byte size of
-  every file read/write is attributed to the process that issued it, aggregated by process
-  name. Because only genuine file-system writes raise these events, named-pipe, device-ioctl
+  every logical file read/write request is attributed to the process that issued it, aggregated
+  by process/service name. `svchost` PIDs are resolved to their hosted Windows service(s) when
+  known. Because only genuine file-system writes raise these events, named-pipe, device-ioctl
   and other non-disk I/O are excluded — so a process stuck in an IPC/UI loop no longer shows up
   as a heavy disk writer. The ETW session needs elevation; the collector runs as LocalSystem.
   When ETW is unavailable (e.g. run un-elevated during development) it falls back to cumulative
@@ -214,11 +217,13 @@ flowchart LR
 
 ### Accuracy notes
 
-- Per-process numbers are *file* write bytes (logical writes into the cache), attributed via
-  ETW. They exclude non-disk I/O but can still differ from physical SSD writes, since the
-  cache manager coalesces and defers the actual device writes. The per-disk physical totals
-  remain the authoritative figure for endurance. (Under the un-elevated fallback reader,
-  per-process numbers over-count further because they also include pipe/device I/O.)
+- Per-process numbers are *logical file-write requests*: bytes an application asked Windows to
+  write above the cache/storage stack. Windows may cache, coalesce, overwrite or eliminate some
+  requests before they become physical I/O, and the requests may target several disks. Therefore
+  these numbers identify the software creating pressure but can be higher than actual device
+  writes. The per-disk physical totals remain authoritative for SSD endurance. (Under the
+  un-elevated fallback reader, per-process numbers over-count further because they also include
+  pipe/device I/O.)
 - TBW projections assume your current average write rate continues; they are estimates, not
   guarantees, and only count writes observed since monitoring started.
 - Reading some processes owned by other accounts requires the collector to run with

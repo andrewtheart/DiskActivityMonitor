@@ -15,6 +15,8 @@ namespace DiskActivityMonitor.Service;
 /// file-system writes, so named-pipe, device-ioctl, console and other non-disk I/O (which
 /// inflate the Win32 GetProcessIoCounters transfer counts) are excluded. Pipe/mailslot
 /// pseudo-file writes are filtered out by name as a second line of defence.
+/// These are still logical file-I/O requests above the cache/storage stack, not physical device
+/// writes. Windows may coalesce, defer or eliminate some requests before they reach a disk.
 ///
 /// Requires the process to run elevated (the Windows Service runs as LocalSystem). When a
 /// session cannot be started, <see cref="TryStart"/> returns <c>null</c> and the collector
@@ -26,10 +28,11 @@ public sealed class EtwProcessIoReader : IProcessIoReader
 
     private readonly TraceEventSession _session;
     private readonly Thread _pumpThread;
+    private readonly ServiceHostNameResolver _serviceNames = new();
     private readonly object _gate = new();
     private Dictionary<string, (long Read, long Write)> _accum = new(StringComparer.OrdinalIgnoreCase);
 
-    public string Description => "ETW kernel file-write events (real per-process file I/O, excludes pipe/device I/O)";
+    public string Description => "ETW logical file-I/O requests (per process/service; excludes pipe/device I/O)";
 
     private EtwProcessIoReader(TraceEventSession session)
     {
@@ -85,6 +88,8 @@ public sealed class EtwProcessIoReader : IProcessIoReader
 
             if (!IsRealFileTarget(data.FileName)) return;
 
+            name = _serviceNames.Resolve(name, data.ProcessID);
+
             lock (_gate)
             {
                 _accum.TryGetValue(name, out var cur);
@@ -127,5 +132,6 @@ public sealed class EtwProcessIoReader : IProcessIoReader
         try { _session.Dispose(); } catch { /* best effort */ }
         try { if (!_pumpThread.Join(TimeSpan.FromSeconds(2))) { /* daemon thread, let it die with the process */ } }
         catch { /* ignore */ }
+        _serviceNames.Dispose();
     }
 }

@@ -15,10 +15,12 @@ namespace DiskActivityMonitor.Core.Collection;
 /// </summary>
 public sealed class ProcessIoReader : IProcessIoReader
 {
+    private readonly ServiceHostNameResolver _serviceNames = new();
+
     public string Description => "Win32 process I/O counters (upper bound: file + pipe + device I/O)";
 
-    /// <summary>No unmanaged session to release; present to satisfy <see cref="IProcessIoReader"/>.</summary>
-    public void Dispose() { }
+    /// <summary>Stops the background Windows-service name map refresh.</summary>
+    public void Dispose() => _serviceNames.Dispose();
 
     [StructLayout(LayoutKind.Sequential)]
     private struct IO_COUNTERS
@@ -62,6 +64,8 @@ public sealed class ProcessIoReader : IProcessIoReader
             string name;
             try { name = proc.ProcessName; }
             catch { proc.Dispose(); continue; }
+
+            name = _serviceNames.Resolve(name, pid);
 
             seen.Add(pid);
 

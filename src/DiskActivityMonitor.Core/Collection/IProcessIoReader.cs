@@ -4,7 +4,8 @@ namespace DiskActivityMonitor.Core.Collection;
 /// Supplies per-process byte deltas (read/write) aggregated by process name since the
 /// previous call. Implementations differ in accuracy: the API-counter reader returns an
 /// upper bound that mixes file/pipe/device I/O, while the ETW reader attributes real file
-/// writes to the originating process.
+/// write requests to the originating process. Neither figure is a physical-disk byte count:
+/// Windows may coalesce, cache or eliminate logical requests before they reach a device.
 /// </summary>
 public interface IProcessIoReader : IDisposable
 {
