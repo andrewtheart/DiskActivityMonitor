@@ -82,6 +82,21 @@ public sealed class AppConfig
     /// <summary>Show Windows balloon notifications from the tray app when alerts fire.</summary>
     public bool EnableNotifications { get; set; } = true;
 
+    /// <summary>
+    /// Enable the startup web lookup that searches the web for a drive's rated TBW endurance via a
+    /// local Foundry Local model. Degrades to a no-op when Foundry Local or a search key is missing.
+    /// </summary>
+    public bool EnableTbwWebLookup { get; set; } = true;
+
+    /// <summary>Web search backend for the TBW lookup: "google" (Custom Search JSON API) or "serper" (serper.dev).</summary>
+    public string WebSearchProvider { get; set; } = "google";
+
+    /// <summary>
+    /// Optional Foundry Local model alias/id override for the TBW lookup. Null = auto-select the best
+    /// tool-calling model for the detected hardware (GPU/NPU/CPU).
+    /// </summary>
+    public string? TbwLookupModel { get; set; }
+
     /// <summary>Returns the effective TBW rating for a disk: its per-disk override, else the default.</summary>
     public double EffectiveTbw(string diskId)
         => DiskTbwRatings.TryGetValue(diskId, out var t) && t > 0 ? t : DefaultSsdTbw;

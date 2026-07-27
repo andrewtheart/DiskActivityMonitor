@@ -1,10 +1,12 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Globalization;
+using System.Net.Http;
 using System.Windows;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using DiskActivityMonitor.Core;
+using DiskActivityMonitor.Core.Ai;
 using DiskActivityMonitor.Core.Collection;
 using DiskActivityMonitor.Core.Configuration;
 using DiskActivityMonitor.Core.Data;
@@ -20,6 +22,11 @@ public partial class MainWindow : Window
     private readonly ConfigStore _config;
     private readonly DispatcherTimer _refreshTimer;
     private bool _forceClose;
+
+    // Rated-TBW web lookup (on-device Foundry Local model + web search).
+    private static readonly HttpClient TbwHttp = new() { Timeout = TimeSpan.FromMinutes(5) };
+    private TbwLookupService? _tbwLookup;
+    private CancellationTokenSource? _tbwCts;
 
     private enum RangeKind { H24, D30, W12 }
     private RangeKind _range = RangeKind.H24;
@@ -439,6 +446,15 @@ public partial class MainWindow : Window
         TxtRefresh.Text = cfg.DashboardRefreshSeconds.ToString(CultureInfo.InvariantCulture);
         TxtEnduranceWarnYears.Text = cfg.TbwProjectionWarnYears.ToString(CultureInfo.InvariantCulture);
         ChkNotify.IsChecked = cfg.EnableNotifications;
+
+        // Web TBW lookup settings.
+        ChkTbwLookup.IsChecked = cfg.EnableTbwWebLookup;
+        SelectProviderItem(cfg.WebSearchProvider);
+        var secrets = AiSecretsStore.Load();
+        TxtGoogleKey.Text = secrets.GoogleApiKey ?? "";
+        TxtGoogleCx.Text = secrets.GoogleCseId ?? "";
+        TxtSerperKey.Text = secrets.SerperApiKey ?? "";
+
         LoadTbwField();
     }
 
@@ -452,6 +468,17 @@ public partial class MainWindow : Window
         var upper = _config.Current.EffectiveTbwUpper(disk.DiskId);
         TxtTbwUpper.Text = upper.HasValue ? upper.Value.ToString(CultureInfo.InvariantCulture) : "";
     }
+
+    private void SelectProviderItem(string provider)
+    {
+        foreach (var obj in TbwProviderSelector.Items)
+            if (obj is System.Windows.Controls.ComboBoxItem item &&
+                string.Equals(item.Content?.ToString(), provider, StringComparison.OrdinalIgnoreCase))
+            { TbwProviderSelector.SelectedItem = item; return; }
+        TbwProviderSelector.SelectedIndex = 0;
+    }
+
+    private static string? NullIfBlank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
 
     private void Save_Click(object sender, RoutedEventArgs e)
     {
@@ -488,6 +515,18 @@ public partial class MainWindow : Window
             else
                 cfg.DiskTbwRatingsUpper.Remove(disk.DiskId);
         }
+
+        // Web TBW lookup: feature toggle + backend to config, API keys to the per-user secrets store.
+        cfg.EnableTbwWebLookup = ChkTbwLookup.IsChecked == true;
+        if ((TbwProviderSelector.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString() is string prov && prov.Length > 0)
+            cfg.WebSearchProvider = prov;
+        AiSecretsStore.Save(new AiSecrets
+        {
+            GoogleApiKey = NullIfBlank(TxtGoogleKey.Text),
+            GoogleCseId = NullIfBlank(TxtGoogleCx.Text),
+            SerperApiKey = NullIfBlank(TxtSerperKey.Text),
+        });
+        _tbwLookup = null; // recreate with the new backend/keys on the next lookup
 
         _config.Save(cfg);
         SaveStatus.Text = "Saved \u2713";
@@ -632,10 +671,183 @@ public partial class MainWindow : Window
         BodyScroller.ScrollToTop();
     }
 
+    // ----------------------------------------------------------- Rated-TBW web lookup
+
+    private TbwLookupService TbwLookup => _tbwLookup ??= new TbwLookupService(_config.Current, TbwHttp);
+
+    /// <summary>
+    /// Kicks off (or cancels) a web lookup of the selected SSD's rated TBW. Runs only for SSDs with no
+    /// confirmed per-disk TBW yet; cached results render instantly (once per drive model, then cached).
+    /// </summary>
+    private async void MaybeStartTbwLookup(DiskInfo? disk)
+    {
+        _tbwCts?.Cancel();
+        if (disk is null || !disk.IsSsd) { TbwLookupPanel.Visibility = Visibility.Collapsed; return; }
+
+        var cfg = _config.Current;
+        if (!cfg.EnableTbwWebLookup || cfg.DiskTbwRatings.ContainsKey(disk.DiskId))
+        { TbwLookupPanel.Visibility = Visibility.Collapsed; return; }
+
+        string model = (disk.FriendlyName ?? "").Trim();
+        if (model.Length == 0 || model.Contains("virtual", StringComparison.OrdinalIgnoreCase))
+        { TbwLookupPanel.Visibility = Visibility.Collapsed; return; }
+
+        TbwLookupPanel.Visibility = Visibility.Visible;
+        TbwCandidateList.Children.Clear();
+        TbwLookupAction.Visibility = Visibility.Collapsed;
+
+        if (TbwLookupCache.TryGet(model, out var cachedResult) && cachedResult is not null)
+        { RenderTbwResult(disk, cachedResult); return; }
+
+        _tbwCts = new CancellationTokenSource();
+        var ct = _tbwCts.Token;
+        TbwLookupStatus.Text = $"Preparing on-device model to look up \u201C{model}\u201D endurance\u2026";
+
+        try
+        {
+            var svc = TbwLookup;
+            var readiness = await svc.GetReadinessAsync(ct);
+            if (ct.IsCancellationRequested) return;
+
+            if (!readiness.CanRun)
+            {
+                if (readiness.NeedsModelDownload)
+                {
+                    TbwLookupStatus.Text = readiness.HasUsableGpu
+                        ? $"A GPU was detected. Download the on-device AI model ({readiness.DownloadAlias}) to search the web for this drive's TBW rating."
+                        : $"Download the on-device AI model ({readiness.DownloadAlias}) to enable the web TBW lookup (CPU-only \u2014 may be slow).";
+                    TbwLookupAction.Content = "Download model";
+                    TbwLookupAction.Tag = "download";
+                    TbwLookupAction.Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    TbwLookupStatus.Text = readiness.Reason ?? "Web TBW lookup is unavailable.";
+                }
+                return;
+            }
+
+            var progress = new Progress<TbwLookupProgress>(p =>
+            {
+                TbwLookupStatus.Text = p.Stage switch
+                {
+                    TbwLookupStage.Searching => $"Searching the web for \u201C{model}\u201D endurance (TBW) rating\u2026",
+                    TbwLookupStage.Analyzing => "Reading the results with the on-device model\u2026",
+                    _ => TbwLookupStatus.Text,
+                };
+            });
+
+            var result = await svc.LookupAsync(model, force: false, progress, ct);
+            if (ct.IsCancellationRequested) return;
+            RenderTbwResult(disk, result);
+        }
+        catch (OperationCanceledException) { /* superseded by a newer selection */ }
+        catch (Exception ex) { TbwLookupStatus.Text = $"Lookup failed: {ex.Message}"; }
+    }
+
+    /// <summary>Renders the candidate TBW values with confidence scores and per-value Apply buttons.</summary>
+    private void RenderTbwResult(DiskInfo disk, TbwLookupResult result)
+    {
+        TbwCandidateList.Children.Clear();
+        TbwLookupAction.Visibility = Visibility.Collapsed;
+        if (!result.HasCandidates)
+        {
+            TbwLookupStatus.Text = result.Note ?? "No TBW rating was found on the web for this drive.";
+            return;
+        }
+
+        TbwLookupStatus.Text = result.Candidates.Count == 1
+            ? "Found a rated TBW value on the web \u2014 click Apply to use it:"
+            : $"Found {result.Candidates.Count} candidate TBW values (sources may conflict) \u2014 higher confidence means more sources agree:";
+
+        var textPrimary = (Brush)FindResource("TextPrimary");
+        var captionStyle = (Style)FindResource("Caption");
+        var toolButton = (Style)FindResource("ToolButton");
+
+        foreach (var c in result.Candidates)
+        {
+            var row = new System.Windows.Controls.Grid { Margin = new Thickness(0, 6, 0, 0) };
+            row.ColumnDefinitions.Add(new System.Windows.Controls.ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new System.Windows.Controls.ColumnDefinition { Width = GridLength.Auto });
+
+            var info = new System.Windows.Controls.StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            info.Children.Add(new System.Windows.Controls.TextBlock
+            {
+                Text = $"{c.TbwTerabytes:0.#} TBW",
+                Foreground = textPrimary,
+                FontWeight = FontWeights.SemiBold,
+                FontSize = 14,
+            });
+            int pct = (int)Math.Round(c.Confidence * 100);
+            string sources = string.Join(", ", c.Sources.Take(3)) + (c.Sources.Count > 3 ? $" +{c.Sources.Count - 3}" : "");
+            info.Children.Add(new System.Windows.Controls.TextBlock
+            {
+                Text = $"~{pct}% confidence \u00B7 {c.SourceCount} source{(c.SourceCount == 1 ? "" : "s")}: {sources}",
+                Style = captionStyle,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 1, 0, 0),
+            });
+            System.Windows.Controls.Grid.SetColumn(info, 0);
+            row.Children.Add(info);
+
+            var apply = new System.Windows.Controls.Button
+            {
+                Content = "Apply",
+                Style = toolButton,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(10, 0, 0, 0),
+            };
+            double value = c.TbwTerabytes;
+            apply.Click += (_, _) => ApplyTbwCandidate(disk, value);
+            System.Windows.Controls.Grid.SetColumn(apply, 1);
+            row.Children.Add(apply);
+
+            TbwCandidateList.Children.Add(row);
+        }
+    }
+
+    /// <summary>Applies a chosen TBW value as the drive's per-disk endurance rating.</summary>
+    private void ApplyTbwCandidate(DiskInfo disk, double tbw)
+    {
+        var cfg = _config.Current;
+        cfg.DiskTbwRatings[disk.DiskId] = tbw;
+        _config.Save(cfg);
+        TbwCandidateList.Children.Clear();
+        TbwLookupAction.Visibility = Visibility.Collapsed;
+        TbwLookupStatus.Text = $"Applied {tbw:0.#} TBW to this drive. You can change it anytime in Settings.";
+        LoadTbwField();
+        RefreshAll();
+    }
+
+    /// <summary>Handles the panel's action button (currently: download the on-device model).</summary>
+    private async void TbwLookupAction_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as System.Windows.Controls.Button)?.Tag as string != "download") return;
+        var disk = SelectedDisk;
+        if (disk is null) return;
+
+        TbwLookupAction.Visibility = Visibility.Collapsed;
+        _tbwCts = new CancellationTokenSource();
+        var ct = _tbwCts.Token;
+        try
+        {
+            var svc = TbwLookup;
+            var progress = new Progress<int>(p => TbwLookupStatus.Text = $"Downloading on-device model\u2026 {p}%");
+            TbwLookupStatus.Text = "Downloading on-device model\u2026";
+            await svc.DownloadModelAsync(progress, ct);
+            if (ct.IsCancellationRequested) return;
+            TbwLookupStatus.Text = "Model installed. Searching\u2026";
+            MaybeStartTbwLookup(disk);
+        }
+        catch (OperationCanceledException) { /* cancelled */ }
+        catch (Exception ex) { TbwLookupStatus.Text = $"Model download failed: {ex.Message}"; }
+    }
+
     private void DiskSelector_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         LoadTbwField();
         RefreshAll();
+        MaybeStartTbwLookup(SelectedDisk);
     }
 
     private void ProcessRange_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)

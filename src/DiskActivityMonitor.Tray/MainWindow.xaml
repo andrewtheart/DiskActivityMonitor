@@ -220,6 +220,24 @@
 
                         <TextBlock x:Name="EnduranceConsumedText" Style="{StaticResource Caption}" TextWrapping="Wrap"
                                    Opacity="0.75" Margin="0,12,0,0" Text="-" />
+
+                        <!-- Rated-TBW web lookup (on-device model searches the web for the drive's TBW) -->
+                        <Border x:Name="TbwLookupPanel" Background="#15181B" CornerRadius="8"
+                                Padding="14,11" Margin="0,14,0,0" Visibility="Collapsed">
+                            <StackPanel>
+                                <Grid>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="RATED TBW - WEB LOOKUP" Style="{StaticResource Caption}" />
+                                        <TextBlock x:Name="TbwLookupStatus" Foreground="{StaticResource TextPrimary}"
+                                                   FontSize="13" TextWrapping="Wrap" Margin="0,4,0,0" Text="" />
+                                    </StackPanel>
+                                    <Button x:Name="TbwLookupAction" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                            Style="{StaticResource ToolButton}" Visibility="Collapsed"
+                                            Click="TbwLookupAction_Click" Content="" />
+                                </Grid>
+                                <StackPanel x:Name="TbwCandidateList" Margin="0,10,0,0" />
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </Border>
 
@@ -484,6 +502,38 @@
                                 <TextBox x:Name="TxtEnduranceWarnYears" Style="{StaticResource DarkTextBox}" />
                             </StackPanel>
                         </WrapPanel>
+
+                        <!-- Web TBW lookup (on-device AI) -->
+                        <Border Background="#15181B" CornerRadius="8" Padding="14,11" Margin="0,6,0,4">
+                            <StackPanel>
+                                <CheckBox x:Name="ChkTbwLookup" Foreground="{StaticResource TextPrimary}"
+                                          Content="Search the web for each SSD's rated TBW on startup (uses a local Foundry Local model)" />
+                                <WrapPanel Margin="0,10,0,0">
+                                    <StackPanel Margin="0,0,24,10">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="Search backend" />
+                                        <ComboBox x:Name="TbwProviderSelector" Width="150">
+                                            <ComboBoxItem Content="google" />
+                                            <ComboBoxItem Content="serper" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,24,10">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="Google API key" />
+                                        <TextBox x:Name="TxtGoogleKey" Width="230" Style="{StaticResource DarkTextBox}" />
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,24,10">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="Google engine id (cx)" />
+                                        <TextBox x:Name="TxtGoogleCx" Width="180" Style="{StaticResource DarkTextBox}" />
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,24,10">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="Serper.dev API key" />
+                                        <TextBox x:Name="TxtSerperKey" Width="230" Style="{StaticResource DarkTextBox}" />
+                                    </StackPanel>
+                                </WrapPanel>
+                                <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,2,0,0"
+                                           Text="Keys are stored per-user, not in the shared config. Google: enable the Custom Search API and create a Programmable Search Engine (cx). Serper: one key from serper.dev." />
+                            </StackPanel>
+                        </Border>
+
                         <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
                             <CheckBox x:Name="ChkNotify" Content="Show desktop notifications" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" />
                             <Button Content="Save settings" Style="{StaticResource ToolButton}" Margin="20,0,0,0" Click="Save_Click" />
