@@ -10,7 +10,7 @@ namespace DiskActivityMonitor.Core.Collection;
 /// </summary>
 public static class DiskDetector
 {
-    private sealed record DiskMeta(string FriendlyName, DiskMediaType MediaType, long Size, string Serial, int? Wear);
+    private sealed record DiskMeta(string FriendlyName, DiskMediaType MediaType, long Size, string Serial, int? Wear, ushort BusType);
 
     /// <summary>
     /// Builds <see cref="DiskInfo"/> records from PhysicalDisk perf-counter instance names
@@ -37,7 +37,8 @@ public static class DiskDetector
                 Volumes = volumes,
             };
 
-            if (meta.TryGetValue(diskId, out var m))
+            meta.TryGetValue(diskId, out var m);
+            if (m is not null)
             {
                 info.FriendlyName = m.FriendlyName;
                 info.MediaType = m.MediaType;
@@ -48,9 +49,13 @@ public static class DiskDetector
 
             // Read the drive's own lifetime write/read totals (NVMe Data Units / ATA 241-242).
             // This is the authoritative endurance figure; the NVMe wear % refines the WMI value.
+            // The ATA pass-through needs a raw read/write disk handle that Windows Controlled Folder
+            // Access blocks (with a user notification) on USB / virtual disks, so it is only allowed
+            // for internal ATA/SATA drives. NVMe is read via a harmless zero-access query regardless.
             if (int.TryParse(diskId, out var driveNumber))
             {
-                var life = SmartLifetimeReader.Read(driveNumber);
+                bool allowAta = m is not null && SupportsAtaSmart(m.BusType);
+                var life = SmartLifetimeReader.Read(driveNumber, allowAta);
                 if (life is { } l)
                 {
                     info.LifetimeBytesWritten = l.BytesWritten > 0 ? l.BytesWritten : null;
@@ -97,7 +102,7 @@ public static class DiskDetector
         {
             var scope = new ManagementScope(@"\\.\root\Microsoft\Windows\Storage");
             var query = new ObjectQuery(
-                "SELECT DeviceId, FriendlyName, MediaType, Size, SerialNumber, SpindleSpeed FROM MSFT_PhysicalDisk");
+                "SELECT DeviceId, FriendlyName, MediaType, Size, SerialNumber, SpindleSpeed, BusType FROM MSFT_PhysicalDisk");
             using var searcher = new ManagementObjectSearcher(scope, query);
             foreach (ManagementBaseObject mo in searcher.Get())
             {
@@ -113,7 +118,8 @@ public static class DiskDetector
                     MediaType: media,
                     Size: (long)ToUInt64(mo["Size"]),
                     Serial: mo["SerialNumber"]?.ToString()?.Trim() ?? "",
-                    Wear: mo is ManagementObject disk ? TryReadWear(disk) : null);
+                    Wear: mo is ManagementObject disk ? TryReadWear(disk) : null,
+                    BusType: ToUInt16(mo["BusType"]));
             }
         }
         catch
@@ -132,6 +138,14 @@ public static class DiskDetector
         // MediaType unspecified: a zero spindle speed strongly implies solid state.
         _ => spindleSpeed == 0 ? DiskMediaType.Ssd : DiskMediaType.Unknown,
     };
+
+    /// <summary>
+    /// True only for buses where the ATA SMART pass-through is meaningful: ATAPI (2), ATA (3) and
+    /// SATA (11). The pass-through opens a raw read/write disk handle, which Windows Controlled
+    /// Folder Access blocks — and notifies the user about — on USB, SD and virtual disks, so it is
+    /// never attempted there (those buses do not expose the ATA 241/242 lifetime attributes anyway).
+    /// </summary>
+    private static bool SupportsAtaSmart(ushort busType) => busType is 2 or 3 or 11;
 
     /// <summary>
     /// Reads the drive's SMART-derived wear indicator ("Percentage Used") via the associated

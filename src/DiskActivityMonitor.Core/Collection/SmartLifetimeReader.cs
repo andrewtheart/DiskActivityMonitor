@@ -47,15 +47,22 @@ public static class SmartLifetimeReader
 
     private static readonly IntPtr InvalidHandle = new(-1);
 
-    /// <summary>Reads lifetime totals for <c>\\.\PhysicalDrive{driveNumber}</c>, or null if the drive does not expose them.</summary>
-    public static SmartLifetime? Read(int driveNumber)
+    /// <summary>
+    /// Reads lifetime totals for <c>\\.\PhysicalDrive{driveNumber}</c>, or null if the drive does
+    /// not expose them. The NVMe health query uses a zero-access handle and is always safe. The ATA
+    /// pass-through requires a raw read/write disk handle, which Windows Controlled Folder Access
+    /// blocks (and pops a user notification for) on USB / virtual / removable disks; it is therefore
+    /// only attempted when <paramref name="allowAtaPassthrough"/> is set for a genuine internal
+    /// ATA/SATA drive. Those other buses do not expose the ATA 241/242 attributes anyway.
+    /// </summary>
+    public static SmartLifetime? Read(int driveNumber, bool allowAtaPassthrough = false)
     {
         string path = $"\\\\.\\PhysicalDrive{driveNumber}";
         try
         {
             var nvme = ReadNvme(path);
             if (nvme is not null) return nvme;
-            return ReadAta(path);
+            return allowAtaPassthrough ? ReadAta(path) : null;
         }
         catch
         {
@@ -67,10 +74,9 @@ public static class SmartLifetimeReader
 
     private static SmartLifetime? ReadNvme(string path)
     {
-        // The query property works without elevation; try a zero-access handle first.
+        // A zero-access handle is enough for the query IOCTL and, unlike a read/write handle, does
+        // not trip Controlled Folder Access, so we never escalate the requested access here.
         IntPtr h = CreateFileW(path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
-        if (h == InvalidHandle)
-            h = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
         if (h == InvalidHandle) return null;
 
         try

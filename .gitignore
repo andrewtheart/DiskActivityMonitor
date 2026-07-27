@@ -3,10 +3,10 @@ bin/
 obj/
 publish/
 
-## Installer build artifacts (keep the compiled Setup EXEs, ignore everything else)
-installer/Output/*
-!installer/Output/*.exe
+## Installer build artifacts (installers are published to GitHub Releases, never committed)
+installer/Output/
 installer/publish/
+DiskActivityMonitor*.exe
 
 ## IDE / editor
 .vs/
