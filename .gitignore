@@ -2,6 +2,7 @@
 bin/
 obj/
 publish/
+TestResults/
 
 ## Installer build artifacts (installers are published to GitHub Releases, never committed)
 installer/Output/

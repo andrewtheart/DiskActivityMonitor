@@ -139,6 +139,58 @@ public sealed class AlertEngine
         return raised;
     }
 
+    /// <summary>
+    /// Evaluates aggregated Windows System log Disk event 11 records. Device numbers are mapped
+    /// to the currently detected disk/volumes when possible, while retaining the reported device
+    /// path because removable-disk numbers can be reassigned after reconnecting hardware.
+    /// </summary>
+    public List<AlertRecord> EvaluateControllerErrors(
+        IEnumerable<DiskInfo> disks,
+        IEnumerable<DiskControllerErrorSummary> errors,
+        AppConfig cfg,
+        DateTime nowUtc)
+    {
+        var raised = new List<AlertRecord>();
+        if (!cfg.EnableControllerErrorAlerts || cfg.ControllerErrorWarnCount <= 0 || _repo.IsGlobalSnoozeActive(nowUtc))
+            return raised;
+
+        var cooldown = TimeSpan.FromMinutes(Math.Max(1, cfg.AlertCooldownMinutes));
+        int windowDays = Math.Clamp(cfg.ControllerErrorWindowDays, 1, 365);
+        int warnCount = Math.Max(1, cfg.ControllerErrorWarnCount);
+        int criticalCount = cfg.ControllerErrorCriticalCount > 0
+            ? Math.Max(warnCount, cfg.ControllerErrorCriticalCount)
+            : int.MaxValue;
+        var disksById = disks
+            .GroupBy(d => d.DiskId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var error in errors.Where(e => e.Count >= warnCount))
+        {
+            disksById.TryGetValue(error.DiskId, out var disk);
+            bool critical = error.Count >= criticalCount;
+            var severity = critical ? AlertSeverity.Critical : AlertSeverity.Warning;
+            int threshold = critical ? criticalCount : warnCount;
+            string target = disk is not null && !string.IsNullOrWhiteSpace(disk.Volumes)
+                ? disk.Volumes.Trim()
+                : $"Harddisk{error.DiskId}";
+            string mapping = disk is null
+                ? "The physical disk is not currently present, so no volume mapping is available."
+                : $"That device number currently maps to {disk.DisplayName}.";
+            string latest = error.LatestUtc.ToLocalTime().ToString("MMM d, yyyy HH:mm");
+            string countWord = error.Count == 1 ? "error" : "errors";
+
+            Emit(raised, cooldown, nowUtc,
+                ruleKey: $"disk-controller:{error.DiskId}",
+                severity: severity,
+                title: $"{(critical ? "Repeated" : "Storage")} controller errors on {target}",
+                message: $"Windows logged {error.Count} Disk event 11 controller {countWord} for {error.DevicePath} in the last {windowDays} days; latest {latest}. {mapping} A drive may still report Healthy/Online while USB/SATA cable, port, power, enclosure, or controller instability causes intermittent read failures. Back up important data and inspect or change the connection.",
+                value: error.Count,
+                threshold: threshold);
+        }
+
+        return raised;
+    }
+
     // Rolling windows shown in process write-volume alert messages.
     private static readonly (string Label, int Minutes)[] BreakdownWindows =
     {

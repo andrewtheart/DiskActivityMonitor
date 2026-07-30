@@ -314,6 +314,32 @@ public class MonitorRepositoryTests : IDisposable
     }
 
     [Fact]
+    public void DismissAndRestoreAlerts_PreservesCompleteHistory()
+    {
+        var repo = CreateRepo();
+        var now = DateTime.UtcNow;
+        long dismissedId = repo.InsertAlert(new AlertRecord
+        {
+            TimestampUtc = now, RuleKey = "dismissed", Title = "Dismissed", Message = "m", Value = 0, Threshold = 0,
+        });
+        repo.InsertAlert(new AlertRecord
+        {
+            TimestampUtc = now, RuleKey = "visible", Title = "Visible", Message = "m", Value = 0, Threshold = 0,
+        });
+
+        repo.DismissAlerts([dismissedId]);
+
+        Assert.Equal(2, repo.GetRecentAlerts(10).Count);
+        Assert.True(repo.GetRecentAlerts(10).Single(a => a.Id == dismissedId).Acknowledged);
+        Assert.DoesNotContain(repo.GetRecentAlerts(10, unacknowledgedOnly: true), a => a.Id == dismissedId);
+
+        repo.RestoreAlerts([dismissedId]);
+
+        Assert.False(repo.GetRecentAlerts(10).Single(a => a.Id == dismissedId).Acknowledged);
+        Assert.Equal(2, repo.GetRecentAlerts(10, unacknowledgedOnly: true).Count);
+    }
+
+    [Fact]
     public void AcknowledgeAlerts_AllAtOnce()
     {
         var repo = CreateRepo();

@@ -24,6 +24,8 @@ public sealed class CollectorWorker : BackgroundService
     private readonly DiskPerformanceSampler _diskSampler = new();
     private IProcessIoReader _procReader = new ProcessIoReader();
     private readonly AlertEngine _alertEngine;
+    private readonly IDiskControllerErrorReader _controllerErrorReader;
+    private readonly Func<ILogger<CollectorWorker>, IProcessIoReader?> _etwFactory;
 
     private readonly Dictionary<string, (long Read, long Write)> _diskAccum = new();
     private readonly Dictionary<string, (long Read, long Write)> _procAccum = new(StringComparer.OrdinalIgnoreCase);
@@ -35,10 +37,22 @@ public sealed class CollectorWorker : BackgroundService
     private List<DiskInfo> _disks = new();
 
     public CollectorWorker(ILogger<CollectorWorker> log, ConfigStore configStore, MonitorRepository repo)
+        : this(log, configStore, repo, new DiskControllerErrorReader(), EtwProcessIoReader.TryStart)
+    {
+    }
+
+    internal CollectorWorker(
+        ILogger<CollectorWorker> log,
+        ConfigStore configStore,
+        MonitorRepository repo,
+        IDiskControllerErrorReader controllerErrorReader,
+        Func<ILogger<CollectorWorker>, IProcessIoReader?>? etwFactory = null)
     {
         _log = log;
         _configStore = configStore;
         _repo = repo;
+        _controllerErrorReader = controllerErrorReader;
+        _etwFactory = etwFactory ?? (_ => null);
         _alertEngine = new AlertEngine(repo);
     }
 
@@ -60,10 +74,14 @@ public sealed class CollectorWorker : BackgroundService
 
         // Prefer accurate ETW-based per-process file-write attribution; fall back to the Win32
         // I/O counters (an upper bound that mixes pipe/device I/O) when ETW is unavailable.
-        var etw = EtwProcessIoReader.TryStart(_log);
+        var etw = _etwFactory(_log);
         if (etw is not null)
             _procReader = etw;
         _log.LogInformation("Per-process I/O attribution: {Mode}.", _procReader.Description);
+
+        // Surface already-active conditions (including historical Disk event 11 errors)
+        // immediately after startup instead of waiting for the first minute rollover.
+        RunStartupMonitoring(DateTime.UtcNow);
 
         var sw = Stopwatch.StartNew();
         while (!stoppingToken.IsCancellationRequested)
@@ -155,7 +173,7 @@ public sealed class CollectorWorker : BackgroundService
         }
     }
 
-    private void RunPeriodicTasks(AppConfig cfg, DateTime nowUtc)
+    internal void RunPeriodicTasks(AppConfig cfg, DateTime nowUtc)
     {
         // Re-scan disks every five minutes (handles removable media / new drives).
         if (nowUtc - _lastDiskScanUtc > TimeSpan.FromMinutes(5))
@@ -171,6 +189,11 @@ public sealed class CollectorWorker : BackgroundService
         {
             _log.LogError(ex, "Error evaluating alert rules.");
         }
+
+        // Windows logs Disk event 11 when the storage stack encounters a controller-path error.
+        // Count these over a trailing window so repeated USB/SATA cable, power, enclosure, port,
+        // or controller instability appears in the same alert pipeline as write/endurance rules.
+        MonitorControllerErrors(cfg, nowUtc);
 
         // Prune old data hourly.
         if (nowUtc - _lastPruneUtc > TimeSpan.FromHours(1))
@@ -197,6 +220,27 @@ public sealed class CollectorWorker : BackgroundService
             _lastCheckpointUtc = nowUtc;
         }
     }
+
+    internal void MonitorControllerErrors(AppConfig cfg, DateTime nowUtc)
+    {
+        if (!cfg.EnableControllerErrorAlerts)
+            return;
+
+        try
+        {
+            int windowDays = Math.Clamp(cfg.ControllerErrorWindowDays, 1, 365);
+            var errors = _controllerErrorReader.ReadSince(nowUtc.AddDays(-windowDays));
+            foreach (var alert in _alertEngine.EvaluateControllerErrors(_disks, errors, cfg, nowUtc))
+                _log.LogWarning("ALERT [{Severity}] {Title} - {Message}", alert.Severity, alert.Title, alert.Message);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Error reading Disk event 11 controller errors from the Windows System log.");
+        }
+    }
+
+    internal void RunStartupMonitoring(DateTime nowUtc)
+        => MonitorControllerErrors(_configStore.Current, nowUtc);
 
     private void RescanDisks()
     {

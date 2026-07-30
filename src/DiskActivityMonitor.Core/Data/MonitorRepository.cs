@@ -473,6 +473,22 @@ public sealed class MonitorRepository
         tx.Commit();
     }
 
+    /// <summary>Permanently hides the selected alert records from the main Alert center.</summary>
+    public void DismissAlerts(IEnumerable<long> ids) => AcknowledgeAlerts(ids);
+
+    /// <summary>Restores dismissed alert records so they can appear in the main Alert center again.</summary>
+    public void RestoreAlerts(IEnumerable<long> ids)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE alerts SET acknowledged = 0 WHERE id = $id;";
+        var p = cmd.CreateParameter(); p.ParameterName = "$id"; cmd.Parameters.Add(p);
+        using var tx = conn.BeginTransaction();
+        cmd.Transaction = tx;
+        foreach (var id in ids) { p.Value = id; cmd.ExecuteNonQuery(); }
+        tx.Commit();
+    }
+
     /// <summary>Acknowledges all outstanding alerts raised for a specific process (rule proc-1h).</summary>
     public void AcknowledgeProcessAlerts(string processName)
     {

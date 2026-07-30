@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -22,6 +24,8 @@ public sealed class AiSecrets
 /// <summary>Loads and saves <see cref="AiSecrets"/> from a per-user file, falling back to env vars.</summary>
 public static class AiSecretsStore
 {
+    private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("DiskActivityMonitor.AiSecrets.v1");
+
     private static readonly JsonSerializerOptions Options = new()
     {
         WriteIndented = true,
@@ -36,28 +40,85 @@ public static class AiSecretsStore
     public static string FilePath => Path.Combine(Dir, "ai-secrets.json");
 
     /// <summary>Loads secrets from disk, then fills any blank value from the matching environment variable.</summary>
-    public static AiSecrets Load()
+    public static AiSecrets Load() => LoadFromFile(FilePath, Environment.GetEnvironmentVariable);
+
+    internal static AiSecrets LoadFromFile(
+        string path,
+        Func<string, string?> environmentLookup,
+        Action<string, AiSecrets>? migrationWriter = null)
     {
-        AiSecrets s = new();
+        AiSecrets secrets = new();
+        bool migratePlaintext = false;
         try
         {
-            if (File.Exists(FilePath))
-                s = JsonSerializer.Deserialize<AiSecrets>(File.ReadAllText(FilePath), Options) ?? new AiSecrets();
+            if (File.Exists(path))
+            {
+                var persisted = JsonSerializer.Deserialize<PersistedSecrets>(File.ReadAllText(path), Options) ?? new PersistedSecrets();
+                secrets.GoogleApiKey = Unprotect(persisted.GoogleApiKeyProtected) ?? persisted.GoogleApiKey;
+                secrets.GoogleCseId = persisted.GoogleCseId;
+                secrets.SerperApiKey = Unprotect(persisted.SerperApiKeyProtected) ?? persisted.SerperApiKey;
+                migratePlaintext = !string.IsNullOrWhiteSpace(persisted.GoogleApiKey) || !string.IsNullOrWhiteSpace(persisted.SerperApiKey);
+            }
         }
         catch { /* corrupt file -> treat as empty */ }
 
-        s.GoogleApiKey = Coalesce(s.GoogleApiKey, Environment.GetEnvironmentVariable("GOOGLE_API_KEY"));
-        s.GoogleCseId = Coalesce(s.GoogleCseId, Environment.GetEnvironmentVariable("GOOGLE_CSE_ID"));
-        s.SerperApiKey = Coalesce(s.SerperApiKey, Environment.GetEnvironmentVariable("SERPER_API_KEY"));
-        return s;
+        secrets.GoogleApiKey = Coalesce(secrets.GoogleApiKey, environmentLookup("GOOGLE_API_KEY"));
+        secrets.GoogleCseId = Coalesce(secrets.GoogleCseId, environmentLookup("GOOGLE_CSE_ID"));
+        secrets.SerperApiKey = Coalesce(secrets.SerperApiKey, environmentLookup("SERPER_API_KEY"));
+
+        if (migratePlaintext)
+        {
+            try { (migrationWriter ?? SaveToFile)(path, secrets); }
+            catch { /* loading the usable key is more important than migration */ }
+        }
+        return secrets;
     }
 
-    /// <summary>Persists secrets to the per-user file.</summary>
-    public static void Save(AiSecrets secrets)
+    /// <summary>Persists API keys encrypted for the current Windows user via DPAPI.</summary>
+    public static void Save(AiSecrets secrets) => SaveToFile(FilePath, secrets);
+
+    internal static void SaveToFile(string path, AiSecrets secrets)
     {
-        Directory.CreateDirectory(Dir);
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(secrets, Options));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var persisted = new PersistedSecrets
+        {
+            GoogleApiKeyProtected = Protect(secrets.GoogleApiKey),
+            GoogleCseId = Coalesce(secrets.GoogleCseId, null),
+            SerperApiKeyProtected = Protect(secrets.SerperApiKey),
+        };
+        string temp = path + ".tmp";
+        File.WriteAllText(temp, JsonSerializer.Serialize(persisted, Options));
+        File.Move(temp, path, overwrite: true);
     }
 
     private static string? Coalesce(string? a, string? b) => string.IsNullOrWhiteSpace(a) ? b : a;
+
+    private static string? Protect(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        byte[] encrypted = ProtectedData.Protect(Encoding.UTF8.GetBytes(value.Trim()), Entropy, DataProtectionScope.CurrentUser);
+        return Convert.ToBase64String(encrypted);
+    }
+
+    private static string? Unprotect(string? protectedValue)
+    {
+        if (string.IsNullOrWhiteSpace(protectedValue)) return null;
+        try
+        {
+            byte[] clear = ProtectedData.Unprotect(Convert.FromBase64String(protectedValue), Entropy, DataProtectionScope.CurrentUser);
+            return Encoding.UTF8.GetString(clear);
+        }
+        catch { return null; }
+    }
+
+    private sealed class PersistedSecrets
+    {
+        public string? GoogleApiKeyProtected { get; set; }
+        public string? GoogleCseId { get; set; }
+        public string? SerperApiKeyProtected { get; set; }
+
+        // Legacy plaintext fields are read only for one-time migration and never written again.
+        public string? GoogleApiKey { get; set; }
+        public string? SerperApiKey { get; set; }
+    }
 }

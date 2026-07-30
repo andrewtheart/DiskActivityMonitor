@@ -19,6 +19,12 @@ public class AppConfigTests
         Assert.Equal(5, cfg.ProcessWarnGbPerHour);
         Assert.Equal(20, cfg.AllProcessesWarnGbPerHour);
         Assert.Equal(5, cfg.AlertCooldownMinutes);
+        Assert.True(cfg.EnableControllerErrorAlerts);
+        Assert.Equal(14, cfg.ControllerErrorWindowDays);
+        Assert.Equal(3, cfg.ControllerErrorWarnCount);
+        Assert.Equal(10, cfg.ControllerErrorCriticalCount);
+        Assert.False(cfg.SuppressTbwOnlineSetupPrompt);
+        Assert.Equal("serper", cfg.WebSearchProvider);
         Assert.Equal(750, cfg.DefaultSsdTbw);
         Assert.Null(cfg.DefaultSsdTbwUpper);
         Assert.Equal(90, cfg.SsdWearWarnPercent);
@@ -121,6 +127,12 @@ public class AppConfigTests
             DiskTbwRatings = { ["disk1"] = 800 },
             DiskTbwRatingsUpper = { ["disk1"] = 1200 },
             AlertCooldownMinutes = 15,
+            EnableControllerErrorAlerts = false,
+            ControllerErrorWindowDays = 30,
+            ControllerErrorWarnCount = 5,
+            ControllerErrorCriticalCount = 20,
+            SuppressTbwOnlineSetupPrompt = true,
+            WebSearchProvider = "serper",
             EnableNotifications = false,
         };
 
@@ -134,6 +146,12 @@ public class AppConfigTests
         Assert.Equal(800, deserialized.DiskTbwRatings["disk1"]);
         Assert.Equal(1200, deserialized.DiskTbwRatingsUpper["disk1"]);
         Assert.Equal(15, deserialized.AlertCooldownMinutes);
+        Assert.False(deserialized.EnableControllerErrorAlerts);
+        Assert.Equal(30, deserialized.ControllerErrorWindowDays);
+        Assert.Equal(5, deserialized.ControllerErrorWarnCount);
+        Assert.Equal(20, deserialized.ControllerErrorCriticalCount);
+        Assert.True(deserialized.SuppressTbwOnlineSetupPrompt);
+        Assert.Equal("serper", deserialized.WebSearchProvider);
         Assert.False(deserialized.EnableNotifications);
     }
 
@@ -144,6 +162,7 @@ public class AppConfigTests
         var json = JsonSerializer.Serialize(cfg, AppConfig.SerializerOptions);
         Assert.Contains("\"sampleIntervalSeconds\"", json);
         Assert.Contains("\"ssdWarnGbPerHour\"", json);
+        Assert.Contains("\"controllerErrorWarnCount\"", json);
         Assert.DoesNotContain("\"SampleIntervalSeconds\"", json);
     }
 

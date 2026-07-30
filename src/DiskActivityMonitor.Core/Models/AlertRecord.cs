@@ -23,11 +23,12 @@ public sealed class AlertRecord
 
     public required string Message { get; init; }
 
-    /// <summary>Observed value that tripped the rule (bytes).</summary>
+    /// <summary>Observed numeric value that tripped the rule (for example bytes or an event count).</summary>
     public double Value { get; init; }
 
-    /// <summary>Configured threshold the value exceeded (bytes).</summary>
+    /// <summary>Configured numeric threshold the value exceeded.</summary>
     public double Threshold { get; init; }
 
+    /// <summary>True when the alert was dismissed from the main Alert center.</summary>
     public bool Acknowledged { get; set; }
 }

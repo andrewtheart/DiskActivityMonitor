@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 
 namespace DiskActivityMonitor.Core.Collection;
@@ -18,8 +19,20 @@ namespace DiskActivityMonitor.Core.Collection;
 /// </summary>
 public static class SmartLifetimeReader
 {
-    /// <summary>Lifetime totals reported by a drive. <paramref name="PercentUsed"/> is the SMART wear indicator (0-100) when available.</summary>
-    public readonly record struct SmartLifetime(long BytesWritten, long BytesRead, int? PercentUsed);
+    /// <summary>
+    /// Health and lifetime values reported directly by a drive. The extended fields are populated
+    /// by NVMe SMART/Health log page 0x02; ATA 241/242 reads expose only lifetime bytes.
+    /// </summary>
+    public readonly record struct SmartLifetime(
+        long BytesWritten,
+        long BytesRead,
+        int? PercentUsed,
+        int? TemperatureC = null,
+        int? AvailableSparePercent = null,
+        int? CriticalWarning = null,
+        long? PowerOnHours = null,
+        long? UnsafeShutdowns = null,
+        long? MediaErrors = null);
 
     private const uint IOCTL_STORAGE_QUERY_PROPERTY = 0x002d1400;
     private const uint IOCTL_ATA_PASS_THROUGH = 0x0004d02c;
@@ -106,21 +119,46 @@ public static class SmartLifetimeReader
                 int logStart = p + dataOffset;
                 if (logStart + 64 > total) return null;
 
-                ulong duWritten = (ulong)Marshal.ReadInt64(buf, logStart + 48);
-                ulong duRead = (ulong)Marshal.ReadInt64(buf, logStart + 32);
-                int pctUsed = Marshal.ReadByte(buf, logStart + 5);
-                if (duWritten == 0 && duRead == 0) return null; // not a populated NVMe log
-
-                // Each NVMe data unit is 1000 * 512 = 512,000 bytes.
-                long bytesWritten = checked((long)(duWritten * 512000UL));
-                long bytesRead = checked((long)(duRead * 512000UL));
-                return new SmartLifetime(bytesWritten, bytesRead, pctUsed is >= 0 and <= 100 ? pctUsed : null);
+                var log = new byte[logLen];
+                Marshal.Copy(IntPtr.Add(buf, logStart), log, 0, logLen);
+                return ParseNvmeHealthLog(log);
             }
             finally { Marshal.FreeHGlobal(buf); }
         }
         catch { return null; }
         finally { CloseHandle(h); }
     }
+
+    /// <summary>Decodes the 512-byte NVMe SMART/Health Information log page (0x02).</summary>
+    public static SmartLifetime? ParseNvmeHealthLog(ReadOnlySpan<byte> log)
+    {
+        if (log.Length < 168) return null;
+
+        ulong unitsRead = BinaryPrimitives.ReadUInt64LittleEndian(log[32..40]);
+        ulong unitsWritten = BinaryPrimitives.ReadUInt64LittleEndian(log[48..56]);
+        if (unitsRead == 0 && unitsWritten == 0) return null;
+
+        int kelvin = BinaryPrimitives.ReadUInt16LittleEndian(log[1..3]);
+        int? temperature = kelvin is > 200 and < 500 ? kelvin - 273 : null;
+        int used = log[5];
+        int spare = log[3];
+
+        return new SmartLifetime(
+            SaturatingBytes(unitsWritten),
+            SaturatingBytes(unitsRead),
+            used <= 100 ? used : null,
+            temperature,
+            spare <= 100 ? spare : null,
+            log[0],
+            SaturatingInt64(BinaryPrimitives.ReadUInt64LittleEndian(log[128..136])),
+            SaturatingInt64(BinaryPrimitives.ReadUInt64LittleEndian(log[144..152])),
+            SaturatingInt64(BinaryPrimitives.ReadUInt64LittleEndian(log[160..168])));
+    }
+
+    private static long SaturatingBytes(ulong units)
+        => units > (ulong)long.MaxValue / 512000UL ? long.MaxValue : (long)(units * 512000UL);
+
+    private static long SaturatingInt64(ulong value) => value > long.MaxValue ? long.MaxValue : (long)value;
 
     // ---------------------------------------------------------------- ATA / SATA
 

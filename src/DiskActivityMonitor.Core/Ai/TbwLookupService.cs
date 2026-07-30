@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace DiskActivityMonitor.Core.Ai;
 
@@ -108,14 +109,21 @@ public sealed class TbwLookupService
         {
             // 1. Search the web.
             progress?.Report(new TbwLookupProgress(TbwLookupStage.Searching, driveModel));
-            string query = $"\"{driveModel}\" SSD TBW endurance rating terabytes written";
+            // Keep the query short: exact model + TBW yields capacity/rating snippets, while
+            // extra generic endurance terms tend to surface comparisons and unrelated models.
+            string query = $"\"{driveModel}\" TBW";
             var hits = await SearchProvider.SearchAsync(query, 8, ct).ConfigureAwait(false);
             if (hits.Count == 0)
                 return Finish(driveModel, Array.Empty<TbwCandidate>(), "No web results found for this drive.");
 
             // 2. Have the local model extract per-source TBW claims.
             progress?.Report(new TbwLookupProgress(TbwLookupStage.Analyzing, _resolvedModel));
-            var claims = await ExtractClaimsAsync(driveModel, hits, ct).ConfigureAwait(false);
+            var modelClaims = await ExtractClaimsAsync(driveModel, hits, ct).ConfigureAwait(false);
+
+            // Search snippets often contain an explicit, capacity-linked rating. Add those claims
+            // deterministically so a small local model cannot lose a valid result by omitting it.
+            // Both paths still pass the same source-evidence and exact-capacity validation.
+            var claims = modelClaims.Concat(ExtractExplicitClaims(driveModel, hits)).ToList();
 
             // 3. Aggregate into candidates with confidence by source agreement.
             var candidates = Aggregate(claims);
@@ -146,6 +154,8 @@ public sealed class TbwLookupService
         string system =
             "You extract SSD endurance ratings (TBW, terabytes written) from web search results. " +
             "Only use numbers that clearly refer to the total rated TBW / endurance for the EXACT drive model asked about. " +
+            "The exact number must appear in the supplied title or snippet; never fill in a missing value from memory or infer a table cell. " +
+            "When a product family has multiple capacities, only use a rating explicitly associated with the requested capacity. " +
             "Convert petabytes to terabytes (1 PB = 1000 TB). Ignore capacities (GB/TB of storage), DWPD, warranty years, and prices. " +
             "Respond with ONLY a JSON array (no prose) of objects: " +
             "[{\"tbw_tb\": <number>, \"source_index\": <int from the list>, \"quote\": \"<short supporting text>\"}]. " +
@@ -155,11 +165,15 @@ public sealed class TbwLookupService
         string user = $"Drive model: {driveModel}\n\nSearch results:\n{sb}\n\nReturn the JSON array now.{noThink}";
 
         string raw = await _foundry.ChatAsync(_endpoint!, _resolvedModel!, system, user, maxTokens: 800, ct).ConfigureAwait(false);
-        return ParseClaims(raw, hits);
+        return ParseClaims(raw, hits, driveModel);
     }
 
-    /// <summary>Parses the model's JSON array of claims, attributing each to a real source hit by index.</summary>
-    public static IReadOnlyList<TbwClaim> ParseClaims(string raw, IReadOnlyList<WebSearchHit> hits)
+    /// <summary>
+    /// Parses the model's JSON claims and attributes each to a real source. A claim is accepted only
+    /// when the source title/snippet contains the claimed TBW value (or equivalent PBW value), which
+    /// prevents a local model from filling missing search-result data from memory or hallucination.
+    /// </summary>
+    public static IReadOnlyList<TbwClaim> ParseClaims(string raw, IReadOnlyList<WebSearchHit> hits, string? driveModel = null)
     {
         var claims = new List<TbwClaim>();
         int start = raw.IndexOf('[');
@@ -178,6 +192,7 @@ public sealed class TbwLookupService
 
                 int idx = el.TryGetProperty("source_index", out var iv) && iv.ValueKind == JsonValueKind.Number ? iv.GetInt32() : -1;
                 if (idx < 0 || idx >= hits.Count) continue;
+                if (!SourceSupportsClaim(hits[idx], tbw, driveModel)) continue;
 
                 string? quote = el.TryGetProperty("quote", out var qv) && qv.ValueKind == JsonValueKind.String ? qv.GetString() : null;
                 claims.Add(new TbwClaim(tbw, hits[idx].Domain, hits[idx].Url, quote));
@@ -186,6 +201,101 @@ public sealed class TbwLookupService
         catch { /* malformed model output -> no claims */ }
         return claims;
     }
+
+    private static bool SourceSupportsClaim(WebSearchHit hit, double tbw, string? driveModel)
+    {
+        string evidence = $"{hit.Title} {hit.Snippet}".Replace(",", "", StringComparison.Ordinal);
+        string tbwNumber = Math.Round(tbw).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string tbwPattern = $@"(?<!\d){Regex.Escape(tbwNumber)}(?:\.0+)?(?!\d)";
+        const string enduranceUnit = @"(?:TBW|TB\s*(?:\(\s*TBW\s*\))?|terabytes?\s+written)";
+        var match = Regex.Match(
+            evidence,
+            $@"(?i)(?:{tbwPattern}\s*{enduranceUnit}|(?:TBW|terabytes?\s+written)[^\d]{{0,32}}{tbwPattern}\s*(?:TB)?)");
+
+        // A source may state the endurance in PB/PBW while the model correctly converts it to TBW.
+        if (!match.Success && tbw >= 1000)
+        {
+            string pbNumber = (tbw / 1000d).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            match = Regex.Match(
+                evidence,
+                $@"(?i)(?<![\d.]){Regex.Escape(pbNumber)}(?![\d.])\s*(?:PBW|PB\s+written|petabytes?\s+written)");
+        }
+
+        if (!match.Success) return false;
+
+        // If the requested model names a capacity (e.g. 2TB), require that capacity in the same
+        // search result. This rejects family-level snippets that quote another capacity's rating.
+        var capacity = Regex.Match(driveModel ?? "", @"(?i)(?<value>\d+(?:\.\d+)?)\s*(?<unit>TB|GB)\b");
+        if (!capacity.Success) return true;
+
+        string capacityPattern = $@"(?i)(?<![\d.]){Regex.Escape(capacity.Groups["value"].Value)}\s*{capacity.Groups["unit"].Value}\b";
+        return Regex.IsMatch(evidence, capacityPattern);
+    }
+
+    /// <summary>
+    /// Extracts values explicitly printed in search snippets. When a snippet contains several
+    /// family ratings, a value is accepted only when the nearest named capacity matches the
+    /// requested drive capacity (e.g. 360 TBW nearest "1TB model").
+    /// </summary>
+    public static IReadOnlyList<TbwClaim> ExtractExplicitClaims(string driveModel, IReadOnlyList<WebSearchHit> hits)
+    {
+        var requested = ParseCapacityGb(driveModel);
+        var claims = new List<TbwClaim>();
+
+        foreach (var hit in hits)
+        {
+            string evidence = $"{hit.Title} {hit.Snippet}".Replace(",", "", StringComparison.Ordinal);
+            var ratings = Regex.Matches(
+                evidence,
+                @"(?i)(?<rating>\d+(?:\.\d+)?)\s*(?:TBW\b|TB\s*\(\s*TBW\s*\)|terabytes?\s+(?:written|endurance))");
+            if (ratings.Count == 0) continue;
+
+            var capacities = Regex.Matches(evidence, @"(?i)(?<value>\d+(?:\.\d+)?)\s*(?<unit>TB|GB)\b")
+                .Where(m => !ratings.Cast<Match>().Any(r => Overlaps(m, r)))
+                .Select(m => new
+                {
+                    Match = m,
+                    Gb = double.Parse(m.Groups["value"].Value, System.Globalization.CultureInfo.InvariantCulture) *
+                         (m.Groups["unit"].Value.Equals("TB", StringComparison.OrdinalIgnoreCase) ? 1000d : 1d),
+                })
+                .ToList();
+
+            foreach (Match ratingMatch in ratings)
+            {
+                double rating = double.Parse(ratingMatch.Groups["rating"].Value, System.Globalization.CultureInfo.InvariantCulture);
+                if (rating <= 0 || rating > 100000 || !SourceSupportsClaim(hit, rating, driveModel))
+                    continue;
+
+                if (requested is not null)
+                {
+                    var nearest = capacities
+                        .OrderBy(c => Distance(ratingMatch, c.Match))
+                        .FirstOrDefault();
+                    if (nearest is null || Distance(ratingMatch, nearest.Match) > 120 ||
+                        Math.Abs(nearest.Gb - requested.Value) > 1)
+                        continue;
+                }
+
+                claims.Add(new TbwClaim(rating, hit.Domain, hit.Url, ratingMatch.Value));
+            }
+        }
+
+        return claims;
+    }
+
+    private static double? ParseCapacityGb(string text)
+    {
+        var match = Regex.Match(text ?? "", @"(?i)(?<value>\d+(?:\.\d+)?)\s*(?<unit>TB|GB)\b");
+        if (!match.Success) return null;
+        double value = double.Parse(match.Groups["value"].Value, System.Globalization.CultureInfo.InvariantCulture);
+        return match.Groups["unit"].Value.Equals("TB", StringComparison.OrdinalIgnoreCase) ? value * 1000d : value;
+    }
+
+    private static int Distance(Match a, Match b)
+        => Math.Abs((a.Index + a.Length / 2) - (b.Index + b.Length / 2));
+
+    private static bool Overlaps(Match a, Match b)
+        => a.Index < b.Index + b.Length && b.Index < a.Index + a.Length;
 
     /// <summary>
     /// Aggregates per-source claims into candidate TBW values with a confidence score. Each distinct

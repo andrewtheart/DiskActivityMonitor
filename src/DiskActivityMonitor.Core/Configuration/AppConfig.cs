@@ -46,6 +46,18 @@ public sealed class AppConfig
     /// <summary>Minimum minutes between repeat alerts for the same rule + scope.</summary>
     public int AlertCooldownMinutes { get; set; } = 5;
 
+    /// <summary>Monitor the Windows System log for Disk event 11 controller errors.</summary>
+    public bool EnableControllerErrorAlerts { get; set; } = true;
+
+    /// <summary>Trailing window, in days, used to count Disk event 11 controller errors.</summary>
+    public int ControllerErrorWindowDays { get; set; } = 14;
+
+    /// <summary>Raise a warning after this many controller errors occur inside the trailing window.</summary>
+    public int ControllerErrorWarnCount { get; set; } = 3;
+
+    /// <summary>Raise a critical alert after this many controller errors occur inside the trailing window.</summary>
+    public int ControllerErrorCriticalCount { get; set; } = 10;
+
     /// <summary>
     /// Per-disk manufacturer TBW (terabytes-written) endurance rating override, keyed by disk
     /// id. When a disk has no entry, <see cref="DefaultSsdTbw"/> is used instead.
@@ -88,8 +100,11 @@ public sealed class AppConfig
     /// </summary>
     public bool EnableTbwWebLookup { get; set; } = true;
 
-    /// <summary>Web search backend for the TBW lookup: "google" (Custom Search JSON API) or "serper" (serper.dev).</summary>
-    public string WebSearchProvider { get; set; } = "google";
+    /// <summary>Do not offer guided online-TBW setup again at tray startup.</summary>
+    public bool SuppressTbwOnlineSetupPrompt { get; set; }
+
+    /// <summary>Web search backend for the TBW lookup: "google" (existing customers) or "serper" (serper.dev).</summary>
+    public string WebSearchProvider { get; set; } = "serper";
 
     /// <summary>
     /// Optional Foundry Local model alias/id override for the TBW lookup. Null = auto-select the best
