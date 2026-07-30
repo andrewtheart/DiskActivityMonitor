@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ctl="clr-namespace:DiskActivityMonitor.Tray.Controls"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         Title="Disk Activity Monitor" Height="720" Width="940"
         MinHeight="560" MinWidth="760"
         WindowStartupLocation="CenterScreen"
@@ -75,6 +76,12 @@
                 <ComboBox x:Name="DiskSelector" Width="280" DisplayMemberPath="Display"
                           SelectionChanged="DiskSelector_SelectionChanged" />
                 <Button Content="Refresh" Style="{StaticResource ToolButton}" Margin="10,0,0,0" Click="Refresh_Click" />
+                <Button x:Name="HelpButton" Style="{StaticResource ToolButton}" Margin="8,0,0,0"
+                        Click="Help_Click" ToolTip="Help and troubleshooting" Padding="6"
+                        AutomationProperties.Name="Help and troubleshooting">
+                    <TextBlock Text="?" FontSize="16" FontWeight="Bold" Width="16"
+                               TextAlignment="Center" Foreground="{StaticResource TextPrimary}" />
+                </Button>
                 <Button x:Name="GearButton" Style="{StaticResource ToolButton}" Margin="8,0,0,0" Click="Gear_Click"
                         ToolTip="Settings" Padding="6">
                     <Viewbox Width="16" Height="16">
@@ -656,6 +663,92 @@
             </StackPanel>
             </Grid>
         </ScrollViewer>
+        </Grid>
+
+        <!-- Compiled HELP.md rendered in-app. WebView2 is initialized lazily on first open. -->
+        <Grid x:Name="HelpOverlay" Grid.RowSpan="2" Panel.ZIndex="1200"
+              Background="#E815181B" Visibility="Collapsed" Focusable="True"
+              PreviewKeyDown="HelpOverlay_PreviewKeyDown">
+                <Border MaxWidth="860" MaxHeight="680" Margin="28" VerticalAlignment="Stretch"
+                    HorizontalAlignment="Stretch"
+                    Background="#1E2228" BorderBrush="#3A414A" BorderThickness="1"
+                    CornerRadius="14" Padding="0">
+                <Border.Effect>
+                    <DropShadowEffect Color="#000000" BlurRadius="30" ShadowDepth="10" Opacity="0.65" />
+                </Border.Effect>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Margin="20,16,14,13">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Border Width="42" Height="42" CornerRadius="11" Background="#223A66">
+                            <TextBlock Text="?" FontSize="21" FontWeight="Bold" Foreground="#64A7FF"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
+                            <TextBlock Text="Disk Activity Monitor Help" FontSize="19" FontWeight="SemiBold" />
+                            <TextBlock Text="Usage, settings, diagnostics, CLI, and troubleshooting"
+                                       Style="{StaticResource Caption}" Margin="0,3,0,0" />
+                        </StackPanel>
+                        <Button Grid.Column="2" Style="{StaticResource DismissButton}" Width="30" Height="30"
+                                FontSize="14" Content="&#x2715;" ToolTip="Close help (Esc)"
+                                AutomationProperties.Name="Close help" Click="HelpClose_Click" />
+                    </Grid>
+
+                    <Border Grid.Row="1" Margin="20,0,20,0" Background="#15181B"
+                            BorderBrush="#343B45" BorderThickness="1" CornerRadius="8" ClipToBounds="True">
+                        <Grid>
+                            <wv2:WebView2 x:Name="HelpWebView" Visibility="Collapsed"
+                                          NavigationStarting="HelpWebView_NavigationStarting"
+                                          NavigationCompleted="HelpWebView_NavigationCompleted" />
+
+                            <StackPanel x:Name="HelpLoadingPanel" HorizontalAlignment="Center"
+                                        VerticalAlignment="Center">
+                                <ProgressBar Width="220" Height="5" IsIndeterminate="True"
+                                             Foreground="{StaticResource Accent}" Background="#252A31" />
+                                <TextBlock Text="Loading compiled help..." Style="{StaticResource Caption}"
+                                           HorizontalAlignment="Center" Margin="0,12,0,0" />
+                            </StackPanel>
+
+                            <Grid x:Name="HelpFallbackPanel" Visibility="Collapsed" Margin="20">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="Help could not be rendered" FontSize="16" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="HelpFallbackMessage" Style="{StaticResource Caption}"
+                                               TextWrapping="Wrap" Margin="0,5,0,12" />
+                                </StackPanel>
+                                <TextBox x:Name="HelpFallbackText" Grid.Row="1" IsReadOnly="True"
+                                         AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                                         HorizontalScrollBarVisibility="Disabled" FontFamily="Cascadia Mono"
+                                         FontSize="12" Background="#111418" Foreground="{StaticResource TextPrimary}"
+                                         BorderBrush="{StaticResource CardBorder}" Padding="12" />
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <Grid Grid.Row="2" Margin="20,12,20,16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Press Esc to close. External links open in your default browser."
+                                   Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Close" Style="{StaticResource ToolButton}"
+                                Margin="12,0,0,0" Click="HelpClose_Click" />
+                    </Grid>
+                </Grid>
+            </Border>
         </Grid>
 
         <!-- Complete alert history, including records dismissed from the main Alert center -->

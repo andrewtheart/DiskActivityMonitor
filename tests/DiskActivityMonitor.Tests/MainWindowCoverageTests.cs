@@ -77,6 +77,25 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Invoke(window, "TbwLookupClose_Click", window, new RoutedEventArgs());
                 Assert.Equal(Visibility.Collapsed, window.TbwLookupPanel.Visibility);
 
+                typeof(MainWindow).GetField("_helpInitialized", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .SetValue(window, true);
+                Invoke(window, "Help_Click", window.HelpButton, new RoutedEventArgs());
+                Assert.Equal(Visibility.Visible, window.HelpOverlay.Visibility);
+                Assert.Equal("Help and troubleshooting", window.HelpButton.ToolTip);
+                Invoke(window, "HelpClose_Click", window, new RoutedEventArgs());
+                Assert.Equal(Visibility.Collapsed, window.HelpOverlay.Visibility);
+
+                string fallbackMarkdown = Path.Combine(Path.GetTempPath(), $"dam_help_{Guid.NewGuid():N}.md");
+                File.WriteAllText(fallbackMarkdown, "# Help\n\nUse **Refresh** and [open docs](https://example.test).\n\n```powershell\ndam status\n```");
+                try
+                {
+                    window.ShowHelpFallback("fallback test", fallbackMarkdown);
+                    Assert.Equal(Visibility.Visible, window.HelpFallbackPanel.Visibility);
+                    Assert.Contains("Use Refresh and open docs", window.HelpFallbackText.Text);
+                    Assert.Contains("dam status", window.HelpFallbackText.Text);
+                }
+                finally { File.Delete(fallbackMarkdown); }
+
                 window.UpdateAlerts();
                 var rows = ((IEnumerable)window.AlertList.ItemsSource).Cast<object>().ToList();
                 Assert.Equal(2, rows.Count);
@@ -388,6 +407,18 @@ public sealed class MainWindowCoverageTests : IDisposable
     [InlineData(2.555, "2.56%")]
     public void FormatPercent_ShowsUpToTwoDecimalPlaces(double value, string expected)
         => Assert.Equal(expected, MainWindow.FormatPercent(value));
+
+    [Fact]
+    public void MarkdownToPlainText_RemovesPresentationSyntax()
+    {
+        string markdown = "## Heading\n\n> Note with `code` and ![alt](image.png).\n\n| A | B |\n|---|---|\n| 1 | 2 |";
+        string text = MainWindow.MarkdownToPlainText(markdown);
+        Assert.Contains("Heading", text);
+        Assert.Contains("Note with code and alt", text);
+        Assert.DoesNotContain("##", text);
+        Assert.DoesNotContain("image.png", text);
+        Assert.DoesNotContain("---", text);
+    }
 
     [Fact]
     public void DriveLifeUsed_UsesPreciseLifetimeWritesPercentage()

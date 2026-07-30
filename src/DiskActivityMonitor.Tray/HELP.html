@@ -1,0 +1,1362 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Disk Activity Monitor Help</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      white-space: pre-wrap;
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    /* CSS for syntax highlighting */
+    html { -webkit-text-size-adjust: 100%; }
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        color: #aaaaaa;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+    div.sourceCode
+      {   }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+    code span.at { color: #7d9029; } /* Attribute */
+    code span.bn { color: #40a070; } /* BaseN */
+    code span.bu { color: #008000; } /* BuiltIn */
+    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #4070a0; } /* Char */
+    code span.cn { color: #880000; } /* Constant */
+    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+    code span.dt { color: #902000; } /* DataType */
+    code span.dv { color: #40a070; } /* DecVal */
+    code span.er { color: #ff0000; font-weight: bold; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #40a070; } /* Float */
+    code span.fu { color: #06287e; } /* Function */
+    code span.im { color: #008000; font-weight: bold; } /* Import */
+    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+    code span.op { color: #666666; } /* Operator */
+    code span.ot { color: #007020; } /* Other */
+    code span.pp { color: #bc7a00; } /* Preprocessor */
+    code span.sc { color: #4070a0; } /* SpecialChar */
+    code span.ss { color: #bb6688; } /* SpecialString */
+    code span.st { color: #4070a0; } /* String */
+    code span.va { color: #19177c; } /* Variable */
+    code span.vs { color: #4070a0; } /* VerbatimString */
+    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+  </style>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #15181b;
+      --surface: #1e2228;
+      --surface-2: #252a31;
+      --border: #343b45;
+      --text: #e6e9ed;
+      --muted: #a8afb9;
+      --accent: #64a7ff;
+      --toc-width: 280px;
+    }
+
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      box-sizing: border-box;
+      font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+      line-height: 1.6;
+      margin: 0;
+      max-width: 1260px;
+      padding: 24px 42px 80px calc(var(--toc-width) + 34px);
+      text-rendering: optimizeLegibility;
+    }
+
+    h1, h2, h3, h4 {
+      color: #fff;
+      font-family: "Segoe UI Variable Display", "Segoe UI Semibold", "Segoe UI", sans-serif;
+      line-height: 1.25;
+      scroll-margin-top: 18px;
+    }
+    h1 { font-size: 30px; margin-top: 0; }
+    h2 { border-bottom: 1px solid var(--border); font-size: 22px; margin-top: 42px; padding-bottom: 8px; }
+    h3 { font-size: 17px; margin-top: 28px; }
+    a { color: var(--accent); }
+    strong { color: #fff; }
+    blockquote {
+      background: var(--surface);
+      border-left: 4px solid var(--accent);
+      margin: 18px 0;
+      padding: 10px 16px;
+    }
+    code {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      color: #d9e8ff;
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: .9em;
+      padding: 1px 5px;
+    }
+    pre {
+      background: #111418;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: auto;
+      padding: 14px 16px;
+    }
+    pre code { background: none; border: 0; padding: 0; }
+    table { border-collapse: collapse; display: block; max-width: 100%; overflow-x: auto; }
+    th, td { border: 1px solid var(--border); padding: 7px 10px; text-align: left; vertical-align: top; }
+    th { background: var(--surface-2); color: #fff; }
+    tr:nth-child(even) { background: rgba(255,255,255,.025); }
+    hr { border: 0; border-top: 1px solid var(--border); margin: 34px 0; }
+
+    #TOC {
+      background: #111418;
+      border-right: 1px solid var(--border);
+      bottom: 0;
+      box-sizing: border-box;
+      font-size: 13px;
+      left: 0;
+      overflow: auto;
+      padding: 18px 12px 32px;
+      position: fixed;
+      top: 0;
+      width: var(--toc-width);
+    }
+    #toc-brand {
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 10px;
+      padding: 2px 9px 14px;
+    }
+    .toc-brand-title { color: #fff; display: block; font-size: 16px; font-weight: 700; }
+    .toc-brand-sub { color: var(--muted); display: block; font-size: 11px; margin-top: 3px; }
+    #TOC ul { list-style: none; margin: 0; padding: 0; }
+    #TOC ul ul { border-left: 1px solid rgba(255,255,255,.1); margin-left: 9px; padding-left: 12px; }
+    #TOC a {
+      border-radius: 5px;
+      color: #cbd1da;
+      display: block;
+      padding: 5px 8px;
+      text-decoration: none;
+    }
+    #TOC a:hover, #TOC a.active { background: rgba(100,167,255,.16); color: #fff; }
+    #TOC > ul > li > a { font-weight: 650; }
+
+    @media (max-width: 800px) {
+      :root { --toc-width: 220px; }
+      body { padding-left: calc(var(--toc-width) + 22px); padding-right: 22px; }
+    }
+  </style>
+  <script>
+    (function () {
+      function initializeHelpNavigation() {
+        var toc = document.getElementById("TOC");
+        if (!toc) return;
+
+        var brand = document.createElement("div");
+        brand.id = "toc-brand";
+        brand.innerHTML = '<span class="toc-brand-title">Disk Activity Monitor</span><span class="toc-brand-sub">Help &amp; troubleshooting</span>';
+        toc.insertBefore(brand, toc.firstChild);
+
+        var links = {};
+        toc.querySelectorAll('a[href^="#"]').forEach(function (link) {
+          try { links[decodeURIComponent(link.getAttribute("href").slice(1))] = link; } catch (_) {}
+        });
+        var headings = document.querySelectorAll("h2[id], h3[id]");
+        if (!headings.length || typeof IntersectionObserver === "undefined") return;
+        var active = null;
+        var observer = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            if (!entry.isIntersecting) return;
+            var link = links[entry.target.id];
+            if (!link) return;
+            if (active) active.classList.remove("active");
+            link.classList.add("active");
+            active = link;
+            link.scrollIntoView({ block: "nearest" });
+          });
+        }, { rootMargin: "0px 0px -76% 0px" });
+        headings.forEach(function (heading) { observer.observe(heading); });
+      }
+
+      if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initializeHelpNavigation);
+      else initializeHelpNavigation();
+    })();
+  </script>
+</head>
+<body>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#disk-activity-monitor-help-guide"
+id="toc-disk-activity-monitor-help-guide">Disk Activity Monitor Help
+Guide</a>
+<ul>
+<li><a href="#contents" id="toc-contents">Contents</a></li>
+<li><a href="#what-disk-activity-monitor-measures"
+id="toc-what-disk-activity-monitor-measures">What Disk Activity Monitor
+measures</a></li>
+<li><a href="#install-and-start" id="toc-install-and-start">Install and
+start</a>
+<ul>
+<li><a href="#recommended-self-contained-installer"
+id="toc-recommended-self-contained-installer">Recommended:
+self-contained installer</a></li>
+<li><a href="#development-launch"
+id="toc-development-launch">Development launch</a></li>
+<li><a href="#scripted-service-installation"
+id="toc-scripted-service-installation">Scripted service
+installation</a></li>
+</ul></li>
+<li><a href="#dashboard-tour" id="toc-dashboard-tour">Dashboard tour</a>
+<ul>
+<li><a href="#header" id="toc-header">Header</a></li>
+<li><a href="#summary-cards" id="toc-summary-cards">Summary
+cards</a></li>
+<li><a href="#ssd-endurance-panel" id="toc-ssd-endurance-panel">SSD
+endurance panel</a></li>
+<li><a href="#trend-chart" id="toc-trend-chart">Trend chart</a></li>
+<li><a href="#throughput" id="toc-throughput">Throughput</a></li>
+<li><a href="#processes-and-alert-center"
+id="toc-processes-and-alert-center">Processes and Alert center</a></li>
+<li><a href="#tray-behavior" id="toc-tray-behavior">Tray
+behavior</a></li>
+</ul></li>
+<li><a href="#ssd-endurance-and-drive-life-used"
+id="toc-ssd-endurance-and-drive-life-used">SSD endurance and Drive Life
+Used</a>
+<ul>
+<li><a href="#rated-tbw" id="toc-rated-tbw">Rated TBW</a></li>
+<li><a href="#drive-life-used-precision"
+id="toc-drive-life-used-precision">Drive Life Used precision</a></li>
+<li><a href="#projection-caveats" id="toc-projection-caveats">Projection
+caveats</a></li>
+</ul></li>
+<li><a href="#rated-tbw-lookup" id="toc-rated-tbw-lookup">Rated-TBW
+lookup</a>
+<ul>
+<li><a href="#guided-setup" id="toc-guided-setup">Guided setup</a></li>
+<li><a href="#privacy-and-data-flow"
+id="toc-privacy-and-data-flow">Privacy and data flow</a></li>
+<li><a href="#api-key-storage" id="toc-api-key-storage">API-key
+storage</a></li>
+<li><a href="#run-a-lookup" id="toc-run-a-lookup">Run a lookup</a></li>
+</ul></li>
+<li><a href="#alerts-dismissal-and-snoozing"
+id="toc-alerts-dismissal-and-snoozing">Alerts, dismissal, and
+snoozing</a>
+<ul>
+<li><a href="#alert-types" id="toc-alert-types">Alert types</a></li>
+<li><a href="#alert-center" id="toc-alert-center">Alert center</a></li>
+<li><a href="#dismiss-an-alert" id="toc-dismiss-an-alert">Dismiss an
+alert</a></li>
+<li><a href="#view-or-restore-dismissed-alerts"
+id="toc-view-or-restore-dismissed-alerts">View or restore dismissed
+alerts</a></li>
+<li><a href="#snooze-versus-dismiss"
+id="toc-snooze-versus-dismiss">Snooze versus dismiss</a></li>
+<li><a href="#tray-icon" id="toc-tray-icon">Tray icon</a></li>
+</ul></li>
+<li><a href="#live-smart-scan" id="toc-live-smart-scan">Live SMART
+scan</a>
+<ul>
+<li><a href="#usb-raid-and-virtual-disk-limitations"
+id="toc-usb-raid-and-virtual-disk-limitations">USB, RAID, and
+virtual-disk limitations</a></li>
+</ul></li>
+<li><a href="#top-application-write-requests"
+id="toc-top-application-write-requests">Top application write
+requests</a></li>
+<li><a href="#auto-suspend-rules"
+id="toc-auto-suspend-rules">Auto-suspend rules</a>
+<ul>
+<li><a href="#create-a-rule" id="toc-create-a-rule">Create a
+rule</a></li>
+<li><a href="#resume-a-process" id="toc-resume-a-process">Resume a
+process</a></li>
+<li><a href="#safety-notes" id="toc-safety-notes">Safety notes</a></li>
+</ul></li>
+<li><a href="#settings-reference" id="toc-settings-reference">Settings
+reference</a></li>
+<li><a href="#command-line-guide"
+id="toc-command-line-guide">Command-line guide</a>
+<ul>
+<li><a href="#status-and-inventory" id="toc-status-and-inventory">Status
+and inventory</a></li>
+<li><a href="#process-activity" id="toc-process-activity">Process
+activity</a></li>
+<li><a href="#endurance" id="toc-endurance">Endurance</a></li>
+<li><a href="#alerts" id="toc-alerts">Alerts</a></li>
+<li><a href="#snooze" id="toc-snooze">Snooze</a></li>
+<li><a href="#configuration"
+id="toc-configuration">Configuration</a></li>
+<li><a href="#live-terminal-dashboard"
+id="toc-live-terminal-dashboard">Live terminal dashboard</a></li>
+</ul></li>
+<li><a href="#files-privacy-and-backup"
+id="toc-files-privacy-and-backup">Files, privacy, and backup</a>
+<ul>
+<li><a href="#machine-wide-files"
+id="toc-machine-wide-files">Machine-wide files</a></li>
+<li><a href="#per-user-files" id="toc-per-user-files">Per-user
+files</a></li>
+<li><a href="#backup" id="toc-backup">Backup</a></li>
+</ul></li>
+<li><a href="#troubleshooting"
+id="toc-troubleshooting">Troubleshooting</a>
+<ul>
+<li><a href="#dashboard-says-no-disks-are-detected"
+id="toc-dashboard-says-no-disks-are-detected">Dashboard says no disks
+are detected</a></li>
+<li><a href="#charts-are-empty" id="toc-charts-are-empty">Charts are
+empty</a></li>
+<li><a href="#process-totals-are-absent-or-unexpectedly-high"
+id="toc-process-totals-are-absent-or-unexpectedly-high">Process totals
+are absent or unexpectedly high</a></li>
+<li><a href="#smart-data-is-unavailable"
+id="toc-smart-data-is-unavailable">SMART data is unavailable</a></li>
+<li><a href="#controller-error-alert-names-the-wrong-volume"
+id="toc-controller-error-alert-names-the-wrong-volume">Controller-error
+alert names the wrong volume</a></li>
+<li><a href="#online-tbw-lookup-cannot-run"
+id="toc-online-tbw-lookup-cannot-run">Online TBW lookup cannot
+run</a></li>
+<li><a href="#notifications-do-not-appear"
+id="toc-notifications-do-not-appear">Notifications do not
+appear</a></li>
+<li><a href="#auto-suspend-reports-access-denied"
+id="toc-auto-suspend-reports-access-denied">Auto-suspend reports access
+denied</a></li>
+<li><a href="#database-is-busy-or-wal-is-large"
+id="toc-database-is-busy-or-wal-is-large">Database is busy or WAL is
+large</a></li>
+<li><a href="#service-diagnostics" id="toc-service-diagnostics">Service
+diagnostics</a></li>
+</ul></li>
+<li><a href="#uninstall-and-reset"
+id="toc-uninstall-and-reset">Uninstall and reset</a>
+<ul>
+<li><a href="#scripted-uninstall" id="toc-scripted-uninstall">Scripted
+uninstall</a></li>
+<li><a href="#remove-all-data" id="toc-remove-all-data">Remove all
+data</a></li>
+</ul></li>
+<li><a href="#developer-and-release-workflows"
+id="toc-developer-and-release-workflows">Developer and release
+workflows</a>
+<ul>
+<li><a href="#build-and-test" id="toc-build-and-test">Build and
+test</a></li>
+<li><a href="#build-installers" id="toc-build-installers">Build
+installers</a></li>
+<li><a href="#commit-push-and-release"
+id="toc-commit-push-and-release">Commit, push, and release</a></li>
+<li><a href="#publish-the-authenticated-download-site"
+id="toc-publish-the-authenticated-download-site">Publish the
+authenticated download site</a></li>
+</ul></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="disk-activity-monitor-help-guide">Disk Activity Monitor Help
+Guide</h1>
+<p>This guide covers installation, everyday use, alerts, drive-health
+diagnostics, rated-TBW lookup, the command-line interface, maintenance,
+troubleshooting, and release builds.</p>
+<p>In the tray dashboard, select the top <strong>?</strong> button to
+open this guide in a modal. The build converts this Markdown source into
+a styled, navigable <code>HELP.html</code>; external links open in the
+default browser, and <code>Esc</code> closes the modal.</p>
+<p>For architecture and contributor-oriented details, see <a
+href="README.md">README.md</a>. For installer-specific notes, see <a
+href="installer/README.md">installer/README.md</a>.</p>
+<h2 id="contents">Contents</h2>
+<ul>
+<li><a href="#what-disk-activity-monitor-measures">What Disk Activity
+Monitor measures</a></li>
+<li><a href="#install-and-start">Install and start</a></li>
+<li><a href="#dashboard-tour">Dashboard tour</a></li>
+<li><a href="#ssd-endurance-and-drive-life-used">SSD endurance and Drive
+Life Used</a></li>
+<li><a href="#rated-tbw-lookup">Rated-TBW lookup</a></li>
+<li><a href="#alerts-dismissal-and-snoozing">Alerts, dismissal, and
+snoozing</a></li>
+<li><a href="#live-smart-scan">Live SMART scan</a></li>
+<li><a href="#top-application-write-requests">Top application write
+requests</a></li>
+<li><a href="#auto-suspend-rules">Auto-suspend rules</a></li>
+<li><a href="#settings-reference">Settings reference</a></li>
+<li><a href="#command-line-guide">Command-line guide</a></li>
+<li><a href="#files-privacy-and-backup">Files, privacy, and
+backup</a></li>
+<li><a href="#troubleshooting">Troubleshooting</a></li>
+<li><a href="#uninstall-and-reset">Uninstall and reset</a></li>
+<li><a href="#developer-and-release-workflows">Developer and release
+workflows</a></li>
+</ul>
+<hr />
+<h2 id="what-disk-activity-monitor-measures">What Disk Activity Monitor
+measures</h2>
+<p>Disk Activity Monitor combines several Windows data sources:</p>
+<ul>
+<li><strong>Physical-disk performance counters</strong> provide actual
+read/write traffic reaching each disk.</li>
+<li><strong>Kernel ETW FileIO events</strong> attribute logical file-I/O
+requests to processes.</li>
+<li><strong>Windows storage/WMI data</strong> identifies disks, media
+type, volume mappings, health, and reliability information.</li>
+<li><strong>SMART/NVMe telemetry</strong> provides lifetime writes,
+wear, temperature, spare capacity, media errors, unsafe shutdowns, and
+related fields when supported.</li>
+<li><strong>Windows System log Disk event 11</strong> reveals recurring
+controller-path errors that can indicate cable, port, power, enclosure,
+or controller instability.</li>
+</ul>
+<p>Two numbers that look similar have different meanings:</p>
+<ol type="1">
+<li><strong>Per-disk writes</strong> are physical-device traffic and are
+the authoritative input for SSD endurance tracking.</li>
+<li><strong>Per-process writes</strong> are logical file-write requests
+made by software. Caching, coalescing, overwritten data, and multi-disk
+activity can make these totals differ from physical disk writes.</li>
+</ol>
+<p>The collector aggregates samples into one-minute SQLite buckets. The
+dashboard then rolls those buckets into hourly, daily, and weekly
+views.</p>
+<hr />
+<h2 id="install-and-start">Install and start</h2>
+<h3 id="recommended-self-contained-installer">Recommended:
+self-contained installer</h3>
+<p>Download the appropriate installer from the <a
+href="https://github.com/andrewtheart/DiskActivityMonitor/releases/latest">latest
+GitHub release</a>:</p>
+<ul>
+<li><code>DiskActivityMonitor-Setup-&lt;version&gt;-x64.exe</code> for
+normal 64-bit Windows PCs.</li>
+<li><code>DiskActivityMonitor-Setup-&lt;version&gt;-x86.exe</code> for
+32-bit Windows.</li>
+</ul>
+<p>The installer is self-contained; the target computer does not need a
+separately installed .NET runtime. It installs:</p>
+<ul>
+<li>The <code>DiskActivityMonitor</code> Windows service, running as
+LocalSystem and starting automatically.</li>
+<li>The tray dashboard.</li>
+<li>Start Menu and optional sign-in startup integration.</li>
+</ul>
+<h3 id="development-launch">Development launch</h3>
+<p>From the repository root:</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\run<span class="op">.</span><span class="fu">ps1</span></span></code></pre></div>
+<p>Force a build first:</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\run<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Build</span></code></pre></div>
+<p>Or start service and tray development processes separately:</p>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\run-dev<span class="op">.</span><span class="fu">ps1</span></span></code></pre></div>
+<p>Running the collector without elevation is supported for development,
+but ETW process attribution and some SMART/reliability data may be
+unavailable. The collector then falls back to broader Win32 process I/O
+counters.</p>
+<h3 id="scripted-service-installation">Scripted service
+installation</h3>
+<p>From an elevated PowerShell prompt in the repository root:</p>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\install<span class="op">.</span><span class="fu">ps1</span></span></code></pre></div>
+<p>This publishes the service and tray under the repository’s
+<code>publish</code> directory, recreates the service, starts it, adds a
+Startup shortcut, and opens the dashboard.</p>
+<hr />
+<h2 id="dashboard-tour">Dashboard tour</h2>
+<h3 id="header">Header</h3>
+<ul>
+<li><strong>Disk selector:</strong> chooses the physical disk displayed
+by summary, endurance, trends, and throughput sections. SSDs are listed
+first.</li>
+<li><strong>Refresh:</strong> re-reads current data immediately.</li>
+<li><strong>Settings:</strong> switches between the dashboard and
+editable configuration.</li>
+</ul>
+<h3 id="summary-cards">Summary cards</h3>
+<p>The cards show:</p>
+<ul>
+<li>Writes today.</li>
+<li>Writes in the trailing 24 hours.</li>
+<li>Writes in the trailing seven days.</li>
+<li>Projected time to the configured TBW rating at the recent write
+rate.</li>
+</ul>
+<h3 id="ssd-endurance-panel">SSD endurance panel</h3>
+<p>This panel displays:</p>
+<ul>
+<li>Rated TBW or the configured rating range.</li>
+<li>Drive Life Used.</li>
+<li>Lifetime bytes written/read when the drive exposes them.</li>
+<li>Projected lifespan.</li>
+<li>Recent average writes per hour, day, and week.</li>
+</ul>
+<h3 id="trend-chart">Trend chart</h3>
+<p>Choose:</p>
+<ul>
+<li><strong>24h:</strong> hourly buckets.</li>
+<li><strong>30d:</strong> daily buckets.</li>
+<li><strong>12w:</strong> weekly buckets.</li>
+</ul>
+<p>The current bucket is highlighted.</p>
+<h3 id="throughput">Throughput</h3>
+<p>The throughput card shows average, median, and busiest-minute MB/s
+for 1 hour, 24 hours, 7 days, or 30 days.</p>
+<h3 id="processes-and-alert-center">Processes and Alert center</h3>
+<ul>
+<li><strong>Top application write requests</strong> ranks process-level
+logical writes for the selected time range.</li>
+<li><strong>Alert center</strong> shows non-dismissed alerts from the
+last hour.</li>
+<li><strong>All alerts</strong> opens complete retained alert history,
+including dismissed records.</li>
+</ul>
+<h3 id="tray-behavior">Tray behavior</h3>
+<p>Closing the dashboard hides it; collection continues. Use the tray
+icon to reopen it. The tray menu includes:</p>
+<ul>
+<li>Open dashboard.</li>
+<li>Open data folder.</li>
+<li>Exit.</li>
+</ul>
+<p>Exiting the tray does not stop the Windows service.</p>
+<hr />
+<h2 id="ssd-endurance-and-drive-life-used">SSD endurance and Drive Life
+Used</h2>
+<h3 id="rated-tbw">Rated TBW</h3>
+<p>TBW means <strong>terabytes written</strong>, the manufacturer’s
+write-endurance rating. Configure a rating for each SSD whenever
+possible; otherwise the default rating is used.</p>
+<p>A rating can be:</p>
+<ul>
+<li>A single value, such as <code>600 TBW</code>.</li>
+<li>A lower/upper range when the exact model or capacity is
+uncertain.</li>
+</ul>
+<h3 id="drive-life-used-precision">Drive Life Used precision</h3>
+<p>When lifetime-write telemetry and a TBW rating are both available,
+Drive Life Used is calculated as:</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mtext mathvariant="normal">Drive Life Used</mtext><mo>=</mo><mfrac><mtext mathvariant="normal">Lifetime Bytes Written</mtext><mtext mathvariant="normal">Rated TBW in Bytes</mtext></mfrac><mo>×</mo><mn>100</mn></mrow><annotation encoding="application/x-tex">
+\text{Drive Life Used} = \frac{\text{Lifetime Bytes Written}}{\text{Rated TBW in Bytes}} \times 100
+</annotation></semantics></math></p>
+<p>The dashboard shows up to two decimal places. For example, it may
+show <code>~10.38%</code>.</p>
+<p>Many drives expose their native SMART wear field only as a whole
+integer. In that case the precise lifetime-writes/TBW calculation is the
+headline and the whole-percent SMART value is shown as supporting
+context. If lifetime writes are unavailable, the dashboard falls back to
+the drive’s SMART whole-percent wear value.</p>
+<h3 id="projection-caveats">Projection caveats</h3>
+<p>The projected years-to-TBW value assumes the recent average write
+rate continues. It is not a failure prediction or warranty calculation.
+Workload changes can materially change the projection.</p>
+<hr />
+<h2 id="rated-tbw-lookup">Rated-TBW lookup</h2>
+<h3 id="guided-setup">Guided setup</h3>
+<p>If no Serper key is configured, normal tray startup offers optional
+online lookup setup:</p>
+<ul>
+<li><strong>Configure:</strong> opens the Serper setup step.</li>
+<li><strong>Not now:</strong> closes the prompt; it returns on the next
+startup.</li>
+<li><strong>Don’t show this again:</strong> suppresses the startup
+prompt.</li>
+</ul>
+<p>You can reopen guided setup from Settings at any time.</p>
+<h3 id="privacy-and-data-flow">Privacy and data flow</h3>
+<p>A lookup uses two stages:</p>
+<ol type="1">
+<li><strong>Serper web search:</strong> sends the drive model and search
+terms to Serper.</li>
+<li><strong>Foundry Local verification:</strong> analyzes returned
+evidence locally on the computer.</li>
+</ol>
+<p>The app rejects candidate values that are not explicitly supported by
+source text or do not match the requested drive capacity.</p>
+<h3 id="api-key-storage">API-key storage</h3>
+<p>Google and Serper API keys are stored per Windows user in:</p>
+<p><code>%LOCALAPPDATA%\DiskActivityMonitor\ai-secrets.json</code></p>
+<p>Keys are encrypted using Windows DPAPI with <code>CurrentUser</code>
+scope. A key encrypted for one Windows account cannot be decrypted by
+another account. Legacy plaintext key fields are migrated to protected
+fields when loaded.</p>
+<p>Environment-variable alternatives are also supported:</p>
+<ul>
+<li><code>SERPER_API_KEY</code></li>
+<li><code>GOOGLE_API_KEY</code></li>
+<li><code>GOOGLE_CSE_ID</code></li>
+</ul>
+<p>Serper is the default and recommended provider for new users. Google
+Custom Search remains available only for existing/grandfathered
+customers.</p>
+<h3 id="run-a-lookup">Run a lookup</h3>
+<ol type="1">
+<li>Select the SSD.</li>
+<li>Right-click the <strong>TBW rated</strong> pill.</li>
+<li>Choose <strong>Look up rated TBW</strong>.</li>
+<li>Review the sources, confidence, and candidate values.</li>
+<li>Select <strong>Apply</strong> only for the candidate you want
+saved.</li>
+</ol>
+<p>Nothing changes until a candidate is explicitly applied.</p>
+<hr />
+<h2 id="alerts-dismissal-and-snoozing">Alerts, dismissal, and
+snoozing</h2>
+<h3 id="alert-types">Alert types</h3>
+<p>The collector can raise alerts for:</p>
+<ul>
+<li>High SSD writes in one hour.</li>
+<li>High or critical SSD writes in 24 hours.</li>
+<li>High process-level writes in one hour.</li>
+<li>High combined process writes.</li>
+<li>SMART wear reaching the configured threshold.</li>
+<li>Projected time to TBW falling below warning or critical
+thresholds.</li>
+<li>Repeated Windows Disk event 11 controller errors.</li>
+</ul>
+<p>The cooldown prevents the same rule and scope from creating alerts
+continuously.</p>
+<h3 id="alert-center">Alert center</h3>
+<p>The main Alert center shows one grouped row per rule for
+non-dismissed occurrences in the last hour. Repeats are summarized with
+a count.</p>
+<h3 id="dismiss-an-alert">Dismiss an alert</h3>
+<p>Use either:</p>
+<ul>
+<li>The <strong>x</strong> button on a row.</li>
+<li>Right-click and choose <strong>Dismiss from Alert
+center</strong>.</li>
+</ul>
+<p>Because a row can represent several repeated occurrences, dismissing
+the row dismisses every occurrence represented by that row. Dismissal
+persists across restarts.</p>
+<p>Dismissal does <strong>not</strong> disable the alert rule. A future
+occurrence can appear again.</p>
+<h3 id="view-or-restore-dismissed-alerts">View or restore dismissed
+alerts</h3>
+<ol type="1">
+<li>Select <strong>All alerts</strong> at the top-right of the Alert
+center.</li>
+<li>Find a record marked <strong>Dismissed</strong>.</li>
+<li>Select <strong>Restore</strong> to make that occurrence eligible for
+the main Alert center again (if it is still inside the one-hour
+window).</li>
+</ol>
+<p>Dismissed records remain stored until normal retention pruning
+removes them.</p>
+<h3 id="snooze-versus-dismiss">Snooze versus dismiss</h3>
+<ul>
+<li><strong>Dismiss</strong> hides recorded alert occurrences.</li>
+<li><strong>Snooze process</strong> suppresses new alerts for one
+process until a chosen time.</li>
+<li><strong>Snooze all</strong> suppresses all new alert evaluation
+until a chosen time.</li>
+</ul>
+<p>Use dismissal when you have reviewed a notification. Use snooze when
+you expect a known workload and temporarily do not want new alerts.</p>
+<h3 id="tray-icon">Tray icon</h3>
+<p>The tray icon reflects the worst non-dismissed alert in the recent
+one-hour window:</p>
+<ul>
+<li>Green: no visible warning/critical alert.</li>
+<li>Amber: warning.</li>
+<li>Red: critical.</li>
+</ul>
+<hr />
+<h2 id="live-smart-scan">Live SMART scan</h2>
+<p>Controller-error alerts have a context action named <strong>Run live
+SMART scan</strong>.</p>
+<p>The scan is read-only. It combines available evidence from:</p>
+<ul>
+<li><code>MSFT_PhysicalDisk</code> health and operational status.</li>
+<li><code>MSFT_StorageReliabilityCounter</code>.</li>
+<li><code>Win32_DiskDrive</code> identity/status.</li>
+<li>Direct NVMe SMART/Health log page <code>0x02</code> when
+available.</li>
+<li>The controller-error count represented by the alert.</li>
+</ul>
+<p>Possible result grades include healthy, attention, critical, limited,
+and unavailable.</p>
+<h3 id="usb-raid-and-virtual-disk-limitations">USB, RAID, and
+virtual-disk limitations</h3>
+<p>Many USB bridges, RAID controllers, virtual disks, and some storage
+drivers do not pass SMART commands through. <strong>Limited</strong>
+means telemetry could not be read; it does not prove the disk or
+connection is healthy.</p>
+<p>For recurring controller errors:</p>
+<ol type="1">
+<li>Back up important data.</li>
+<li>Try a different cable and port.</li>
+<li>Avoid unpowered hubs.</li>
+<li>Check enclosure power and cooling.</li>
+<li>Compare behavior through a direct SATA/NVMe connection when
+possible.</li>
+<li>Inspect Windows System events for recurrence.</li>
+</ol>
+<hr />
+<h2 id="top-application-write-requests">Top application write
+requests</h2>
+<p>The process table answers which software is requesting file writes.
+It does not assign every physical disk write to a process.</p>
+<p>Selectable windows range from the last minute through the past year.
+<code>svchost</code> entries include hosted service names when Windows
+exposes them.</p>
+<p>For accurate ETW-based attribution, run the collector as the
+installed LocalSystem service or run development collection elevated. If
+ETW startup fails, the collector logs a warning and uses cumulative
+Win32 process I/O counters, which also include pipe/device I/O and
+therefore over-count disk-related activity.</p>
+<hr />
+<h2 id="auto-suspend-rules">Auto-suspend rules</h2>
+<p>Auto-suspend freezes all threads in matching processes after their
+rolling-hour logical write requests cross a threshold.</p>
+<h3 id="create-a-rule">Create a rule</h3>
+<ol type="1">
+<li>Open Settings.</li>
+<li>Pick a process already seen by the collector, or browse to an
+executable.</li>
+<li>Set the GB/hour threshold.</li>
+<li>Choose behavior:
+<ul>
+<li><strong>Confirm:</strong> ask through a toast before
+suspending.</li>
+<li><strong>Auto:</strong> suspend immediately and notify
+afterward.</li>
+</ul></li>
+<li>Save rules.</li>
+</ol>
+<h3 id="resume-a-process">Resume a process</h3>
+<p>Use the <strong>Resume</strong> button in the Currently suspended
+list or the action on the suspension toast.</p>
+<h3 id="safety-notes">Safety notes</h3>
+<ul>
+<li>Rules match the executable image name and can affect multiple
+processes with that name.</li>
+<li>Suspending system, security, storage, or shell processes can
+destabilize Windows or interrupt data operations.</li>
+<li>The tray can control ordinary processes owned by the current user.
+Elevated or other-user processes may require an elevated tray
+instance.</li>
+<li>Prefer Confirm mode until a rule has been validated.</li>
+</ul>
+<hr />
+<h2 id="settings-reference">Settings reference</h2>
+<p>Machine-wide settings are stored in
+<code>%ProgramData%\DiskActivityMonitor\config.json</code>. The service
+watches this file and reloads changes.</p>
+<table>
+<colgroup>
+<col style="width: 30%" />
+<col style="width: 40%" />
+<col style="width: 30%" />
+</colgroup>
+<thead>
+<tr>
+<th>Setting</th>
+<th style="text-align: right;">Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sampleIntervalSeconds</code></td>
+<td style="text-align: right;"><code>5</code></td>
+<td>Physical-disk sampling interval.</td>
+</tr>
+<tr>
+<td><code>dashboardRefreshSeconds</code></td>
+<td style="text-align: right;"><code>15</code></td>
+<td>Dashboard refresh interval.</td>
+</tr>
+<tr>
+<td><code>retentionDays</code></td>
+<td style="text-align: right;"><code>365</code></td>
+<td>Age at which minute samples and alert history are pruned.</td>
+</tr>
+<tr>
+<td><code>processMinMbPerMinute</code></td>
+<td style="text-align: right;"><code>0.5</code></td>
+<td>Process noise floor.</td>
+</tr>
+<tr>
+<td><code>ssdWarnGbPerHour</code></td>
+<td style="text-align: right;"><code>10</code></td>
+<td>SSD one-hour warning threshold.</td>
+</tr>
+<tr>
+<td><code>ssdWarnGbPerDay</code></td>
+<td style="text-align: right;"><code>100</code></td>
+<td>SSD 24-hour warning threshold.</td>
+</tr>
+<tr>
+<td><code>ssdCriticalGbPerDay</code></td>
+<td style="text-align: right;"><code>250</code></td>
+<td>SSD 24-hour critical threshold.</td>
+</tr>
+<tr>
+<td><code>processWarnGbPerHour</code></td>
+<td style="text-align: right;"><code>5</code></td>
+<td>Single-process logical-write threshold.</td>
+</tr>
+<tr>
+<td><code>allProcessesWarnGbPerHour</code></td>
+<td style="text-align: right;"><code>20</code></td>
+<td>Combined logical-write threshold.</td>
+</tr>
+<tr>
+<td><code>alertCooldownMinutes</code></td>
+<td style="text-align: right;"><code>5</code></td>
+<td>Minimum repeat interval for one rule/scope.</td>
+</tr>
+<tr>
+<td><code>enableControllerErrorAlerts</code></td>
+<td style="text-align: right;"><code>true</code></td>
+<td>Monitor System log provider <code>disk</code>, event 11.</td>
+</tr>
+<tr>
+<td><code>controllerErrorWindowDays</code></td>
+<td style="text-align: right;"><code>14</code></td>
+<td>Event 11 aggregation window.</td>
+</tr>
+<tr>
+<td><code>controllerErrorWarnCount</code></td>
+<td style="text-align: right;"><code>3</code></td>
+<td>Controller warning count.</td>
+</tr>
+<tr>
+<td><code>controllerErrorCriticalCount</code></td>
+<td style="text-align: right;"><code>10</code></td>
+<td>Controller critical count.</td>
+</tr>
+<tr>
+<td><code>defaultSsdTbw</code></td>
+<td style="text-align: right;"><code>750</code></td>
+<td>Fallback SSD endurance rating.</td>
+</tr>
+<tr>
+<td><code>defaultSsdTbwUpper</code></td>
+<td style="text-align: right;">unset</td>
+<td>Optional upper bound for the default rating.</td>
+</tr>
+<tr>
+<td><code>diskTbwRatings</code></td>
+<td style="text-align: right;">empty</td>
+<td>Per-disk lower/exact TBW values.</td>
+</tr>
+<tr>
+<td><code>diskTbwRatingsUpper</code></td>
+<td style="text-align: right;">empty</td>
+<td>Per-disk upper TBW values.</td>
+</tr>
+<tr>
+<td><code>tbwProjectionWarnYears</code></td>
+<td style="text-align: right;"><code>2</code></td>
+<td>Projection warning threshold.</td>
+</tr>
+<tr>
+<td><code>tbwProjectionCriticalYears</code></td>
+<td style="text-align: right;"><code>1</code></td>
+<td>Projection critical threshold.</td>
+</tr>
+<tr>
+<td><code>ssdWearWarnPercent</code></td>
+<td style="text-align: right;"><code>90</code></td>
+<td>SMART wear warning threshold.</td>
+</tr>
+<tr>
+<td><code>enableNotifications</code></td>
+<td style="text-align: right;"><code>true</code></td>
+<td>Show alert desktop notifications.</td>
+</tr>
+<tr>
+<td><code>enableTbwWebLookup</code></td>
+<td style="text-align: right;"><code>true</code></td>
+<td>Enable rated-TBW web lookup.</td>
+</tr>
+<tr>
+<td><code>suppressTbwOnlineSetupPrompt</code></td>
+<td style="text-align: right;"><code>false</code></td>
+<td>Suppress guided lookup startup prompt.</td>
+</tr>
+<tr>
+<td><code>webSearchProvider</code></td>
+<td style="text-align: right;"><code>serper</code></td>
+<td><code>serper</code> or <code>google</code>.</td>
+</tr>
+<tr>
+<td><code>tbwLookupModel</code></td>
+<td style="text-align: right;">automatic</td>
+<td>Optional Foundry Local model override.</td>
+</tr>
+<tr>
+<td><code>autoSuspendRules</code></td>
+<td style="text-align: right;">empty</td>
+<td>Process suspension rules.</td>
+</tr>
+</tbody>
+</table>
+<p>Prefer the dashboard or CLI over hand-editing. If hand-editing JSON,
+keep valid JSON syntax and preserve numeric/boolean types.</p>
+<hr />
+<h2 id="command-line-guide">Command-line guide</h2>
+<p>Use the repository helper during development:</p>
+<div class="sourceCode" id="cb5"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> <span class="op">&lt;</span>command<span class="op">&gt;</span> <span class="op">[</span>options<span class="op">]</span></span></code></pre></div>
+<p>Installed or published builds can call <code>dam.exe</code>
+directly.</p>
+<h3 id="status-and-inventory">Status and inventory</h3>
+<div class="sourceCode" id="cb6"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> status</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> disks</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> summary <span class="op">--</span>all</span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> summary <span class="op">--</span>disk <span class="dv">0</span></span></code></pre></div>
+<h3 id="process-activity">Process activity</h3>
+<div class="sourceCode" id="cb7"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> top <span class="op">--</span>minutes <span class="dv">60</span> <span class="op">--</span>count <span class="dv">15</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> <span class="cf">process</span> Code</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> trends <span class="op">--</span>range hour <span class="op">--</span>count <span class="dv">24</span> <span class="op">--</span>disk <span class="dv">0</span></span></code></pre></div>
+<p>Quote process names containing spaces.</p>
+<h3 id="endurance">Endurance</h3>
+<div class="sourceCode" id="cb8"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> endurance <span class="op">--</span>all</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> endurance <span class="op">--</span>disk <span class="dv">0</span></span></code></pre></div>
+<h3 id="alerts">Alerts</h3>
+<div class="sourceCode" id="cb9"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Outstanding/non-dismissed alerts</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> alerts</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Include acknowledged/dismissed alerts</span></span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> alerts <span class="op">--</span>all <span class="op">--</span>count <span class="dv">100</span> <span class="op">--</span>full</span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Acknowledge/dismiss selected records</span></span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> ack <span class="dv">120</span> <span class="dv">121</span></span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Acknowledge all records</span></span>
+<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> ack <span class="op">--</span>all</span></code></pre></div>
+<p>The CLI retains the historical term <strong>acknowledge</strong> for
+the database state used by dashboard dismissal.</p>
+<h3 id="snooze">Snooze</h3>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> snooze list</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> snooze <span class="cf">process</span> Code 1h</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> snooze all 30m</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> snooze <span class="fu">clear</span> Code</span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> snooze <span class="fu">clear</span> <span class="op">--</span>global</span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> snooze <span class="fu">clear</span> <span class="op">--</span>all</span></code></pre></div>
+<p>Duration examples: <code>30m</code>, <code>1h</code>,
+<code>1d</code>, <code>1w</code>.</p>
+<h3 id="configuration">Configuration</h3>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> config get</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> config get ssdWarnGbPerHour</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> config <span class="fu">set</span> ssdWarnGbPerHour <span class="dv">20</span></span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> config <span class="fu">set</span> enableNotifications false</span></code></pre></div>
+<h3 id="live-terminal-dashboard">Live terminal dashboard</h3>
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> watch <span class="op">--</span>interval <span class="dv">5</span></span></code></pre></div>
+<p>Press <code>Ctrl+C</code> to stop watching.</p>
+<hr />
+<h2 id="files-privacy-and-backup">Files, privacy, and backup</h2>
+<h3 id="machine-wide-files">Machine-wide files</h3>
+<p><code>%ProgramData%\DiskActivityMonitor\</code></p>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>diskactivity.db</code></td>
+<td>SQLite database containing disks, minute aggregates, alerts,
+snoozes, and suspended-process state.</td>
+</tr>
+<tr>
+<td><code>diskactivity.db-wal</code> /
+<code>diskactivity.db-shm</code></td>
+<td>SQLite WAL support files that may exist while processes are
+active.</td>
+</tr>
+<tr>
+<td><code>config.json</code></td>
+<td>Machine-wide configuration.</td>
+</tr>
+<tr>
+<td><code>toast-error.log</code></td>
+<td>Best-effort tray/toast errors, created only when needed.</td>
+</tr>
+<tr>
+<td><code>logs\</code></td>
+<td>Reserved application log directory.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="per-user-files">Per-user files</h3>
+<p><code>%LOCALAPPDATA%\DiskActivityMonitor\ai-secrets.json</code></p>
+<p>Contains DPAPI-protected API key values and the non-secret Google CSE
+identifier when configured.</p>
+<h3 id="backup">Backup</h3>
+<p>For a consistent database copy:</p>
+<ol type="1">
+<li>Stop the <code>DiskActivityMonitor</code> service.</li>
+<li>Exit the tray app.</li>
+<li>Copy the entire <code>%ProgramData%\DiskActivityMonitor</code>
+directory.</li>
+<li>Start the service and tray again.</li>
+</ol>
+<p>Also back up the per-user secrets file if online lookup configuration
+should move with the same Windows account. DPAPI-protected keys
+generally cannot be moved to a different Windows account; re-enter keys
+there instead.</p>
+<hr />
+<h2 id="troubleshooting">Troubleshooting</h2>
+<h3 id="dashboard-says-no-disks-are-detected">Dashboard says no disks
+are detected</h3>
+<ul>
+<li><p>Confirm the service is running:</p>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="fu">Get-Service</span> DiskActivityMonitor</span></code></pre></div></li>
+<li><p>Open <code>%ProgramData%\DiskActivityMonitor</code> and confirm
+<code>diskactivity.db</code> exists.</p></li>
+<li><p>Wait through at least one sampling interval.</p></li>
+<li><p>Restart the service if storage hardware was added or removed and
+does not appear after rescanning.</p></li>
+</ul>
+<h3 id="charts-are-empty">Charts are empty</h3>
+<p>One-minute buckets need time to accumulate. Wait several minutes,
+select the expected disk, and use Refresh. Verify service state with
+<code>dam status</code>.</p>
+<h3 id="process-totals-are-absent-or-unexpectedly-high">Process totals
+are absent or unexpectedly high</h3>
+<ul>
+<li>Install/run the collector as the Windows service for elevated ETW
+access.</li>
+<li>When ETW is unavailable, fallback counters include non-file handles
+such as pipes and devices.</li>
+<li>Process totals are logical requests, not physical disk writes.</li>
+</ul>
+<h3 id="smart-data-is-unavailable">SMART data is unavailable</h3>
+<ul>
+<li>Ensure the service runs elevated/LocalSystem.</li>
+<li>USB, RAID, Storage Spaces, and virtual-disk layers may hide SMART
+data.</li>
+<li>Try a direct storage connection if practical.</li>
+<li>Treat Limited/Unavailable as missing evidence, not a healthy
+result.</li>
+</ul>
+<h3 id="controller-error-alert-names-the-wrong-volume">Controller-error
+alert names the wrong volume</h3>
+<p>Windows event 11 records identify <code>HarddiskN</code>.
+Removable/USB disk numbers can change after reconnection. The alert
+preserves the original event device path but shows the
+<strong>current</strong> volume mapping. Verify the disk number and
+event timestamps before acting.</p>
+<h3 id="online-tbw-lookup-cannot-run">Online TBW lookup cannot run</h3>
+<p>Check:</p>
+<ol type="1">
+<li><code>enableTbwWebLookup</code> is true.</li>
+<li><code>webSearchProvider</code> is <code>serper</code> for new
+setups.</li>
+<li>A Serper key is saved in guided setup or <code>SERPER_API_KEY</code>
+is set.</li>
+<li>Foundry Local is installed and its CLI/service is available.</li>
+<li>A suitable local model is installed; use the lookup modal’s download
+action when offered.</li>
+<li>Internet access permits the selected search API.</li>
+</ol>
+<p>If no verified result is found, do not assume the nearest model’s
+rating. Enter the manufacturer’s rating manually when known.</p>
+<h3 id="notifications-do-not-appear">Notifications do not appear</h3>
+<ul>
+<li>Confirm <code>enableNotifications</code> is true.</li>
+<li>Check Windows notification settings and Focus Assist/Do Not
+Disturb.</li>
+<li>Confirm the tray app is running.</li>
+<li>Inspect
+<code>%ProgramData%\DiskActivityMonitor\toast-error.log</code> if it
+exists.</li>
+</ul>
+<h3 id="auto-suspend-reports-access-denied">Auto-suspend reports access
+denied</h3>
+<p>The target likely runs elevated or under another account. Run the
+tray elevated only if process control is required and the security
+impact is understood.</p>
+<h3 id="database-is-busy-or-wal-is-large">Database is busy or WAL is
+large</h3>
+<p>SQLite WAL mode permits the service and tray to share data. The
+collector checkpoints periodically and on shutdown. Close readers and
+restart the service to allow a clean checkpoint. Do not delete only the
+WAL while processes are using the database.</p>
+<h3 id="service-diagnostics">Service diagnostics</h3>
+<p>Useful checks:</p>
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="fu">Get-Service</span> DiskActivityMonitor</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sc</span><span class="op">.</span><span class="fu">exe</span> query DiskActivityMonitor</span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> status</span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a><span class="fu">Get-WinEvent</span> <span class="op">-</span>LogName System <span class="op">-</span>MaxEvents <span class="dv">100</span> <span class="op">|</span></span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">Where-Object</span> ProviderName <span class="op">-eq</span> <span class="st">&#39;disk&#39;</span></span></code></pre></div>
+<p>When run interactively, the collector writes structured logs to its
+console. As a Windows Service, hosting/lifecycle messages can also be
+inspected through Windows Event Viewer where available.</p>
+<hr />
+<h2 id="uninstall-and-reset">Uninstall and reset</h2>
+<h3 id="scripted-uninstall">Scripted uninstall</h3>
+<p>Run elevated:</p>
+<div class="sourceCode" id="cb15"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\uninstall<span class="op">.</span><span class="fu">ps1</span></span></code></pre></div>
+<p>The script removes the service and Startup shortcut and stops the
+tray. It intentionally leaves monitoring history and settings.</p>
+<h3 id="remove-all-data">Remove all data</h3>
+<p>After uninstalling and confirming service/tray processes are stopped,
+delete:</p>
+<ul>
+<li><code>%ProgramData%\DiskActivityMonitor</code></li>
+<li><code>%LOCALAPPDATA%\DiskActivityMonitor</code> for each user whose
+lookup secrets should be removed</li>
+</ul>
+<p>Deleting the data directory permanently removes history, alerts,
+snoozes, configuration, and stored suspension state.</p>
+<hr />
+<h2 id="developer-and-release-workflows">Developer and release
+workflows</h2>
+<h3 id="build-and-test">Build and test</h3>
+<div class="sourceCode" id="cb16"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>dotnet build <span class="op">.</span>\DiskActivityMonitor<span class="op">.</span><span class="fu">slnx</span> <span class="op">-</span>c Release</span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>dotnet test <span class="op">.</span>\tests\DiskActivityMonitor<span class="op">.</span><span class="fu">Tests</span>\DiskActivityMonitor<span class="op">.</span><span class="fu">Tests</span><span class="op">.</span><span class="fu">csproj</span> <span class="op">-</span>c Release</span></code></pre></div>
+<h3 id="build-installers">Build installers</h3>
+<p>Build x64 and x86 with one version and a consolidated summary:</p>
+<div class="sourceCode" id="cb17"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span></span></code></pre></div>
+<p>Preview without changing files:</p>
+<div class="sourceCode" id="cb18"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span> <span class="op">-</span>WhatIf</span></code></pre></div>
+<p>Build selected architecture:</p>
+<div class="sourceCode" id="cb19"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Variant x64 <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span></span></code></pre></div>
+<h3 id="commit-push-and-release">Commit, push, and release</h3>
+<div class="sourceCode" id="cb20"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span> <span class="op">-</span>Commit</span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span> <span class="op">-</span>Push</span></code></pre></div>
+<p>With <code>-Push</code>, the script asks whether the GitHub release
+should be:</p>
+<ul>
+<li><strong>Draft:</strong> upload for review without official
+publication.</li>
+<li><strong>Published:</strong> publish officially and mark latest.</li>
+</ul>
+<p>For unattended operation:</p>
+<div class="sourceCode" id="cb21"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span> <span class="op">-</span>Push <span class="op">-</span>ReleaseMode Draft</span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span> <span class="op">-</span>Push <span class="op">-</span>ReleaseMode Published</span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span> <span class="op">-</span>Push <span class="op">-</span>SkipRelease</span></code></pre></div>
+<p>The lower-level builder remains available at
+<code>installer\build-installer.ps1</code> for direct x64/x86
+packaging.</p>
+<h3 id="publish-the-authenticated-download-site">Publish the
+authenticated download site</h3>
+<p>The Azure publication workflow is separate from GitHub Releases:</p>
+<div class="sourceCode" id="cb22"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\publish-to-azure<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span></span></code></pre></div>
+<p>It builds x64/x86 installers, creates an x64 portable ZIP, uploads
+artifacts, and surgically updates only the Disk Activity Monitor card on
+the existing static site.</p>
+</body>
+</html>

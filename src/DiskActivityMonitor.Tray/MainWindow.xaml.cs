@@ -1,7 +1,11 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Net.Http;
+using System.Net;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
@@ -12,6 +16,7 @@ using DiskActivityMonitor.Core.Configuration;
 using DiskActivityMonitor.Core.Data;
 using DiskActivityMonitor.Core.Models;
 using DiskActivityMonitor.Tray.Controls;
+using Microsoft.Web.WebView2.Core;
 using DispatcherTimer = System.Windows.Threading.DispatcherTimer;
 
 namespace DiskActivityMonitor.Tray;
@@ -22,6 +27,8 @@ public partial class MainWindow : Window
     private readonly ConfigStore _config;
     private readonly DispatcherTimer _refreshTimer;
     private bool _forceClose;
+    private bool _helpInitialized;
+    private Uri? _helpDocumentUri;
 
     // Rated-TBW web lookup (on-device Foundry Local model + web search).
     private static readonly HttpClient TbwHttp = new() { Timeout = TimeSpan.FromMinutes(5) };
@@ -223,6 +230,106 @@ public partial class MainWindow : Window
         UpdateProcesses();
         UpdateAlerts();
         RefreshSuspended();
+    }
+
+    // ----------------------------------------------------------- Compiled help
+
+    private async void Help_Click(object sender, RoutedEventArgs e)
+    {
+        HelpOverlay.Visibility = Visibility.Visible;
+        HelpOverlay.Focus();
+        if (_helpInitialized) return;
+
+        _helpInitialized = true;
+        HelpLoadingPanel.Visibility = Visibility.Visible;
+        HelpFallbackPanel.Visibility = Visibility.Collapsed;
+        HelpWebView.Visibility = Visibility.Collapsed;
+
+        string htmlPath = Path.Combine(AppContext.BaseDirectory, "HELP.html");
+        string markdownPath = Path.Combine(AppContext.BaseDirectory, "HELP.md");
+        try
+        {
+            if (!File.Exists(htmlPath))
+            {
+                ShowHelpFallback("The generated HELP.html file was not found. Rebuild the tray project with pandoc installed.", markdownPath);
+                return;
+            }
+
+            string userDataFolder = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "DiskActivityMonitor", "WebView2");
+            Directory.CreateDirectory(userDataFolder);
+            var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: userDataFolder);
+            await HelpWebView.EnsureCoreWebView2Async(environment);
+            HelpWebView.DefaultBackgroundColor = System.Drawing.Color.FromArgb(0x15, 0x18, 0x1B);
+            _helpDocumentUri = new Uri(htmlPath);
+            HelpWebView.Source = _helpDocumentUri;
+        }
+        catch (Exception ex)
+        {
+            ShowHelpFallback($"WebView2 could not render compiled help: {ex.Message}", markdownPath);
+        }
+    }
+
+    private void HelpClose_Click(object sender, RoutedEventArgs e)
+        => HelpOverlay.Visibility = Visibility.Collapsed;
+
+    private void HelpOverlay_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != System.Windows.Input.Key.Escape) return;
+        e.Handled = true;
+        HelpOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private void HelpWebView_NavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
+    {
+        if (_helpDocumentUri is not null && Uri.TryCreate(e.Uri, UriKind.Absolute, out var target)
+            && target.IsFile
+            && string.Equals(target.LocalPath, _helpDocumentUri.LocalPath, StringComparison.OrdinalIgnoreCase))
+            return;
+        e.Cancel = true;
+        try { Process.Start(new ProcessStartInfo(e.Uri) { UseShellExecute = true }); }
+        catch { /* an external-link failure should not close help */ }
+    }
+
+    private void HelpWebView_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    {
+        HelpLoadingPanel.Visibility = Visibility.Collapsed;
+        if (e.IsSuccess)
+        {
+            HelpFallbackPanel.Visibility = Visibility.Collapsed;
+            HelpWebView.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            ShowHelpFallback($"Compiled help navigation failed ({e.WebErrorStatus}).",
+                Path.Combine(AppContext.BaseDirectory, "HELP.md"));
+        }
+    }
+
+    internal void ShowHelpFallback(string message, string markdownPath)
+    {
+        HelpLoadingPanel.Visibility = Visibility.Collapsed;
+        HelpWebView.Visibility = Visibility.Collapsed;
+        HelpFallbackMessage.Text = message;
+        HelpFallbackText.Text = File.Exists(markdownPath)
+            ? MarkdownToPlainText(File.ReadAllText(markdownPath))
+            : "The fallback HELP.md file was also not found.";
+        HelpFallbackPanel.Visibility = Visibility.Visible;
+    }
+
+    internal static string MarkdownToPlainText(string markdown)
+    {
+        string text = Regex.Replace(markdown ?? string.Empty, @"```[a-zA-Z0-9_-]*\r?\n([\s\S]*?)```", "$1");
+        text = Regex.Replace(text, @"!\[([^\]]*)\]\([^)]*\)", "$1");
+        text = Regex.Replace(text, @"\[([^\]]+)\]\([^)]*\)", "$1");
+        text = Regex.Replace(text, @"^\s{0,3}#{1,6}\s*", string.Empty, RegexOptions.Multiline);
+        text = Regex.Replace(text, @"^\s*>\s?", string.Empty, RegexOptions.Multiline);
+        text = Regex.Replace(text, @"\|?\s*:?-{3,}:?\s*(?=\||$)", string.Empty, RegexOptions.Multiline);
+        text = Regex.Replace(text, @"[*_~`]", string.Empty);
+        text = WebUtility.HtmlDecode(text);
+        text = Regex.Replace(text, @"\r?\n{3,}", Environment.NewLine + Environment.NewLine);
+        return text.Trim();
     }
 
     // ----------------------------------------------------------- Throughput (MB/s) stats

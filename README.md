@@ -14,6 +14,9 @@ It has two parts:
 
 Both share a database under `%ProgramData%\DiskActivityMonitor\`.
 
+> **Need usage or troubleshooting help?** See the comprehensive [HELP.md](HELP.md) guide.
+> The tray app also compiles this guide to HTML and displays it in-app from the top **?** button.
+
 ---
 
 ## Why this exists
@@ -35,7 +38,8 @@ warns you when a drive or process crosses a threshold you set.
 - **Auto-suspend rules** that freeze a process when its rolling-hour writes exceed a limit -
   either after a one-click toast confirmation (the default) or automatically.
 - **SSD endurance projection** — enter a drive's TBW rating and it estimates years-to-TBW at
-  your current write rate and the percentage observed since monitoring began.
+  your current write rate. When lifetime-write telemetry is available, **Drive Life Used** is
+  calculated from lifetime writes / rated TBW and displayed with up to two decimal places.
 - **On-demand rated-TBW lookup** — right-click the **“TBW rated”** pill to search the web and
   extract candidate endurance ratings with the configured local Foundry model.
 - **Guided online-lookup setup** — on startup, the tray offers optional Serper setup until a key
@@ -49,10 +53,14 @@ warns you when a drive or process crosses a threshold you set.
 - **Live SMART scan from controller alerts** — right-click an affected alert for an in-app,
   read-only health report combining Windows storage health, reliability counters and direct
   NVMe SMART telemetry where the hardware exposes it.
-- **Tray icon status color** (green / amber / red) reflecting the worst outstanding alert,
+- **Persistent alert dismissal and complete history** — dismiss grouped rows from the main
+  one-hour view, review every retained record under **All alerts**, and restore dismissed records.
+- **Tray icon status color** (green / amber / red) reflecting the worst non-dismissed recent alert,
   plus optional desktop toast notifications.
 - **Tunable settings** edited live from the dashboard; the collector picks up changes
   automatically.
+- **In-app compiled help** — the top **?** button opens a searchable, navigable HTML help modal
+  generated from `HELP.md`, with a readable Markdown fallback if WebView2 cannot initialize.
 - **Self-contained data** in `%ProgramData%\DiskActivityMonitor\` (SQLite, WAL mode) with
   automatic pruning after a configurable retention period.
 
@@ -60,12 +68,13 @@ warns you when a drive or process crosses a threshold you set.
 
 ## Download
 
-Self-contained installers (no .NET runtime required on the target machine):
+Self-contained installers (no .NET runtime required on the target machine) are published as
+[GitHub Release assets](https://github.com/andrewtheart/DiskActivityMonitor/releases):
 
 | Architecture | Installer |
 |---|---|
-| **x64** (64-bit Intel/AMD) | [`DiskActivityMonitor-Setup-1.0.0-x64.exe`](installer/Output/DiskActivityMonitor-Setup-1.0.0-x64.exe) |
-| **x86** (32-bit) | [`DiskActivityMonitor-Setup-1.0.0-x86.exe`](installer/Output/DiskActivityMonitor-Setup-1.0.0-x86.exe) |
+| **x64** (64-bit Intel/AMD) | Download `DiskActivityMonitor-Setup-<version>-x64.exe` from the [latest release](https://github.com/andrewtheart/DiskActivityMonitor/releases/latest). |
+| **x86** (32-bit) | Download `DiskActivityMonitor-Setup-<version>-x86.exe` from the [latest release](https://github.com/andrewtheart/DiskActivityMonitor/releases/latest). |
 
 The installer registers a Windows Service (auto-start), adds a Start Menu shortcut, and
 optionally creates a startup entry so the tray dashboard launches at sign-in.
@@ -74,9 +83,17 @@ optionally creates a startup entry so the tray dashboard launches at sign-in.
 
 ## Requirements
 
-- Windows 10/11
-- .NET 10 SDK (or the .NET 10 Desktop Runtime to run published binaries)
-- [Inno Setup 6](https://jrsoftware.org/isinfo.php) (only needed to build the installer)
+### Installed/self-contained release
+
+- Windows 10 or Windows 11.
+- No separate .NET runtime is required.
+
+### Development/build machine
+
+- .NET 10 SDK.
+- [Inno Setup 6](https://jrsoftware.org/isinfo.php) to build installers.
+- Authenticated GitHub CLI (`gh`) only when using installer `-Push` release automation.
+- Foundry Local plus a suitable local model only for the optional rated-TBW lookup.
 
 ---
 
@@ -196,7 +213,7 @@ src\DiskActivityMonitor.Cli\bin\Debug\net10.0-windows\dam.exe status
 
 | Command | What it does |
 |---------|--------------|
-| `status` | Service/DB status, disk count, unacked alerts, snoozes |
+| `status` | Service/DB status, disk count, non-dismissed alerts, snoozes |
 | `disks` | List monitored disks (media, size, SMART wear) |
 | `summary [--disk ID] [--all]` | Writes today / last 24h / last 7d |
 | `top [--minutes N] [--count N]` | Top processes by writes in a window (default 60m, 10) |
@@ -259,8 +276,9 @@ flowchart LR
   writes. The per-disk physical totals remain authoritative for SSD endurance. (Under the
   un-elevated fallback reader, per-process numbers over-count further because they also include
   pipe/device I/O.)
-- TBW projections assume your current average write rate continues; they are estimates, not
-  guarantees, and only count writes observed since monitoring started.
+- TBW projections assume your recent observed average write rate continues; they are estimates,
+  not guarantees. Consumed endurance uses drive-reported lifetime writes when available and falls
+  back to writes observed since monitoring started when lifetime telemetry is unavailable.
 - Reading some processes owned by other accounts requires the collector to run with
   sufficient privileges (the Windows Service runs as LocalSystem and sees everything).
 - Many USB enclosures do not pass SMART telemetry through to Windows. In that case the live scan
@@ -289,9 +307,19 @@ dashboard or by hand (the collector watches the file). Thresholds are in GB.
 | `controllerErrorWindowDays` | Trailing event-count window | 14 |
 | `controllerErrorWarnCount` | Warning threshold inside the event-count window | 3 |
 | `controllerErrorCriticalCount` | Critical threshold inside the event-count window | 10 |
+| `defaultSsdTbw` / `defaultSsdTbwUpper` | Fallback SSD TBW rating and optional upper range | 750 / none |
 | `diskTbwRatings` | Per-disk TBW endurance rating (TB) | none |
 | `diskTbwRatingsUpper` | Optional per-disk upper TBW; when set, endurance %/projection are shown as a range | none |
+| `tbwProjectionWarnYears` / `tbwProjectionCriticalYears` | Projected-years warning / critical thresholds | 2 / 1 |
+| `ssdWearWarnPercent` | SMART wear warning threshold | 90 |
 | `enableNotifications` | Show desktop balloon notifications | true |
+| `enableTbwWebLookup` | Enable online evidence search + local verification | true |
+| `suppressTbwOnlineSetupPrompt` | Suppress guided lookup setup at startup | false |
+| `webSearchProvider` | Search backend (`serper` recommended; `google` for existing customers) | serper |
+| `tbwLookupModel` | Optional Foundry Local model override | automatic |
+| `autoSuspendRules` | Per-process confirm/automatic suspension rules | none |
+
+See [HELP.md](HELP.md#settings-reference) for the full operational explanation of each setting.
 
 ---
 
@@ -304,14 +332,17 @@ src/
   DiskActivityMonitor.Tray/      WPF system-tray dashboard
   DiskActivityMonitor.Cli/       Command-line client (dam.exe)
 tests/
-  DiskActivityMonitor.Tests/     xUnit tests for Core (alerts, repo, config, formatting)
+  DiskActivityMonitor.Tests/     xUnit + real STA WPF tests for Core, service, tray, and workflows
 installer/
   build-installer.ps1            Publish + compile the Inno Setup installer
   DiskActivityMonitor.iss        Inno Setup script
 scripts/
+  build-all-installers.ps1       Build x64/x86, optionally commit/push/release
   install.ps1 / uninstall.ps1    Service install/removal (elevated)
+  publish-to-azure.ps1           Build/upload installers + portable ZIP and update site card
   run-dev.ps1                    Run both from source (separate windows)
   make-icon.ps1                  Regenerate assets/app.ico from code
+HELP.md                          Comprehensive user, CLI, troubleshooting, and release guide
 run.ps1                          Build-if-needed + launch service & tray
 dam.ps1                          CLI convenience wrapper
 ```
@@ -322,10 +353,19 @@ dam.ps1                          CLI convenience wrapper
 # Build the full solution
 dotnet build .\DiskActivityMonitor.slnx -c Release
 
-# Run the unit tests
-dotnet test .\tests\DiskActivityMonitor.Tests
+# Run the full test suite
+dotnet test .\tests\DiskActivityMonitor.Tests\DiskActivityMonitor.Tests.csproj -c Release
 
-# Build the self-contained installer (requires Inno Setup 6 on PATH or in Program Files)
-.\installer\build-installer.ps1 -Version 1.0.0
-# → produces installer\Output\DiskActivityMonitor-Setup-1.0.0.exe
+# Build both self-contained installer architectures with one version
+.\scripts\build-all-installers.ps1 -Version 1.5.0
+
+# Preview the build / commit / push / release plan without changing files
+.\scripts\build-all-installers.ps1 -Version 1.5.0 -Push -WhatIf
+
+# Build, commit, push, then choose Draft or Published release mode
+.\scripts\build-all-installers.ps1 -Version 1.5.0 -Push
 ```
+
+Output lands in `installer\Output\` as architecture-suffixed executables. See
+[installer/README.md](installer/README.md) and [HELP.md](HELP.md#developer-and-release-workflows)
+for selected-variant, unattended release-mode, and Azure publication examples.

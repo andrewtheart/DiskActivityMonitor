@@ -18,6 +18,24 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Toolkit.Uwp.Notifications" Version="7.1.3" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4078.44" />
+  </ItemGroup>
+
+  <!-- Convert the repository HELP.md into a standalone, navigable HTML document on build.
+       If pandoc is unavailable, retain and ship the last generated HELP.html. -->
+  <Target Name="ConvertHelpMdToHtml"
+          BeforeTargets="BeforeBuild"
+          Condition="'$(DesignTimeBuild)' != 'true'"
+          Inputs="$(MSBuildThisFileDirectory)..\..\HELP.md;$(MSBuildThisFileDirectory)help-style.html"
+          Outputs="$(MSBuildThisFileDirectory)HELP.html">
+    <Exec Command="pandoc &quot;$(MSBuildThisFileDirectory)..\..\HELP.md&quot; -s --toc --toc-depth=3 --mathml --metadata pagetitle=&quot;Disk Activity Monitor Help&quot; --include-in-header=&quot;$(MSBuildThisFileDirectory)help-style.html&quot; -o &quot;$(MSBuildThisFileDirectory)HELP.html&quot;"
+          IgnoreExitCode="true"
+          ContinueOnError="WarnAndContinue" />
+  </Target>
+
+  <ItemGroup>
+    <Content Include="HELP.html" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\HELP.md" Link="HELP.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

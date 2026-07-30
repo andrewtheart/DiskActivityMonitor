@@ -1,0 +1,139 @@
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #15181b;
+    --surface: #1e2228;
+    --surface-2: #252a31;
+    --border: #343b45;
+    --text: #e6e9ed;
+    --muted: #a8afb9;
+    --accent: #64a7ff;
+    --toc-width: 280px;
+  }
+
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    box-sizing: border-box;
+    font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    line-height: 1.6;
+    margin: 0;
+    max-width: 1260px;
+    padding: 24px 42px 80px calc(var(--toc-width) + 34px);
+    text-rendering: optimizeLegibility;
+  }
+
+  h1, h2, h3, h4 {
+    color: #fff;
+    font-family: "Segoe UI Variable Display", "Segoe UI Semibold", "Segoe UI", sans-serif;
+    line-height: 1.25;
+    scroll-margin-top: 18px;
+  }
+  h1 { font-size: 30px; margin-top: 0; }
+  h2 { border-bottom: 1px solid var(--border); font-size: 22px; margin-top: 42px; padding-bottom: 8px; }
+  h3 { font-size: 17px; margin-top: 28px; }
+  a { color: var(--accent); }
+  strong { color: #fff; }
+  blockquote {
+    background: var(--surface);
+    border-left: 4px solid var(--accent);
+    margin: 18px 0;
+    padding: 10px 16px;
+  }
+  code {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: #d9e8ff;
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: .9em;
+    padding: 1px 5px;
+  }
+  pre {
+    background: #111418;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: auto;
+    padding: 14px 16px;
+  }
+  pre code { background: none; border: 0; padding: 0; }
+  table { border-collapse: collapse; display: block; max-width: 100%; overflow-x: auto; }
+  th, td { border: 1px solid var(--border); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--surface-2); color: #fff; }
+  tr:nth-child(even) { background: rgba(255,255,255,.025); }
+  hr { border: 0; border-top: 1px solid var(--border); margin: 34px 0; }
+
+  #TOC {
+    background: #111418;
+    border-right: 1px solid var(--border);
+    bottom: 0;
+    box-sizing: border-box;
+    font-size: 13px;
+    left: 0;
+    overflow: auto;
+    padding: 18px 12px 32px;
+    position: fixed;
+    top: 0;
+    width: var(--toc-width);
+  }
+  #toc-brand {
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 10px;
+    padding: 2px 9px 14px;
+  }
+  .toc-brand-title { color: #fff; display: block; font-size: 16px; font-weight: 700; }
+  .toc-brand-sub { color: var(--muted); display: block; font-size: 11px; margin-top: 3px; }
+  #TOC ul { list-style: none; margin: 0; padding: 0; }
+  #TOC ul ul { border-left: 1px solid rgba(255,255,255,.1); margin-left: 9px; padding-left: 12px; }
+  #TOC a {
+    border-radius: 5px;
+    color: #cbd1da;
+    display: block;
+    padding: 5px 8px;
+    text-decoration: none;
+  }
+  #TOC a:hover, #TOC a.active { background: rgba(100,167,255,.16); color: #fff; }
+  #TOC > ul > li > a { font-weight: 650; }
+
+  @media (max-width: 800px) {
+    :root { --toc-width: 220px; }
+    body { padding-left: calc(var(--toc-width) + 22px); padding-right: 22px; }
+  }
+</style>
+<script>
+  (function () {
+    function initializeHelpNavigation() {
+      var toc = document.getElementById("TOC");
+      if (!toc) return;
+
+      var brand = document.createElement("div");
+      brand.id = "toc-brand";
+      brand.innerHTML = '<span class="toc-brand-title">Disk Activity Monitor</span><span class="toc-brand-sub">Help &amp; troubleshooting</span>';
+      toc.insertBefore(brand, toc.firstChild);
+
+      var links = {};
+      toc.querySelectorAll('a[href^="#"]').forEach(function (link) {
+        try { links[decodeURIComponent(link.getAttribute("href").slice(1))] = link; } catch (_) {}
+      });
+      var headings = document.querySelectorAll("h2[id], h3[id]");
+      if (!headings.length || typeof IntersectionObserver === "undefined") return;
+      var active = null;
+      var observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          var link = links[entry.target.id];
+          if (!link) return;
+          if (active) active.classList.remove("active");
+          link.classList.add("active");
+          active = link;
+          link.scrollIntoView({ block: "nearest" });
+        });
+      }, { rootMargin: "0px 0px -76% 0px" });
+      headings.forEach(function (heading) { observer.observe(heading); });
+    }
+
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initializeHelpNavigation);
+    else initializeHelpNavigation();
+  })();
+</script>
