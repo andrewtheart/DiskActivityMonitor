@@ -23,6 +23,14 @@ installs the tray dashboard per user.
 Run from the repository root:
 
 ```powershell
+.\scripts\build-all-installers.ps1 -Version 1.5.0                  # x64 + x86 with a summary
+.\scripts\build-all-installers.ps1 -Variant x64 -Version 1.5.0     # selected architecture
+.\scripts\build-all-installers.ps1 -Version 1.5.0 -WhatIf          # print the plan only
+.\scripts\build-all-installers.ps1 -Version 1.5.0 -Commit          # build, stage, and commit
+.\scripts\build-all-installers.ps1 -Version 1.5.0 -Push            # build, commit, push, prompt for draft/publish
+.\scripts\build-all-installers.ps1 -Version 1.5.0 -Push -ReleaseMode Draft  # unattended override
+
+# Lower-level installer builder:
 .\installer\build-installer.ps1 -Version 1.2.0             # x64 only (default)
 .\installer\build-installer.ps1 -All -Version 1.2.0        # both architectures
 .\installer\build-installer.ps1 -All -Version 1.2.0 -Push  # build, commit + push, publish a GitHub release as latest
@@ -30,4 +38,5 @@ Run from the repository root:
 
 Build output lands in `installer/Output/`, which is git-ignored. Requires
 [Inno Setup 6](https://jrsoftware.org/isinfo.php) and the .NET SDK; `-Push` also requires the
-authenticated GitHub CLI (`gh`).
+authenticated GitHub CLI (`gh`). After pushing, the root build-all script asks whether the release
+should remain a **draft** for review or be **published officially** as the latest release.
