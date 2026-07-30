@@ -36,10 +36,21 @@ warns you when a drive or process crosses a threshold you set.
   either after a one-click toast confirmation (the default) or automatically.
 - **SSD endurance projection** — enter a drive's TBW rating and it estimates years-to-TBW at
   your current write rate and the percentage observed since monitoring began.
+- **On-demand rated-TBW lookup** — right-click the **“TBW rated”** pill to search the web and
+  extract candidate endurance ratings with the configured local Foundry model.
+- **Guided online-lookup setup** — on startup, the tray offers optional Serper setup until a key
+  is configured or **Don't show this again** is selected. API keys are encrypted for the current
+  Windows account using DPAPI rather than stored as plaintext.
 - **Rolling-window alerts** for high SSD writes (per hour / per day) and heavy single
   processes, with configurable thresholds and a cooldown to avoid spam.
+- **Storage controller alerts** from Windows System log **Disk event 11**, grouped by
+  physical disk over a configurable trailing window to catch repeated cable, port, power,
+  enclosure, or controller instability even when a drive still reports Healthy/Online.
+- **Live SMART scan from controller alerts** — right-click an affected alert for an in-app,
+  read-only health report combining Windows storage health, reliability counters and direct
+  NVMe SMART telemetry where the hardware exposes it.
 - **Tray icon status color** (green / amber / red) reflecting the worst outstanding alert,
-  plus optional desktop balloon notifications.
+  plus optional desktop toast notifications.
 - **Tunable settings** edited live from the dashboard; the collector picks up changes
   automatically.
 - **Self-contained data** in `%ProgramData%\DiskActivityMonitor\` (SQLite, WAL mode) with
@@ -116,16 +127,35 @@ folder if you also want to discard the data.
 - **Disk selector** (top right): SSDs are listed first and tagged. Trends and endurance apply
   to the selected disk.
 - **Summary cards**: written today, last 24h, last 7 days, and an endurance/projection card.
+- **Rated-TBW pill**: right-click the **“xxx TBW rated”** badge in SSD endurance and choose
+  **Look up rated TBW**. This forces a fresh lookup even if the drive already has a configured
+  rating or cached result. A dedicated modal shows Serper search progress, local-model verification,
+  empty/error states, source confidence, and Apply actions; nothing changes without confirmation.
+  Google's Custom Search JSON API is closed to new customers; its 100 free daily queries apply
+  only to existing customers until the service is retired. New setups should select the supported
+  **Serper** backend in Settings.
 - **Trend chart**: toggle **24h / 30d / 12w**. Bars are bytes written to the device in each
   bucket; the current bucket is highlighted.
 - **Top application write requests**: logical file-write bytes requested by each process over
   the selected window. This identifies software generating write pressure, but is not a physical
   SSD-wear figure. Service-host processes are labeled with the hosted service when known (for
   example, `svchost (SDRSVC: Windows Backup)`).
-- **Recent alerts**: a rolling one-hour log of fired alerts that auto-age out. The tray icon
-  color resets to green when no alerts remain in the window.
+- **Alert center**: a rolling one-hour view of non-dismissed alerts. Repeated controller errors
+  appear here alongside write/endurance alerts and can also raise desktop notifications. Click the
+  **x** on a row (or use its context menu) to dismiss that occurrence permanently from the main
+  view. **All alerts** opens the complete retained history, includes dismissed records, and lets
+  you restore them. A future occurrence of the same condition can still appear. The tray icon
+  color resets to green when no non-dismissed alerts remain in the window.
+- **Live SMART scan**: right-click a controller-error alert and choose **Run live SMART scan**.
+  The result panel shows Windows health/operational status, SMART access, alert-window controller
+  errors, temperature, model/firmware/serial, lifetime I/O, and actionable findings. The scan is
+  read-only and does not start a destructive or long-running ATA/NVMe self-test.
 - **Settings**: thresholds (in GB), sample interval, desktop notifications, and the selected
   drive's **TBW rating** (TB). Click **Save settings**; the collector applies them live.
+- **Online lookup setup**: the startup prompt explains what is sent online, links to Serper signup,
+  accepts the API key, and stores it with Windows DPAPI. Choosing **Not now** shows the prompt again
+  at the next startup unless **Don't show this again** is checked. Guided setup can be reopened from
+  Settings at any time.
 
 The tray icon's right-click menu offers *Open dashboard*,
 *Open data folder*, and *Exit*. Closing the dashboard window hides it to the tray; use *Exit*
@@ -193,6 +223,7 @@ flowchart LR
     PC["PhysicalDisk\nperf counters"] --> COL
     PIO["ETW kernel\nFileIO writes"] --> COL
     WMI["MSFT_PhysicalDisk\n(SSD/HDD)"] --> COL
+    EVT["Windows System log\nDisk event 11"] --> COL
     COL["Collector service\n(1-min aggregation)"] --> DB[("SQLite\n%ProgramData%")]
     COL --> AL["Alert engine"]
     AL --> DB
@@ -214,6 +245,10 @@ flowchart LR
   `GetProcessIoCounters` deltas, which are an *upper bound* that mixes file, pipe and device I/O.
 - Samples are aggregated into **one-minute buckets** and rolled up to hour/day/week for
   charting in local time.
+- Once per minute, the collector reads System log provider `disk`, event ID `11`, counts records
+  by `\Device\HarddiskN` across the configured window, and maps that disk number to the currently
+  detected volume/model. USB/removable disk numbers can change after reconnecting hardware, so
+  each alert retains the original Windows device path and describes the volume mapping as current.
 
 ### Accuracy notes
 
@@ -228,6 +263,9 @@ flowchart LR
   guarantees, and only count writes observed since monitoring started.
 - Reading some processes owned by other accounts requires the collector to run with
   sufficient privileges (the Windows Service runs as LocalSystem and sees everything).
+- Many USB enclosures do not pass SMART telemetry through to Windows. In that case the live scan
+  explicitly reports **Limited** rather than treating `Healthy/Online` as proof that the disk,
+  cable, port, power supply, or enclosure is fault-free.
 
 ---
 
@@ -247,6 +285,10 @@ dashboard or by hand (the collector watches the file). Thresholds are in GB.
 | `processWarnGbPerHour` | Warn when one process writes this much in 1h | 5 |
 | `allProcessesWarnGbPerHour` | Warn when all processes combined write this much in 1h | 20 |
 | `alertCooldownMinutes` | Minimum gap between repeats of the same alert | 5 |
+| `enableControllerErrorAlerts` | Monitor System log Disk event 11 controller errors | true |
+| `controllerErrorWindowDays` | Trailing event-count window | 14 |
+| `controllerErrorWarnCount` | Warning threshold inside the event-count window | 3 |
+| `controllerErrorCriticalCount` | Critical threshold inside the event-count window | 10 |
 | `diskTbwRatings` | Per-disk TBW endurance rating (TB) | none |
 | `diskTbwRatingsUpper` | Optional per-disk upper TBW; when set, endurance %/projection are shown as a range | none |
 | `enableNotifications` | Show desktop balloon notifications | true |
