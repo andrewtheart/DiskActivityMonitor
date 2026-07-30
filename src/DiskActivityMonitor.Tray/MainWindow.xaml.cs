@@ -27,13 +27,43 @@ public partial class MainWindow : Window
     private static readonly HttpClient TbwHttp = new() { Timeout = TimeSpan.FromMinutes(5) };
     private TbwLookupService? _tbwLookup;
     private CancellationTokenSource? _tbwCts;
+    private bool _tbwLookupForceRequested;
+    internal Func<IProgress<int>?, CancellationToken, Task> TbwModelDownloader = null!;
+    internal Action<string> TbwSetupUrlLauncher { get; set; } = url =>
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+    internal Action<AiSecrets> TbwSetupSecretsSaver { get; set; } = AiSecretsStore.Save;
 
     private enum RangeKind { H24, D30, W12 }
     private RangeKind _range = RangeKind.H24;
 
     private sealed record DiskChoice(DiskInfo Disk, string Display);
     private sealed record ProcessRow(string Name, string WriteText, string ReadText, double BarWidth);
-    private sealed record AlertRow(string Title, string Message, string TimeText, Brush SeverityBrush);
+    private sealed record AlertRow(
+        string Title,
+        string Message,
+        string TimeText,
+        Brush SeverityBrush,
+        string? DiskId,
+        int ControllerErrorCount,
+        bool CanRunSmartScan,
+        Visibility SmartActionVisibility,
+        long[] AlertIds);
+    private sealed record AlertHistoryRow(
+        long Id,
+        string Title,
+        string Message,
+        string TimeText,
+        Brush SeverityBrush,
+        string StatusText,
+        Brush StatusBrush,
+        Visibility DismissVisibility,
+        Visibility RestoreVisibility);
+
+    private DiskInfo? _smartScanDisk;
+    private int _smartScanControllerErrors;
+    private int _smartScanGeneration;
+    internal Func<DiskInfo, int, IProgress<string>?, SmartHealthScanResult> SmartScanner { get; set; }
+        = (disk, errors, progress) => SmartHealthScanner.Scan(disk, errors, progress);
 
     /// <summary>Alerts are shown once and treated as a timestamped log; only those raised within
     /// this trailing window are surfaced (older ones age out automatically rather than persisting
@@ -86,6 +116,7 @@ public partial class MainWindow : Window
     {
         _repo = repo;
         _config = config;
+        TbwModelDownloader = (progress, ct) => TbwLookup.DownloadModelAsync(progress, ct);
         InitializeComponent();
 
         // Taskbar/window icon uses the exact same glyph as the system-tray icon.
@@ -318,23 +349,29 @@ public partial class MainWindow : Window
         EnduranceDiskText.Text = disk.DisplayName;
         EnduranceRatedText.Text = $"{tbwLabel} rated";
 
-        // Headline 1: lifetime wear from SMART (authoritative when the drive reports it).
-        if (disk.WearPercent is int wear)
+        // Headline 1: precise lifetime writes / configured TBW when available. Drive SMART wear is
+        // typically reported only as a whole percentage, so retain it as supporting context rather
+        // than rounding away the more precise lifetime-write calculation.
+        if (lifeWritten is not null && tbwLowBytes > 0)
         {
-            double wc = Math.Clamp(wear, 0, 100);
-            SmartWearValue.Text = $"{wear}%";
-            SmartWearFillCol.Width = new GridLength(wc, GridUnitType.Star);
-            SmartWearRestCol.Width = new GridLength(100 - wc, GridUnitType.Star);
-            SmartWearText.Text = $"{100 - wear}% endurance remaining, from the drive's SMART data";
-        }
-        else if (lifeWritten is not null && tbwLowBytes > 0)
-        {
-            // No wear attribute: estimate from lifetime writes / TBW (a range when an upper TBW is set).
             double fill = Math.Clamp(pctHigh, 0, 100);
-            SmartWearValue.Text = ranged ? $"~{pctLow:0.#}\u2013{pctHigh:0.#}%" : $"~{pctHigh:0.#}%";
+            SmartWearValue.Text = ranged
+                ? $"~{FormatPercent(pctLow)}\u2013{FormatPercent(pctHigh)}"
+                : $"~{FormatPercent(pctHigh)}";
             SmartWearFillCol.Width = new GridLength(fill, GridUnitType.Star);
             SmartWearRestCol.Width = new GridLength(100 - fill, GridUnitType.Star);
-            SmartWearText.Text = $"estimated from lifetime writes \u00f7 {tbwLabel} (this drive reports no wear attribute)";
+            string smartContext = disk.WearPercent is int wear
+                ? $"; drive SMART reports {wear}% used (whole-percent precision)"
+                : "; this drive reports no SMART wear attribute";
+            SmartWearText.Text = $"estimated from lifetime writes \u00f7 {tbwLabel}{smartContext}";
+        }
+        else if (disk.WearPercent is int wear)
+        {
+            double wc = Math.Clamp(wear, 0, 100);
+            SmartWearValue.Text = FormatPercent(wear);
+            SmartWearFillCol.Width = new GridLength(wc, GridUnitType.Star);
+            SmartWearRestCol.Width = new GridLength(100 - wc, GridUnitType.Star);
+            SmartWearText.Text = $"{100 - wear}% endurance remaining, from the drive's SMART data (whole-percent precision)";
         }
         else
         {
@@ -381,7 +418,7 @@ public partial class MainWindow : Window
         if (lifeWritten is long lw)
         {
             string readPart = disk.LifetimeBytesRead is long lr ? $", {ByteFormat.Humanize(lr)} read" : "";
-            string pctText = ranged ? $"{pctLow:0.###}% to {pctHigh:0.###}%" : $"{pctHigh:0.###}%";
+            string pctText = ranged ? $"{FormatPercent(pctLow)} to {FormatPercent(pctHigh)}" : FormatPercent(pctHigh);
             lifeLine = $"Lifetime (from the drive): {ByteFormat.Humanize(lw)} written{readPart} \u2014 {pctText} of {tbwLabel}. ";
         }
         string sinceLine = earliest is null
@@ -393,6 +430,8 @@ public partial class MainWindow : Window
     /// <summary>Formats a years value without a unit: "100+", whole numbers above 10, else one decimal.</summary>
     private static string FormatYearsShort(double y)
         => double.IsNaN(y) ? "-" : y >= 100 ? "100+" : y >= 10 ? $"{y:0}" : $"{y:0.0}";
+
+    internal static string FormatPercent(double value) => $"{value:0.##}%";
 
     private void UpdateChart(DiskInfo disk)
     {
@@ -446,12 +485,11 @@ public partial class MainWindow : Window
         ProcessEmpty.Visibility = top.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void UpdateAlerts()
+    internal void UpdateAlerts()
     {
-        // A timestamped log of alerts raised in the trailing window. Each condition is shown once
-        // here (with the time it fired) instead of staying "active" until acknowledged; older
-        // alerts drop off as they leave the window.
-        var alerts = _repo.GetRecentAlerts(200, sinceUtc: DateTime.UtcNow - RecentAlertWindow);
+        // The main Alert center shows only non-dismissed alerts from the trailing window. Dismissed
+        // records stay in the database and remain available through the complete alert history.
+        var alerts = _repo.GetRecentAlerts(200, unacknowledgedOnly: true, sinceUtc: DateTime.UtcNow - RecentAlertWindow);
 
         // The alert engine re-raises the same rule every cooldown period while a condition stays
         // tripped, so collapse repeats: show one row per rule (its latest occurrence) with a count.
@@ -463,6 +501,12 @@ public partial class MainWindow : Window
                 var latest = g.OrderByDescending(a => a.Id).First();
                 int count = g.Count();
                 var time = latest.TimestampUtc.ToLocalTime().ToString("MMM d, HH:mm", CultureInfo.CurrentCulture);
+                const string controllerPrefix = "disk-controller:";
+                bool canScan = latest.RuleKey.StartsWith(controllerPrefix, StringComparison.OrdinalIgnoreCase);
+                string? diskId = canScan ? latest.RuleKey[controllerPrefix.Length..] : null;
+                int controllerErrors = canScan
+                    ? (int)Math.Clamp(Math.Round(latest.Value), 0, int.MaxValue)
+                    : 0;
                 return new AlertRow(
                     latest.Title,
                     latest.Message,
@@ -472,7 +516,12 @@ public partial class MainWindow : Window
                         AlertSeverity.Critical => CriticalBrush,
                         AlertSeverity.Warning => WarningBrush,
                         _ => InfoBrush,
-                    });
+                    },
+                    diskId,
+                    controllerErrors,
+                    canScan,
+                        canScan ? Visibility.Visible : Visibility.Collapsed,
+                        g.Select(a => a.Id).ToArray());
             })
             .ToList();
 
@@ -480,9 +529,220 @@ public partial class MainWindow : Window
         AlertEmpty.Visibility = rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    internal void UpdateAlertHistory()
+    {
+        var alerts = _repo.GetRecentAlerts(int.MaxValue);
+        var rows = alerts.Select(a => new AlertHistoryRow(
+            a.Id,
+            a.Title,
+            a.Message,
+            a.TimestampUtc.ToLocalTime().ToString("MMM d, yyyy  HH:mm", CultureInfo.CurrentCulture),
+            a.Severity switch
+            {
+                AlertSeverity.Critical => CriticalBrush,
+                AlertSeverity.Warning => WarningBrush,
+                _ => InfoBrush,
+            },
+            a.Acknowledged ? "Dismissed" : "Not dismissed",
+            a.Acknowledged ? Brushes.Gray : InfoBrush,
+            a.Acknowledged ? Visibility.Collapsed : Visibility.Visible,
+            a.Acknowledged ? Visibility.Visible : Visibility.Collapsed))
+            .ToList();
+
+        AlertHistoryList.ItemsSource = rows;
+        int dismissed = alerts.Count(a => a.Acknowledged);
+        AlertHistorySummary.Text = $"{alerts.Count:N0} alert{(alerts.Count == 1 ? "" : "s")}  \u00b7  {dismissed:N0} dismissed";
+        AlertHistoryEmpty.Visibility = rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void ShowAllAlerts_Click(object sender, RoutedEventArgs e)
+    {
+        UpdateAlertHistory();
+        AlertHistoryOverlay.Visibility = Visibility.Visible;
+    }
+
+    private void AlertHistoryClose_Click(object sender, RoutedEventArgs e)
+        => AlertHistoryOverlay.Visibility = Visibility.Collapsed;
+
+    private void DismissAlert_Click(object sender, RoutedEventArgs e)
+    {
+        var button = sender as System.Windows.Controls.Button;
+        var menuItem = sender as System.Windows.Controls.MenuItem;
+        var row = button?.CommandParameter as AlertRow ?? button?.DataContext as AlertRow
+            ?? menuItem?.CommandParameter as AlertRow ?? menuItem?.DataContext as AlertRow;
+        if (row is null || row.AlertIds.Length == 0) return;
+
+        _repo.DismissAlerts(row.AlertIds);
+        UpdateAlerts();
+        if (AlertHistoryOverlay.Visibility == Visibility.Visible) UpdateAlertHistory();
+    }
+
+    private void DismissHistoryAlert_Click(object sender, RoutedEventArgs e)
+    {
+        var row = (sender as System.Windows.Controls.Button)?.CommandParameter as AlertHistoryRow;
+        if (row is null) return;
+        _repo.DismissAlerts([row.Id]);
+        UpdateAlerts();
+        UpdateAlertHistory();
+    }
+
+    private void RestoreHistoryAlert_Click(object sender, RoutedEventArgs e)
+    {
+        var row = (sender as System.Windows.Controls.Button)?.CommandParameter as AlertHistoryRow;
+        if (row is null) return;
+        _repo.RestoreAlerts([row.Id]);
+        UpdateAlerts();
+        UpdateAlertHistory();
+    }
+
+    // ----------------------------------------------------------- Live SMART scan
+
+    private async void RunSmartScan_Click(object sender, RoutedEventArgs e)
+    {
+        var menuItem = sender as System.Windows.Controls.MenuItem;
+        var row = menuItem?.CommandParameter as AlertRow ?? menuItem?.DataContext as AlertRow;
+        if (row is not { CanRunSmartScan: true } || string.IsNullOrWhiteSpace(row.DiskId))
+            return;
+
+        var disk = _repo.GetDisks().FirstOrDefault(d =>
+            string.Equals(d.DiskId, row.DiskId, StringComparison.OrdinalIgnoreCase)) ?? new DiskInfo
+        {
+            DiskId = row.DiskId,
+            InstanceName = row.DiskId,
+            FriendlyName = $"Physical disk {row.DiskId}",
+        };
+
+        await StartSmartScanAsync(disk, row.ControllerErrorCount);
+    }
+
+    internal async Task StartSmartScanAsync(DiskInfo disk, int controllerErrorCount)
+    {
+        _smartScanDisk = disk;
+        _smartScanControllerErrors = Math.Max(0, controllerErrorCount);
+        int generation = ++_smartScanGeneration;
+
+        SmartScanTargetText.Text = $"{disk.DisplayName}  \u00b7  PhysicalDrive{disk.DiskId}";
+        SmartScanProgressText.Text = "Preparing scan...";
+        SmartScanProgressPanel.Visibility = Visibility.Visible;
+        SmartScanResultPanel.Visibility = Visibility.Collapsed;
+        SmartScanAgainButton.Visibility = Visibility.Collapsed;
+        SmartScanOverlay.Visibility = Visibility.Visible;
+
+        var progress = new Progress<string>(step =>
+        {
+            if (generation == _smartScanGeneration)
+                SmartScanProgressText.Text = step;
+        });
+
+        try
+        {
+            var result = await Task.Run(() => SmartScanner(disk, controllerErrorCount, progress));
+            if (generation != _smartScanGeneration) return;
+            RenderSmartScanResult(result);
+        }
+        catch (Exception ex)
+        {
+            if (generation != _smartScanGeneration) return;
+            RenderSmartScanFailure(disk, ex.Message);
+        }
+    }
+
+    internal void RenderSmartScanResult(SmartHealthScanResult result)
+    {
+        var (background, foreground, glyph) = result.Grade switch
+        {
+            SmartScanGrade.Critical => (Frozen(0x49, 0x22, 0x27), CriticalBrush, "\u2715"),
+            SmartScanGrade.Attention => (Frozen(0x4A, 0x36, 0x1C), WarningBrush, "!"),
+            SmartScanGrade.Healthy => (Frozen(0x1D, 0x3D, 0x2A), InfoBrush, "\u2713"),
+            SmartScanGrade.Limited => (Frozen(0x23, 0x31, 0x43), Frozen(0x64, 0xA7, 0xFF), "i"),
+            _ => (Frozen(0x31, 0x34, 0x39), Frozen(0x9A, 0xA0, 0xA8), "?"),
+        };
+
+        SmartScanStatusBorder.Background = background;
+        SmartScanStatusGlyph.Foreground = foreground;
+        SmartScanStatusGlyph.Text = glyph;
+        SmartScanStatusTitle.Text = result.Headline;
+        SmartScanStatusText.Text = result.Summary;
+
+        SmartScanWindowsValue.Text = result.WindowsHealth;
+        SmartScanWindowsValue.Foreground = result.Grade == SmartScanGrade.Critical ? CriticalBrush : InfoBrush;
+        SmartScanWindowsSub.Text = result.OperationalStatus;
+
+        SmartScanTelemetryValue.Text = result.SmartTelemetryAvailable ? "Available" : "Limited";
+        SmartScanTelemetryValue.Foreground = result.SmartTelemetryAvailable ? InfoBrush : WarningBrush;
+        SmartScanTelemetrySub.Text = result.SmartAccess;
+
+        SmartScanConnectionValue.Text = result.ControllerErrorCount > 0
+            ? $"{result.ControllerErrorCount:N0} errors"
+            : "No alert";
+        SmartScanConnectionValue.Foreground = result.ControllerErrorCount > 0 ? WarningBrush : InfoBrush;
+        SmartScanConnectionSub.Text = result.ControllerErrorCount > 0 ? "Disk event 11 window" : "No controller-error context";
+
+        SmartScanTempValue.Text = result.TemperatureC is int temperature ? $"{temperature}\u00B0C" : "Not exposed";
+        SmartScanTempValue.Foreground = result.TemperatureC is >= 60 ? CriticalBrush
+            : result.TemperatureC is >= 50 ? WarningBrush
+            : result.TemperatureC is not null ? InfoBrush
+            : Frozen(0x9A, 0xA0, 0xA8);
+        SmartScanTempSub.Text = result.TemperatureMaxC is int maximum ? $"maximum {maximum}\u00B0C" : result.BusType;
+
+        SmartScanModelValue.Text = BlankAsDash(result.Model);
+        SmartScanFirmwareValue.Text = BlankAsDash(result.FirmwareVersion);
+        SmartScanSerialValue.Text = BlankAsDash(result.SerialNumber);
+        SmartScanPathValue.Text = result.DevicePath;
+        SmartScanLifetimeValue.Text = FormatLifetime(result.LifetimeBytesWritten, result.LifetimeBytesRead);
+        SmartScanTimeValue.Text = result.ScannedUtc.ToLocalTime().ToString("HH:mm:ss", CultureInfo.CurrentCulture);
+        SmartScanFindings.ItemsSource = result.Findings;
+
+        SmartScanProgressPanel.Visibility = Visibility.Collapsed;
+        SmartScanResultPanel.Visibility = Visibility.Visible;
+        SmartScanResultPanel.ScrollToTop();
+        SmartScanAgainButton.Visibility = Visibility.Visible;
+    }
+
+    internal void RenderSmartScanFailure(DiskInfo disk, string message)
+    {
+        RenderSmartScanResult(new SmartHealthScanResult
+        {
+            DiskId = disk.DiskId,
+            DevicePath = $@"\\.\PhysicalDrive{disk.DiskId}",
+            DisplayName = disk.DisplayName,
+            Model = disk.FriendlyName,
+            SerialNumber = disk.SerialNumber,
+            ScannedUtc = DateTime.UtcNow,
+            ControllerErrorCount = _smartScanControllerErrors,
+            Grade = SmartScanGrade.Unavailable,
+            Headline = "SMART scan could not complete",
+            Summary = message,
+            Findings = ["The scan is read-only. Reconnect the drive or reopen the dashboard, then try again."],
+        });
+    }
+
+    private async void SmartScanAgain_Click(object sender, RoutedEventArgs e)
+    {
+        if (_smartScanDisk is not null)
+            await StartSmartScanAsync(_smartScanDisk, _smartScanControllerErrors);
+    }
+
+    internal void SmartScanClose_Click(object sender, RoutedEventArgs e)
+    {
+        _smartScanGeneration++; // Ignore any in-flight scan result.
+        SmartScanOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    internal static string BlankAsDash(string value) => string.IsNullOrWhiteSpace(value) ? "\u2014" : value;
+
+    internal static string FormatLifetime(long? written, long? read)
+    {
+        if (written is null && read is null) return "Not exposed";
+        var parts = new List<string>();
+        if (written is long w) parts.Add($"{ByteFormat.Humanize(w)} written");
+        if (read is long r) parts.Add($"{ByteFormat.Humanize(r)} read");
+        return string.Join(" \u00b7 ", parts);
+    }
+
     // ----------------------------------------------------------- Settings
 
-    private void LoadSettingsFields()
+    internal void LoadSettingsFields()
     {
         var cfg = _config.Current;
         TxtWarnHour.Text = cfg.SsdWarnGbPerHour.ToString(CultureInfo.InvariantCulture);
@@ -491,9 +751,13 @@ public partial class MainWindow : Window
         TxtProcHour.Text = cfg.ProcessWarnGbPerHour.ToString(CultureInfo.InvariantCulture);
         TxtAllProcHour.Text = cfg.AllProcessesWarnGbPerHour.ToString(CultureInfo.InvariantCulture);
         TxtCooldown.Text = cfg.AlertCooldownMinutes.ToString(CultureInfo.InvariantCulture);
+        TxtControllerWindow.Text = cfg.ControllerErrorWindowDays.ToString(CultureInfo.InvariantCulture);
+        TxtControllerWarn.Text = cfg.ControllerErrorWarnCount.ToString(CultureInfo.InvariantCulture);
+        TxtControllerCritical.Text = cfg.ControllerErrorCriticalCount.ToString(CultureInfo.InvariantCulture);
         TxtInterval.Text = cfg.SampleIntervalSeconds.ToString(CultureInfo.InvariantCulture);
         TxtRefresh.Text = cfg.DashboardRefreshSeconds.ToString(CultureInfo.InvariantCulture);
         TxtEnduranceWarnYears.Text = cfg.TbwProjectionWarnYears.ToString(CultureInfo.InvariantCulture);
+        ChkControllerErrors.IsChecked = cfg.EnableControllerErrorAlerts;
         ChkNotify.IsChecked = cfg.EnableNotifications;
 
         // Web TBW lookup settings.
@@ -502,7 +766,7 @@ public partial class MainWindow : Window
         var secrets = AiSecretsStore.Load();
         TxtGoogleKey.Text = secrets.GoogleApiKey ?? "";
         TxtGoogleCx.Text = secrets.GoogleCseId ?? "";
-        TxtSerperKey.Text = secrets.SerperApiKey ?? "";
+        TxtSerperKey.Password = secrets.SerperApiKey ?? "";
 
         LoadTbwField();
     }
@@ -529,7 +793,7 @@ public partial class MainWindow : Window
 
     private static string? NullIfBlank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
 
-    private void Save_Click(object sender, RoutedEventArgs e)
+    internal void Save_Click(object sender, RoutedEventArgs e)
     {
         var cfg = _config.Current;
         cfg.SsdWarnGbPerHour = ParseOr(TxtWarnHour.Text, cfg.SsdWarnGbPerHour);
@@ -538,9 +802,15 @@ public partial class MainWindow : Window
         cfg.ProcessWarnGbPerHour = ParseOr(TxtProcHour.Text, cfg.ProcessWarnGbPerHour);
         cfg.AllProcessesWarnGbPerHour = ParseOr(TxtAllProcHour.Text, cfg.AllProcessesWarnGbPerHour);
         cfg.AlertCooldownMinutes = (int)Math.Clamp(ParseOr(TxtCooldown.Text, cfg.AlertCooldownMinutes), 1, 1440);
+        cfg.ControllerErrorWindowDays = (int)Math.Clamp(ParseOr(TxtControllerWindow.Text, cfg.ControllerErrorWindowDays), 1, 365);
+        cfg.ControllerErrorWarnCount = (int)Math.Clamp(ParseOr(TxtControllerWarn.Text, cfg.ControllerErrorWarnCount), 0, 100000);
+        cfg.ControllerErrorCriticalCount = (int)Math.Clamp(ParseOr(TxtControllerCritical.Text, cfg.ControllerErrorCriticalCount), 0, 100000);
+        if (cfg.ControllerErrorWarnCount > 0 && cfg.ControllerErrorCriticalCount > 0)
+            cfg.ControllerErrorCriticalCount = Math.Max(cfg.ControllerErrorWarnCount, cfg.ControllerErrorCriticalCount);
         cfg.SampleIntervalSeconds = (int)Math.Clamp(ParseOr(TxtInterval.Text, cfg.SampleIntervalSeconds), 1, 60);
         cfg.DashboardRefreshSeconds = (int)Math.Clamp(ParseOr(TxtRefresh.Text, cfg.DashboardRefreshSeconds), 1, 600);
         cfg.TbwProjectionWarnYears = ParseOr(TxtEnduranceWarnYears.Text, cfg.TbwProjectionWarnYears);
+        cfg.EnableControllerErrorAlerts = ChkControllerErrors.IsChecked == true;
         cfg.EnableNotifications = ChkNotify.IsChecked == true;
 
         var disk = SelectedDisk;
@@ -573,7 +843,7 @@ public partial class MainWindow : Window
         {
             GoogleApiKey = NullIfBlank(TxtGoogleKey.Text),
             GoogleCseId = NullIfBlank(TxtGoogleCx.Text),
-            SerperApiKey = NullIfBlank(TxtSerperKey.Text),
+            SerperApiKey = NullIfBlank(TxtSerperKey.Password),
         });
         _tbwLookup = null; // recreate with the new backend/keys on the next lookup
 
@@ -722,92 +992,272 @@ public partial class MainWindow : Window
 
     // ----------------------------------------------------------- Rated-TBW web lookup
 
+    internal static bool ShouldPromptTbwOnlineSetup(AppConfig config, AiSecrets secrets)
+        => !config.SuppressTbwOnlineSetupPrompt && string.IsNullOrWhiteSpace(secrets.SerperApiKey);
+
+    internal void ShowTbwOnlineSetup()
+    {
+        TbwSetupIntroPanel.Visibility = Visibility.Visible;
+        TbwSetupKeyPanel.Visibility = Visibility.Collapsed;
+        TbwSetupIntroButtons.Visibility = Visibility.Visible;
+        TbwSetupKeyButtons.Visibility = Visibility.Collapsed;
+        TbwSetupDontShowAgain.IsChecked = false;
+        TbwSetupSerperKey.Password = "";
+        TbwSetupErrorText.Visibility = Visibility.Collapsed;
+        TbwSetupOverlay.Visibility = Visibility.Visible;
+        TbwSetupOverlay.Focus();
+    }
+
+    private void TbwSetupShowFromSettings_Click(object sender, RoutedEventArgs e)
+        => ShowTbwOnlineSetup();
+
+    private void TbwSetupConfigure_Click(object sender, RoutedEventArgs e)
+    {
+        TbwSetupIntroPanel.Visibility = Visibility.Collapsed;
+        TbwSetupKeyPanel.Visibility = Visibility.Visible;
+        TbwSetupIntroButtons.Visibility = Visibility.Collapsed;
+        TbwSetupKeyButtons.Visibility = Visibility.Visible;
+        TbwSetupSerperKey.Focus();
+    }
+
+    private void TbwSetupBack_Click(object sender, RoutedEventArgs e)
+    {
+        TbwSetupIntroPanel.Visibility = Visibility.Visible;
+        TbwSetupKeyPanel.Visibility = Visibility.Collapsed;
+        TbwSetupIntroButtons.Visibility = Visibility.Visible;
+        TbwSetupKeyButtons.Visibility = Visibility.Collapsed;
+        TbwSetupErrorText.Visibility = Visibility.Collapsed;
+    }
+
+    private void TbwSetupNotNow_Click(object sender, RoutedEventArgs e)
+    {
+        SaveTbwSetupSuppressionIfRequested();
+        TbwSetupOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private void TbwSetupOpenSerper_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            TbwSetupUrlLauncher("https://serper.dev/signup");
+            TbwSetupErrorText.Visibility = Visibility.Collapsed;
+        }
+        catch (Exception ex)
+        {
+            TbwSetupErrorText.Text = $"Could not open Serper: {ex.Message}";
+            TbwSetupErrorText.Visibility = Visibility.Visible;
+        }
+    }
+
+    private async void TbwSetupSave_Click(object sender, RoutedEventArgs e)
+    {
+        string key = TbwSetupSerperKey.Password.Trim();
+        if (key.Length < 20)
+        {
+            TbwSetupErrorText.Text = "Paste the API key from Serper's API Keys page.";
+            TbwSetupErrorText.Visibility = Visibility.Visible;
+            return;
+        }
+
+        try
+        {
+            var secrets = AiSecretsStore.Load();
+            secrets.SerperApiKey = key;
+            TbwSetupSecretsSaver(secrets);
+
+            var config = _config.Current;
+            config.EnableTbwWebLookup = true;
+            config.WebSearchProvider = "serper";
+            config.SuppressTbwOnlineSetupPrompt = TbwSetupDontShowAgain.IsChecked == true;
+            _config.Save(config);
+
+            _tbwLookup = null;
+            TbwSetupSerperKey.Password = "";
+            TbwSetupOverlay.Visibility = Visibility.Collapsed;
+            LoadSettingsFields();
+
+            if (SelectedDisk is { IsSsd: true } disk)
+                await StartTbwLookupAsync(disk, force: true, userInitiated: true);
+        }
+        catch (Exception ex)
+        {
+            TbwSetupErrorText.Text = $"Could not save the Serper key: {ex.Message}";
+            TbwSetupErrorText.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void SaveTbwSetupSuppressionIfRequested()
+    {
+        if (TbwSetupDontShowAgain.IsChecked != true)
+            return;
+        var config = _config.Current;
+        config.SuppressTbwOnlineSetupPrompt = true;
+        _config.Save(config);
+    }
+
     private TbwLookupService TbwLookup => _tbwLookup ??= new TbwLookupService(_config.Current, TbwHttp);
 
+    private void LookupRatedTbw_Click(object sender, RoutedEventArgs e)
+    {
+        _ = StartTbwLookupAsync(SelectedDisk, force: true, userInitiated: true);
+    }
+
     /// <summary>
-    /// Kicks off (or cancels) a web lookup of the selected SSD's rated TBW. Runs only for SSDs with no
-    /// confirmed per-disk TBW yet; cached results render instantly (once per drive model, then cached).
+    /// Kicks off (or cancels) a web lookup of the selected SSD's rated TBW. Automatic calls run only
+    /// when no per-disk rating exists; a user-initiated pill action forces a fresh lookup even when a
+    /// rating or cached result already exists.
     /// </summary>
-    private async void MaybeStartTbwLookup(DiskInfo? disk)
+    internal async Task StartTbwLookupAsync(DiskInfo? disk, bool force = false, bool userInitiated = false)
     {
         _tbwCts?.Cancel();
-        if (disk is null || !disk.IsSsd) { TbwLookupPanel.Visibility = Visibility.Collapsed; return; }
+        _tbwLookupForceRequested = force;
+        if (disk is null)
+        {
+            TbwLookupPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        if (!disk.IsSsd)
+        {
+            if (userInitiated)
+            {
+                TbwLookupTargetText.Text = disk.DisplayName;
+                ShowTbwLookupPanel();
+                TbwCandidateList.Children.Clear();
+                TbwLookupAction.Visibility = Visibility.Collapsed;
+                SetTbwLookupOutcome(
+                    "TBW lookup is not available for this drive",
+                    "Rated TBW lookup is available for SSDs and storage-class memory drives.",
+                    TbwLookupOutcome.Unavailable);
+            }
+            else
+            {
+                TbwLookupPanel.Visibility = Visibility.Collapsed;
+            }
+            return;
+        }
 
         var cfg = _config.Current;
-        if (!cfg.EnableTbwWebLookup || cfg.DiskTbwRatings.ContainsKey(disk.DiskId))
+        if (!force && (!cfg.EnableTbwWebLookup || cfg.DiskTbwRatings.ContainsKey(disk.DiskId)))
         { TbwLookupPanel.Visibility = Visibility.Collapsed; return; }
 
         string model = (disk.FriendlyName ?? "").Trim();
         if (model.Length == 0 || model.Contains("virtual", StringComparison.OrdinalIgnoreCase))
-        { TbwLookupPanel.Visibility = Visibility.Collapsed; return; }
+        {
+            if (userInitiated)
+            {
+                TbwLookupTargetText.Text = disk.DisplayName;
+                ShowTbwLookupPanel();
+                TbwCandidateList.Children.Clear();
+                TbwLookupAction.Visibility = Visibility.Collapsed;
+                SetTbwLookupOutcome(
+                    "Drive model unavailable",
+                    "This drive does not expose a usable model name for a rated TBW lookup.",
+                    TbwLookupOutcome.Unavailable);
+            }
+            else
+            {
+                TbwLookupPanel.Visibility = Visibility.Collapsed;
+            }
+            return;
+        }
 
-        TbwLookupPanel.Visibility = Visibility.Visible;
+        TbwLookupTargetText.Text = $"{disk.DisplayName}  \u00b7  {model}";
+        if (userInitiated)
+            ShowTbwLookupPanel();
         TbwCandidateList.Children.Clear();
         TbwLookupAction.Visibility = Visibility.Collapsed;
 
-        if (TbwLookupCache.TryGet(model, out var cachedResult) && cachedResult is not null)
+        if (!force && TbwLookupCache.TryGet(model, out var cachedResult) && cachedResult is not null)
         { RenderTbwResult(disk, cachedResult); return; }
 
         _tbwCts = new CancellationTokenSource();
         var ct = _tbwCts.Token;
-        TbwLookupStatus.Text = $"Preparing on-device model to look up \u201C{model}\u201D endurance\u2026";
+        SetTbwLookupProgress(
+            "Preparing local verification",
+            $"Preparing the on-device model to look up \u201C{model}\u201D endurance\u2026");
 
         try
         {
             var svc = TbwLookup;
             var readiness = await svc.GetReadinessAsync(ct);
             if (ct.IsCancellationRequested) return;
-
-            if (!readiness.CanRun)
-            {
-                if (readiness.NeedsModelDownload)
-                {
-                    TbwLookupStatus.Text = readiness.HasUsableGpu
-                        ? $"A GPU was detected. Download the on-device AI model ({readiness.DownloadAlias}) to search the web for this drive's TBW rating."
-                        : $"Download the on-device AI model ({readiness.DownloadAlias}) to enable the web TBW lookup (CPU-only \u2014 may be slow).";
-                    TbwLookupAction.Content = "Download model";
-                    TbwLookupAction.Tag = "download";
-                    TbwLookupAction.Visibility = Visibility.Visible;
-                }
-                else
-                {
-                    TbwLookupStatus.Text = readiness.Reason ?? "Web TBW lookup is unavailable.";
-                }
+            if (!HandleTbwReadiness(readiness))
                 return;
-            }
 
             var progress = new Progress<TbwLookupProgress>(p =>
             {
                 TbwLookupStatus.Text = p.Stage switch
                 {
-                    TbwLookupStage.Searching => $"Searching the web for \u201C{model}\u201D endurance (TBW) rating\u2026",
-                    TbwLookupStage.Analyzing => "Reading the results with the on-device model\u2026",
+                    TbwLookupStage.Searching => SetTbwLookupProgress(
+                        "Searching web evidence",
+                        $"Searching Serper for \u201C{model}\u201D endurance specifications\u2026"),
+                    TbwLookupStage.Analyzing => SetTbwLookupProgress(
+                        "Verifying with the local model",
+                        "Reading the search evidence with the on-device model and rejecting unsupported values\u2026"),
                     _ => TbwLookupStatus.Text,
                 };
             });
 
-            var result = await svc.LookupAsync(model, force: false, progress, ct);
+            var result = await svc.LookupAsync(model, force, progress, ct);
             if (ct.IsCancellationRequested) return;
             RenderTbwResult(disk, result);
         }
         catch (OperationCanceledException) { /* superseded by a newer selection */ }
-        catch (Exception ex) { TbwLookupStatus.Text = $"Lookup failed: {ex.Message}"; }
+    }
+
+    internal bool HandleTbwReadiness(TbwReadiness readiness)
+    {
+        if (readiness.CanRun)
+            return true;
+
+        if (readiness.NeedsModelDownload)
+        {
+            string reason = readiness.HasUsableGpu
+                ? $"A GPU was detected. Download the on-device AI model ({readiness.DownloadAlias}) to search the web for this drive's TBW rating."
+                : $"Download the on-device AI model ({readiness.DownloadAlias}) to enable the web TBW lookup (CPU-only \u2014 may be slow).";
+            SetTbwLookupOutcome("On-device model required", reason, TbwLookupOutcome.Unavailable);
+            TbwLookupAction.Content = "Download model";
+            TbwLookupAction.Tag = "download";
+            TbwLookupAction.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            SetTbwLookupOutcome(
+                "Lookup unavailable",
+                readiness.Reason ?? "Web TBW lookup is unavailable.",
+                TbwLookupOutcome.Unavailable);
+        }
+        return false;
+    }
+
+    internal void ShowTbwLookupPanel(bool bringIntoView = true)
+    {
+        TbwLookupPanel.Visibility = Visibility.Visible;
+        if (bringIntoView)
+            Dispatcher.BeginInvoke(new Action(() => TbwLookupPanel.Focus()));
     }
 
     /// <summary>Renders the candidate TBW values with confidence scores and per-value Apply buttons.</summary>
-    private void RenderTbwResult(DiskInfo disk, TbwLookupResult result)
+    internal void RenderTbwResult(DiskInfo disk, TbwLookupResult result)
     {
         TbwCandidateList.Children.Clear();
         TbwLookupAction.Visibility = Visibility.Collapsed;
         if (!result.HasCandidates)
         {
-            TbwLookupStatus.Text = result.Note ?? "No TBW rating was found on the web for this drive.";
+            SetTbwLookupOutcome(
+                "No verified TBW rating found",
+                result.Note ?? "No TBW rating was found on the web for this drive.",
+                TbwLookupOutcome.Empty);
             return;
         }
 
-        TbwLookupStatus.Text = result.Candidates.Count == 1
-            ? "Found a rated TBW value on the web \u2014 click Apply to use it:"
-            : $"Found {result.Candidates.Count} candidate TBW values (sources may conflict) \u2014 higher confidence means more sources agree:";
+        SetTbwLookupOutcome(
+            result.Candidates.Count == 1 ? "Verified candidate found" : "Verified candidates found",
+            result.Candidates.Count == 1
+                ? "One source-backed TBW candidate passed evidence validation. Review it before applying."
+                : $"{result.Candidates.Count} source-backed candidates passed validation. Higher confidence means more independent sources agree.",
+            TbwLookupOutcome.Success);
 
         var textPrimary = (Brush)FindResource("TextPrimary");
         var captionStyle = (Style)FindResource("Caption");
@@ -815,7 +1265,7 @@ public partial class MainWindow : Window
 
         foreach (var c in result.Candidates)
         {
-            var row = new System.Windows.Controls.Grid { Margin = new Thickness(0, 6, 0, 0) };
+            var row = new System.Windows.Controls.Grid();
             row.ColumnDefinitions.Add(new System.Windows.Controls.ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new System.Windows.Controls.ColumnDefinition { Width = GridLength.Auto });
 
@@ -851,7 +1301,14 @@ public partial class MainWindow : Window
             System.Windows.Controls.Grid.SetColumn(apply, 1);
             row.Children.Add(apply);
 
-            TbwCandidateList.Children.Add(row);
+            TbwCandidateList.Children.Add(new System.Windows.Controls.Border
+            {
+                Background = Frozen(0x17, 0x1A, 0x1F),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(13, 10, 13, 10),
+                Margin = new Thickness(0, 0, 0, 8),
+                Child = row,
+            });
         }
     }
 
@@ -863,9 +1320,57 @@ public partial class MainWindow : Window
         _config.Save(cfg);
         TbwCandidateList.Children.Clear();
         TbwLookupAction.Visibility = Visibility.Collapsed;
-        TbwLookupStatus.Text = $"Applied {tbw:0.#} TBW to this drive. You can change it anytime in Settings.";
+        SetTbwLookupOutcome(
+            $"Applied {tbw:0.#} TBW",
+            "The selected endurance rating is now used for lifespan and wear projections. You can change it anytime in Settings.",
+            TbwLookupOutcome.Success);
         LoadTbwField();
         RefreshAll();
+    }
+
+    private enum TbwLookupOutcome { Success, Empty, Unavailable, Error }
+
+    private string SetTbwLookupProgress(string headline, string status)
+    {
+        TbwLookupStateBorder.Background = Frozen(0x24, 0x32, 0x47);
+        TbwLookupStateGlyph.FontFamily = new FontFamily("Segoe MDL2 Assets");
+        TbwLookupStateGlyph.Text = "\uE895";
+        TbwLookupStateGlyph.Foreground = Frozen(0x64, 0xA7, 0xFF);
+        TbwLookupHeadline.Text = headline;
+        TbwLookupStatus.Text = status;
+        TbwLookupProgressBar.Visibility = Visibility.Visible;
+        TbwLookupAgainButton.Visibility = Visibility.Collapsed;
+        return status;
+    }
+
+    private void SetTbwLookupOutcome(string headline, string status, TbwLookupOutcome outcome)
+    {
+        var (background, foreground, glyph) = outcome switch
+        {
+            TbwLookupOutcome.Success => (Frozen(0x1D, 0x3D, 0x2A), InfoBrush, "\u2713"),
+            TbwLookupOutcome.Empty => (Frozen(0x3C, 0x33, 0x20), WarningBrush, "?"),
+            TbwLookupOutcome.Error => (Frozen(0x49, 0x22, 0x27), CriticalBrush, "\u2715"),
+            _ => (Frozen(0x23, 0x31, 0x43), Frozen(0x64, 0xA7, 0xFF), "i"),
+        };
+        TbwLookupStateBorder.Background = background;
+        TbwLookupStateGlyph.FontFamily = new FontFamily("Segoe UI");
+        TbwLookupStateGlyph.Text = glyph;
+        TbwLookupStateGlyph.Foreground = foreground;
+        TbwLookupHeadline.Text = headline;
+        TbwLookupStatus.Text = status;
+        TbwLookupProgressBar.Visibility = Visibility.Collapsed;
+        TbwLookupAgainButton.Visibility = Visibility.Visible;
+    }
+
+    private void TbwLookupClose_Click(object sender, RoutedEventArgs e)
+    {
+        _tbwCts?.Cancel();
+        TbwLookupPanel.Visibility = Visibility.Collapsed;
+    }
+
+    private async void TbwLookupAgain_Click(object sender, RoutedEventArgs e)
+    {
+        await StartTbwLookupAsync(SelectedDisk, force: true, userInitiated: true);
     }
 
     /// <summary>Handles the panel's action button (currently: download the on-device model).</summary>
@@ -882,21 +1387,24 @@ public partial class MainWindow : Window
         {
             var svc = TbwLookup;
             var progress = new Progress<int>(p => TbwLookupStatus.Text = $"Downloading on-device model\u2026 {p}%");
-            TbwLookupStatus.Text = "Downloading on-device model\u2026";
-            await svc.DownloadModelAsync(progress, ct);
+            SetTbwLookupProgress("Downloading the local model", "Preparing the on-device verification model\u2026");
+            await TbwModelDownloader(progress, ct);
             if (ct.IsCancellationRequested) return;
-            TbwLookupStatus.Text = "Model installed. Searching\u2026";
-            MaybeStartTbwLookup(disk);
+            SetTbwLookupProgress("Model installed", "Starting the rated TBW search\u2026");
+            await StartTbwLookupAsync(disk, force: _tbwLookupForceRequested, userInitiated: true);
         }
         catch (OperationCanceledException) { /* cancelled */ }
-        catch (Exception ex) { TbwLookupStatus.Text = $"Model download failed: {ex.Message}"; }
+        catch (Exception ex)
+        {
+            SetTbwLookupOutcome("Model download failed", ex.Message, TbwLookupOutcome.Error);
+        }
     }
 
     private void DiskSelector_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         LoadTbwField();
         RefreshAll();
-        MaybeStartTbwLookup(SelectedDisk);
+        _ = StartTbwLookupAsync(SelectedDisk);
     }
 
     private void ProcessRange_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)

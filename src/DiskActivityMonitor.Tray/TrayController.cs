@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Windows.Forms;
 using System.Windows.Threading;
 using DiskActivityMonitor.Core;
+using DiskActivityMonitor.Core.Ai;
 using DiskActivityMonitor.Core.Collection;
 using DiskActivityMonitor.Core.Configuration;
 using DiskActivityMonitor.Core.Data;
@@ -30,6 +31,7 @@ internal sealed class TrayController : IDisposable
     private Icon? _currentIcon;
     private readonly DispatcherTimer _toastTimer;
     private readonly Queue<AlertRecord> _toastQueue = new();
+    internal Action TbwSetupPresenter { get; set; }
 
     /// <summary>Alerts are treated as timestamped events shown once; the icon color and the
     /// dashboard log reflect only alerts raised within this trailing window, then auto-clear.</summary>
@@ -46,6 +48,11 @@ internal sealed class TrayController : IDisposable
         // on-screen balloon when a new one is shown).
         _toastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(6) };
         _toastTimer.Tick += (_, _) => DrainToastQueue();
+        TbwSetupPresenter = () =>
+        {
+            ShowDashboard();
+            _window!.ShowTbwOnlineSetup();
+        };
     }
 
     public void Initialize()
@@ -67,6 +74,16 @@ internal sealed class TrayController : IDisposable
 
         SafeUpdate();
         _timer.Start();
+
+        PromptTbwOnlineSetupIfNeeded();
+    }
+
+    internal bool PromptTbwOnlineSetupIfNeeded()
+    {
+        if (!MainWindow.ShouldPromptTbwOnlineSetup(_config.Current, AiSecretsStore.Load()))
+            return false;
+        TbwSetupPresenter();
+        return true;
     }
 
     private void SafeUpdate()
@@ -78,12 +95,13 @@ internal sealed class TrayController : IDisposable
     private void Update()
     {
         var disks = _repo.GetDisks();
-        // Alerts raised within the trailing window. Each is shown once and ages out automatically
-        // (the old "unacknowledged until dismissed" model kept stale alerts active indefinitely).
+        // Alerts raised within the trailing window. Dismissed records stay in history but no longer
+        // keep the tray icon in a warning state.
         var recent = _repo.GetRecentAlerts(50, sinceUtc: DateTime.UtcNow - RecentAlertWindow);
+        var visibleRecent = recent.Where(a => !a.Acknowledged).ToList();
 
-        // Icon color follows the worst alert raised in the recent window, then returns to green.
-        var severity = recent.Count == 0 ? AlertSeverity.Info : recent.Max(a => a.Severity);
+        // Icon color follows the worst non-dismissed alert in the recent window, then returns to green.
+        var severity = visibleRecent.Count == 0 ? AlertSeverity.Info : visibleRecent.Max(a => a.Severity);
         var color = severity switch
         {
             AlertSeverity.Critical => TrayIconFactory.Critical,

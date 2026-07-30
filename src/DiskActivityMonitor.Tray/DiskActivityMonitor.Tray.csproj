@@ -24,6 +24,10 @@
     <ProjectReference Include="..\DiskActivityMonitor.Core\DiskActivityMonitor.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="DiskActivityMonitor.Tests" />
+  </ItemGroup>
+
   <!-- WinForms implicit usings add System.Drawing globally, which clashes with WPF's
        System.Windows.Media (Brush, Color, Pen, Point). The few files that need GDI+ types
        import System.Drawing explicitly, so remove it from the implicit set. -->
