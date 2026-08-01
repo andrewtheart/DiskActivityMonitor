@@ -23,12 +23,9 @@ public class AppConfigTests
         Assert.Equal(14, cfg.ControllerErrorWindowDays);
         Assert.Equal(3, cfg.ControllerErrorWarnCount);
         Assert.Equal(10, cfg.ControllerErrorCriticalCount);
-        Assert.False(cfg.SuppressTbwOnlineSetupPrompt);
-        Assert.Equal("serper", cfg.WebSearchProvider);
         Assert.Equal(750, cfg.DefaultSsdTbw);
         Assert.Null(cfg.DefaultSsdTbwUpper);
         Assert.Equal(90, cfg.SsdWearWarnPercent);
-        Assert.True(cfg.EnableNotifications);
         Assert.Equal(2, cfg.TbwProjectionWarnYears);
         Assert.Equal(1, cfg.TbwProjectionCriticalYears);
     }
@@ -131,9 +128,6 @@ public class AppConfigTests
             ControllerErrorWindowDays = 30,
             ControllerErrorWarnCount = 5,
             ControllerErrorCriticalCount = 20,
-            SuppressTbwOnlineSetupPrompt = true,
-            WebSearchProvider = "serper",
-            EnableNotifications = false,
         };
 
         var json = JsonSerializer.Serialize(cfg, AppConfig.SerializerOptions);
@@ -150,9 +144,6 @@ public class AppConfigTests
         Assert.Equal(30, deserialized.ControllerErrorWindowDays);
         Assert.Equal(5, deserialized.ControllerErrorWarnCount);
         Assert.Equal(20, deserialized.ControllerErrorCriticalCount);
-        Assert.True(deserialized.SuppressTbwOnlineSetupPrompt);
-        Assert.Equal("serper", deserialized.WebSearchProvider);
-        Assert.False(deserialized.EnableNotifications);
     }
 
     [Fact]
@@ -172,5 +163,21 @@ public class AppConfigTests
         var cfg = new AppConfig(); // DefaultSsdTbwUpper is null
         var json = JsonSerializer.Serialize(cfg, AppConfig.SerializerOptions);
         Assert.DoesNotContain("defaultSsdTbwUpper", json);
+    }
+
+    [Fact]
+    public void MachineConfig_DoesNotExposePerUserActionSettings()
+    {
+        string[] propertyNames =
+        [
+            "AutoSuspendRules",
+            "EnableNotifications",
+            "EnableTbwWebLookup",
+            "SuppressTbwOnlineSetupPrompt",
+            "WebSearchProvider",
+            "TbwLookupModel",
+        ];
+
+        Assert.All(propertyNames, name => Assert.Null(typeof(AppConfig).GetProperty(name)));
     }
 }

@@ -447,8 +447,7 @@ internal static class CliRunner
             object converted;
             try { converted = ConvertValue(prop.PropertyType, val); }
             catch { Out.Error($"Cannot convert '{val}' to {prop.PropertyType.Name} for {prop.Name}."); return 2; }
-            prop.SetValue(cfg, converted);
-            store.Save(cfg);
+            store.Update(config => prop.SetValue(config, converted));
             Console.WriteLine($"Set {prop.Name} = {converted}  (saved; the service reloads automatically).");
             return 0;
         }

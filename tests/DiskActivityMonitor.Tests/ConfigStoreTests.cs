@@ -16,6 +16,7 @@ public class ConfigStoreTests : IDisposable
     {
         try { File.Delete(_configPath); } catch { }
         try { File.Delete(_configPath + ".tmp"); } catch { }
+        try { Directory.Delete(_configPath, recursive: true); } catch { }
     }
 
     [Fact]
@@ -52,18 +53,29 @@ public class ConfigStoreTests : IDisposable
         using var store = new ConfigStore(_configPath);
 
         Assert.Equal(12, store.Current.SampleIntervalSeconds);
-        Assert.Equal("serper", store.Current.WebSearchProvider);
         Assert.True(store.Current.EnableControllerErrorAlerts);
     }
 
     [Fact]
-    public void Reload_CorruptFile_ReturnsDefaults()
+    public void Reload_CorruptFile_RetainsLastGoodConfig()
     {
         using var store = new ConfigStore(_configPath);
+        store.Update(config => config.SampleIntervalSeconds = 12);
         File.WriteAllText(_configPath, "NOT JSON {{{{");
 
         var reloaded = store.Reload();
-        Assert.Equal(5, reloaded.SampleIntervalSeconds); // default
+        Assert.Equal(12, reloaded.SampleIntervalSeconds);
+    }
+
+    [Fact]
+    public void Reload_OversizedFile_RetainsLastGoodConfig()
+    {
+        using var store = new ConfigStore(_configPath);
+        store.Update(config => config.SampleIntervalSeconds = 12);
+        using (var stream = File.Create(_configPath))
+            stream.SetLength(1024 * 1024 + 1);
+
+        Assert.Equal(12, store.Reload().SampleIntervalSeconds);
     }
 
     [Fact]
@@ -79,14 +91,17 @@ public class ConfigStoreTests : IDisposable
     }
 
     [Fact]
-    public void Save_UsesAtomicWriteViaTempFile()
+    public void Save_DoesNotUsePredictableTempFile()
     {
         using var store = new ConfigStore(_configPath);
+        string predictableTempPath = _configPath + ".tmp";
+        File.WriteAllText(predictableTempPath, "sentinel");
+
         store.Save(store.Current);
 
-        // The .tmp file should have been cleaned up (moved over main)
-        Assert.False(File.Exists(_configPath + ".tmp"));
+        Assert.Equal("sentinel", File.ReadAllText(predictableTempPath));
         Assert.True(File.Exists(_configPath));
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(_configPath)!, $".{Path.GetFileName(_configPath)}.*.tmp"));
     }
 
     [Fact]
@@ -102,5 +117,54 @@ public class ConfigStoreTests : IDisposable
         Assert.NotNull(doc);
         Assert.True(doc.RootElement.TryGetProperty("diskTbwRatings", out var ratings));
         Assert.Equal(1200, ratings.GetProperty("disk0").GetDouble());
+    }
+
+    [Fact]
+    public void Current_ReturnsDeepSnapshot()
+    {
+        using var store = new ConfigStore(_configPath);
+        store.Update(config => config.DiskTbwRatings["disk0"] = 1200);
+
+        var snapshot = store.Current;
+        snapshot.SampleIntervalSeconds = 30;
+        snapshot.DiskTbwRatings["disk0"] = 1;
+
+        Assert.Equal(5, store.Current.SampleIntervalSeconds);
+        Assert.Equal(1200, store.Current.DiskTbwRatings["disk0"]);
+    }
+
+    [Fact]
+    public void Update_SerializesChangesAndDoesNotRetainCallbackObject()
+    {
+        using var store = new ConfigStore(_configPath);
+        AppConfig? callbackObject = null;
+
+        Parallel.Invoke(
+            () => store.Update(config => config.SampleIntervalSeconds = 12),
+            () => store.Update(config => config.RetentionDays = 30));
+        store.Update(config =>
+        {
+            callbackObject = config;
+            config.DiskTbwRatings["disk0"] = 1200;
+        });
+        callbackObject!.DiskTbwRatings["disk0"] = 1;
+
+        Assert.Equal(12, store.Current.SampleIntervalSeconds);
+        Assert.Equal(30, store.Current.RetentionDays);
+        Assert.Equal(1200, store.Current.DiskTbwRatings["disk0"]);
+    }
+
+    [Fact]
+    public void Update_WriteFailureRetainsLastPersistedSnapshot()
+    {
+        using var store = new ConfigStore(_configPath);
+        store.Update(config => config.SampleIntervalSeconds = 12);
+        File.Delete(_configPath);
+        Directory.CreateDirectory(_configPath);
+
+        Assert.Throws<UnauthorizedAccessException>(() =>
+            store.Update(config => config.SampleIntervalSeconds = 30));
+
+        Assert.Equal(12, store.Current.SampleIntervalSeconds);
     }
 }

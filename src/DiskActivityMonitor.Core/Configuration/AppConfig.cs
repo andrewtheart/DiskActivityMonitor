@@ -37,12 +37,6 @@ public sealed class AppConfig
     /// <summary>Alert when all processes combined write more than this many GB in a rolling 1-hour window.</summary>
     public double AllProcessesWarnGbPerHour { get; set; } = 20;
 
-    /// <summary>
-    /// Rules that suspend a process when its rolling 1-hour write volume exceeds a threshold.
-    /// Each rule either asks for confirmation via a toast (default) or suspends automatically.
-    /// </summary>
-    public List<AutoSuspendRule> AutoSuspendRules { get; set; } = new();
-
     /// <summary>Minimum minutes between repeat alerts for the same rule + scope.</summary>
     public int AlertCooldownMinutes { get; set; } = 5;
 
@@ -90,27 +84,6 @@ public sealed class AppConfig
 
     /// <summary>Warn when a drive's SMART-reported endurance used (percentage) reaches this level.</summary>
     public double SsdWearWarnPercent { get; set; } = 90;
-
-    /// <summary>Show Windows balloon notifications from the tray app when alerts fire.</summary>
-    public bool EnableNotifications { get; set; } = true;
-
-    /// <summary>
-    /// Enable the startup web lookup that searches the web for a drive's rated TBW endurance via a
-    /// local Foundry Local model. Degrades to a no-op when Foundry Local or a search key is missing.
-    /// </summary>
-    public bool EnableTbwWebLookup { get; set; } = true;
-
-    /// <summary>Do not offer guided online-TBW setup again at tray startup.</summary>
-    public bool SuppressTbwOnlineSetupPrompt { get; set; }
-
-    /// <summary>Web search backend for the TBW lookup: "google" (existing customers) or "serper" (serper.dev).</summary>
-    public string WebSearchProvider { get; set; } = "serper";
-
-    /// <summary>
-    /// Optional Foundry Local model alias/id override for the TBW lookup. Null = auto-select the best
-    /// tool-calling model for the detected hardware (GPU/NPU/CPU).
-    /// </summary>
-    public string? TbwLookupModel { get; set; }
 
     /// <summary>Returns the effective TBW rating for a disk: its per-disk override, else the default.</summary>
     public double EffectiveTbw(string diskId)

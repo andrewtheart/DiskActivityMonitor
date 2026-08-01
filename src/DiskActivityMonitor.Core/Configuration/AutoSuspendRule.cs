@@ -29,8 +29,8 @@ public sealed class AutoSuspendRule
     public bool Enabled { get; set; } = true;
 
     /// <summary>
-    /// Optional full path to the executable the rule was created from (for display only). Set when
-    /// the user browses for an as-yet-unseen process; empty when picked from already-seen processes.
+    /// Optional full path used to constrain process matching. Set when the user browses for an
+    /// executable; empty when the user deliberately creates a name-wide rule from observed data.
     /// </summary>
     public string? ExecutablePath { get; set; }
 }

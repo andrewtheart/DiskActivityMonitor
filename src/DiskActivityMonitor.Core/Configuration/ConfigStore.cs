@@ -8,6 +8,7 @@ namespace DiskActivityMonitor.Core.Configuration;
 /// </summary>
 public sealed class ConfigStore : IDisposable
 {
+    private const long MaximumFileSize = 1024 * 1024;
     private readonly string _path;
     private FileSystemWatcher? _watcher;
     private readonly object _gate = new();
@@ -19,12 +20,16 @@ public sealed class ConfigStore : IDisposable
     {
         _path = path ?? Paths.ConfigPath;
         Paths.EnsureCreated();
-        _current = LoadFromDisk();
+        _current = TryLoadFromDisk() ?? new AppConfig();
+        if (!File.Exists(_path))
+        {
+            try { Save(_current); } catch { /* best effort */ }
+        }
     }
 
     public AppConfig Current
     {
-        get { lock (_gate) return _current; }
+        get { lock (_gate) return Clone(_current); }
     }
 
     /// <summary>Begins watching the config file for external edits.</summary>
@@ -46,48 +51,93 @@ public sealed class ConfigStore : IDisposable
     {
         // Editors often fire several events; a tiny delay lets the write settle.
         try { Thread.Sleep(150); } catch { /* ignore */ }
-        AppConfig reloaded;
-        try { reloaded = LoadFromDisk(); }
-        catch { return; }
-        lock (_gate) { _current = reloaded; }
-        Changed?.Invoke(this, reloaded);
+        AppConfig? snapshot;
+        lock (_gate)
+        {
+            var reloaded = TryLoadFromDisk();
+            if (reloaded is null) return;
+            _current = Clone(reloaded);
+            snapshot = Clone(_current);
+        }
+        Changed?.Invoke(this, snapshot);
     }
 
     public AppConfig Reload()
     {
-        var cfg = LoadFromDisk();
-        lock (_gate) { _current = cfg; }
-        return cfg;
+        lock (_gate)
+        {
+            var cfg = TryLoadFromDisk();
+            if (cfg is not null)
+                _current = Clone(cfg);
+            return Clone(_current);
+        }
     }
 
     public void Save(AppConfig config)
     {
-        lock (_gate) { _current = config; }
-        var json = JsonSerializer.Serialize(config, AppConfig.SerializerOptions);
-        var tmp = _path + ".tmp";
-        File.WriteAllText(tmp, json);
-        File.Move(tmp, _path, overwrite: true);
+        ArgumentNullException.ThrowIfNull(config);
+        lock (_gate)
+        {
+            Persist(Clone(config));
+        }
     }
 
-    private AppConfig LoadFromDisk()
+    public void Update(Action<AppConfig> update)
     {
-        if (!File.Exists(_path))
+        ArgumentNullException.ThrowIfNull(update);
+        lock (_gate)
         {
-            var def = new AppConfig();
-            try { Save(def); } catch { /* best effort */ }
-            return def;
+            var next = Clone(_current);
+            update(next);
+            Persist(Clone(next));
         }
+    }
 
+    private void Persist(AppConfig snapshot)
+    {
+        var json = JsonSerializer.Serialize(snapshot, AppConfig.SerializerOptions);
+        AtomicFile.WriteAllText(_path, json);
+        _current = snapshot;
+    }
+
+    private AppConfig? TryLoadFromDisk()
+    {
         try
         {
-            var json = File.ReadAllText(_path);
-            return JsonSerializer.Deserialize<AppConfig>(json, AppConfig.SerializerOptions) ?? new AppConfig();
+            var json = AtomicFile.ReadAllText(_path, MaximumFileSize);
+            var config = JsonSerializer.Deserialize<AppConfig>(json, AppConfig.SerializerOptions);
+            return config is null ? null : Clone(config);
         }
         catch
         {
-            return new AppConfig();
+            return null;
         }
     }
+
+    private static AppConfig Clone(AppConfig source) => new()
+    {
+        SampleIntervalSeconds = source.SampleIntervalSeconds,
+        DashboardRefreshSeconds = source.DashboardRefreshSeconds,
+        RetentionDays = source.RetentionDays,
+        ProcessMinMbPerMinute = source.ProcessMinMbPerMinute,
+        SsdWarnGbPerHour = source.SsdWarnGbPerHour,
+        SsdWarnGbPerDay = source.SsdWarnGbPerDay,
+        SsdCriticalGbPerDay = source.SsdCriticalGbPerDay,
+        ProcessWarnGbPerHour = source.ProcessWarnGbPerHour,
+        AllProcessesWarnGbPerHour = source.AllProcessesWarnGbPerHour,
+        AlertCooldownMinutes = source.AlertCooldownMinutes,
+        EnableControllerErrorAlerts = source.EnableControllerErrorAlerts,
+        ControllerErrorWindowDays = source.ControllerErrorWindowDays,
+        ControllerErrorWarnCount = source.ControllerErrorWarnCount,
+        ControllerErrorCriticalCount = source.ControllerErrorCriticalCount,
+        DiskTbwRatings = source.DiskTbwRatings is null ? new() : new(source.DiskTbwRatings),
+        DefaultSsdTbw = source.DefaultSsdTbw,
+        DefaultSsdTbwUpper = source.DefaultSsdTbwUpper,
+        DiskTbwRatingsUpper = source.DiskTbwRatingsUpper is null ? new() : new(source.DiskTbwRatingsUpper),
+        TbwProjectionWarnYears = source.TbwProjectionWarnYears,
+        TbwProjectionCriticalYears = source.TbwProjectionCriticalYears,
+        SsdWearWarnPercent = source.SsdWearWarnPercent,
+    };
 
     public void Dispose()
     {
