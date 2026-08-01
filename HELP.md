@@ -90,7 +90,7 @@ From an elevated PowerShell prompt in the repository root:
 .\scripts\install.ps1
 ```
 
-This publishes the service and tray under the repository's `publish` directory, recreates the service, starts it, adds a Startup shortcut, and opens the dashboard.
+This publishes staging files under the repository's `publish` directory, copies runnable files to the ACL-protected `%ProgramFiles%\Disk Activity Monitor Dev` directory, recreates the service from that protected path, starts it, adds a Startup shortcut, and opens the dashboard.
 
 ---
 
@@ -334,11 +334,13 @@ Auto-suspend freezes all threads in matching processes after their rolling-hour 
 ### Create a rule
 
 1. Open Settings.
-2. Pick a process already seen by the collector, or browse to an executable.
+2. Pick a process already seen by the collector for a name-wide rule, or browse to an
+  executable to bind the rule to that exact path.
 3. Set the GB/hour threshold.
 4. Choose behavior:
    - **Confirm:** ask through a toast before suspending.
-   - **Auto:** suspend immediately and notify afterward.
+  - **Auto:** suspend an exact-path rule immediately and notify afterward. Name-wide rules are
+    confirmation-only.
 5. Save rules.
 
 ### Resume a process
@@ -347,7 +349,12 @@ Use the **Resume** button in the Currently suspended list or the action on the s
 
 ### Safety notes
 
-- Rules match the executable image name and can affect multiple processes with that name.
+- Rules created from the seen-process list match the executable image name and can affect
+  multiple processes with that name. Browsed rules match only the selected executable path.
+- Resume actions validate the recorded process ID, creation time, and executable path so a
+  recycled process ID or same-name executable is not resumed accidentally.
+- If an older or damaged suspended record lacks exact identities, resume fails closed and keeps
+  the record instead of selecting a process by name.
 - Suspending system, security, storage, or shell processes can destabilize Windows or interrupt data operations.
 - The tray can control ordinary processes owned by the current user. Elevated or other-user processes may require an elevated tray instance.
 - Prefer Confirm mode until a rule has been validated.
@@ -356,7 +363,7 @@ Use the **Resume** button in the Currently suspended list or the action on the s
 
 ## Settings reference
 
-Machine-wide settings are stored in `%ProgramData%\DiskActivityMonitor\config.json`. The service watches this file and reloads changes.
+Machine-wide collector settings are stored in `%ProgramData%\DiskActivityMonitor\config.json`. The service watches this file and reloads valid changes. Malformed files and files larger than 1 MiB are ignored, preserving the last known-good settings.
 
 | Setting | Default | Meaning |
 |---|---:|---|
@@ -381,14 +388,21 @@ Machine-wide settings are stored in `%ProgramData%\DiskActivityMonitor\config.js
 | `tbwProjectionWarnYears` | `2` | Projection warning threshold. |
 | `tbwProjectionCriticalYears` | `1` | Projection critical threshold. |
 | `ssdWearWarnPercent` | `90` | SMART wear warning threshold. |
-| `enableNotifications` | `true` | Show alert desktop notifications. |
-| `enableTbwWebLookup` | `true` | Enable rated-TBW web lookup. |
-| `suppressTbwOnlineSetupPrompt` | `false` | Suppress guided lookup startup prompt. |
-| `webSearchProvider` | `serper` | `serper` or `google`. |
-| `tbwLookupModel` | automatic | Optional Foundry Local model override. |
-| `autoSuspendRules` | empty | Process suspension rules. |
 
 Prefer the dashboard or CLI over hand-editing. If hand-editing JSON, keep valid JSON syntax and preserve numeric/boolean types.
+
+Session behavior and network-use preferences are stored per Windows user in `%LOCALAPPDATA%\DiskActivityMonitor\user-settings.json`.
+
+| Setting | Default | Meaning |
+|---|---:|---|
+| `enableNotifications` | `true` | Show alert desktop notifications for this user. |
+| `enableTbwWebLookup` | `true` | Enable rated-TBW web lookup for this user. |
+| `suppressTbwOnlineSetupPrompt` | `false` | Suppress this user's guided lookup startup prompt. |
+| `webSearchProvider` | `serper` | This user's `serper` or `google` backend. |
+| `tbwLookupModel` | automatic | Optional per-user Foundry Local model override. |
+| `autoSuspendRules` | empty | Rules allowed to suspend processes in this user's session. |
+
+On the first launch after upgrading from a machine-wide settings version, notification and online-lookup preferences are copied to the current user's file. Legacy auto-suspend rules are not imported; recreate them deliberately in each user's dashboard.
 
 ---
 
@@ -465,8 +479,9 @@ Duration examples: `30m`, `1h`, `1d`, `1w`.
 .\dam.ps1 config get
 .\dam.ps1 config get ssdWarnGbPerHour
 .\dam.ps1 config set ssdWarnGbPerHour 20
-.\dam.ps1 config set enableNotifications false
 ```
+
+Change notification, online lookup, and auto-suspend preferences in the dashboard; they are not machine-wide CLI settings.
 
 ### Live terminal dashboard
 
@@ -494,9 +509,12 @@ Press `Ctrl+C` to stop watching.
 
 ### Per-user files
 
-`%LOCALAPPDATA%\DiskActivityMonitor\ai-secrets.json`
+| File | Purpose |
+|---|---|
+| `%LOCALAPPDATA%\DiskActivityMonitor\user-settings.json` | Per-user notification, lookup, and auto-suspend preferences. |
+| `%LOCALAPPDATA%\DiskActivityMonitor\ai-secrets.json` | DPAPI-protected API key values and the non-secret Google CSE identifier. |
 
-Contains DPAPI-protected API key values and the non-secret Google CSE identifier when configured.
+The installer pins service binaries to its expected Program Files directory. It opens directories with no-follow handles, rejects reparse points from handle metadata, holds the directory identity while applying protected ownership and ACLs, and grants standard users read/execute access only to service code. Install and uninstall stop only the tray executable at that exact path. Foundry Local requests accept loopback endpoints only and do not follow HTTP redirects or use a system proxy. Credentialed search requests also reject redirects so API-key headers cannot cross origins. The shared `%ProgramData%` database and machine configuration still support tray/CLI writes and are not a tamper-evident boundary between mutually untrusted local accounts: another local user can alter telemetry or deny service, but cannot modify protected service code or read another user's DPAPI secrets. Security-sensitive process-control and network-use preferences therefore live only in the per-user file.
 
 ### Backup
 
@@ -507,7 +525,7 @@ For a consistent database copy:
 3. Copy the entire `%ProgramData%\DiskActivityMonitor` directory.
 4. Start the service and tray again.
 
-Also back up the per-user secrets file if online lookup configuration should move with the same Windows account. DPAPI-protected keys generally cannot be moved to a different Windows account; re-enter keys there instead.
+Also back up the per-user settings and secrets files if those preferences should move with the same Windows account. DPAPI-protected keys generally cannot be moved to a different Windows account; re-enter keys there instead.
 
 ---
 
@@ -550,8 +568,8 @@ Windows event 11 records identify `HarddiskN`. Removable/USB disk numbers can ch
 
 Check:
 
-1. `enableTbwWebLookup` is true.
-2. `webSearchProvider` is `serper` for new setups.
+1. **Enable rated-TBW web lookup** is selected in this user's dashboard settings.
+2. The selected provider is **serper** for new setups.
 3. A Serper key is saved in guided setup or `SERPER_API_KEY` is set.
 4. Foundry Local is installed and its CLI/service is available.
 5. A suitable local model is installed; use the lookup modal's download action when offered.
@@ -561,7 +579,7 @@ If no verified result is found, do not assume the nearest model's rating. Enter 
 
 ### Notifications do not appear
 
-- Confirm `enableNotifications` is true.
+- Confirm notifications are enabled in this user's dashboard settings.
 - Check Windows notification settings and Focus Assist/Do Not Disturb.
 - Confirm the tray app is running.
 - Inspect `%ProgramData%\DiskActivityMonitor\toast-error.log` if it exists.
@@ -595,9 +613,10 @@ When run interactively, the collector writes structured logs to its console. As 
 ### Packaged uninstaller
 
 The packaged uninstaller asks whether to keep settings for a future reinstall. Choosing not to
-keep them removes `config.json` only; monitoring history remains. A later installer detects a
-retained configuration and asks whether to reuse it. Existing values are preserved, while
-settings introduced by the newer version receive their current defaults.
+keep them removes machine `config.json` and the invoking Windows account's `user-settings.json`;
+monitoring history and DPAPI-protected API keys remain. A later installer detects retained
+machine or current-account settings and asks whether to reuse them. Existing values are
+preserved, while settings introduced by the newer version receive their current defaults.
 
 ### Scripted uninstall
 
@@ -653,10 +672,17 @@ Build selected architecture:
 
 ```powershell
 .\scripts\build-all-installers.ps1 -Version 1.5.0 -Commit
-.\scripts\build-all-installers.ps1 -Version 1.5.0 -Push
+.\scripts\build-all-installers.ps1 -Push
 ```
 
-With `-Push`, the script asks whether the GitHub release should be:
+`-Commit` and `-Push` attempt focused commits by functional area. The script preserves any
+already-staged changes as the first commit, then groups remaining changes by whole file. It never
+creates partial-file hunks automatically. Possible renames or other ambiguous path expansion are
+kept together in one residual release commit.
+
+With `-Push`, omitting `-Version` increments the patch number of the latest stable local tag,
+origin tag, or GitHub release, including drafts (for example, `v1.5.0` becomes `v1.5.1`). Pass
+`-Version` to override that selection. The script then asks whether the GitHub release should be:
 
 - **Draft:** upload for review without official publication.
 - **Published:** publish officially and mark latest.
@@ -664,9 +690,9 @@ With `-Push`, the script asks whether the GitHub release should be:
 For unattended operation:
 
 ```powershell
-.\scripts\build-all-installers.ps1 -Version 1.5.0 -Push -ReleaseMode Draft
-.\scripts\build-all-installers.ps1 -Version 1.5.0 -Push -ReleaseMode Published
-.\scripts\build-all-installers.ps1 -Version 1.5.0 -Push -SkipRelease
+.\scripts\build-all-installers.ps1 -Push -ReleaseMode Draft
+.\scripts\build-all-installers.ps1 -Push -ReleaseMode Published
+.\scripts\build-all-installers.ps1 -Push -SkipRelease
 ```
 
 The lower-level builder remains available at `installer\build-installer.ps1` for direct x64/x86 packaging.

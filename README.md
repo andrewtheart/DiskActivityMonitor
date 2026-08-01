@@ -16,6 +16,9 @@ Both share a database under `%ProgramData%\DiskActivityMonitor\`.
 
 > **Need usage or troubleshooting help?** See the comprehensive [HELP.md](HELP.md) guide.
 > The tray app also compiles this guide to HTML and displays it in-app from the top **?** button.
+>
+> **Security architecture:** See [docs/security/security.md](docs/security/security.md) for the
+> threat model, implemented controls, validation evidence, known limitations, and roadmap.
 
 ---
 
@@ -78,6 +81,8 @@ Self-contained installers (no .NET runtime required on the target machine) are p
 
 The installer registers a Windows Service (auto-start), adds a Start Menu shortcut, and
 optionally creates a startup entry so the tray dashboard launches at sign-in.
+Service binaries are pinned to the expected Program Files directory. Setup rejects reparse
+points and applies protected ownership and ACLs through no-follow directory handles.
 
 ---
 
@@ -123,10 +128,11 @@ Run an **elevated** PowerShell:
 ```
 
 This:
-1. Publishes the service and tray app to `.\publish\`.
-2. Installs and starts the **DiskActivityMonitor** Windows service (auto-start at boot).
-3. Adds a Startup shortcut so the tray app launches at logon.
-4. Launches the tray app immediately.
+1. Publishes staging output to `.\publish\`.
+2. Copies the runnable service and tray files to `%ProgramFiles%\Disk Activity Monitor Dev\`, where standard users have read/execute access only.
+3. Installs and starts the **DiskActivityMonitor** Windows service (auto-start at boot).
+4. Adds a Startup shortcut so the tray app launches at logon.
+5. Launches the tray app immediately.
 
 To remove it (elevated):
 
@@ -135,7 +141,8 @@ To remove it (elevated):
 ```
 
 Collected history and settings are left in `%ProgramData%\DiskActivityMonitor\`; delete that
-folder if you also want to discard the data.
+folder if you also want to discard the data. Per-user preferences and DPAPI-protected lookup
+keys remain under `%LOCALAPPDATA%\DiskActivityMonitor\`.
 
 ---
 
@@ -182,14 +189,19 @@ to quit the app.
 
 The **Auto-suspend rules** card lets you stop a runaway writer before it wears the disk:
 
-- **Add a rule** for a process already seen by the monitor (pick it from the dropdown) or
-  **Browse for an `.exe`** on disk for one that hasn't been seen yet - the rule matches the
-  executable's image name.
+- **Add a rule** for a process already seen by the monitor (pick it from the dropdown) to match
+  all processes with that executable image name, or **Browse for an `.exe`** to bind the rule
+  to that exact executable path.
 - Set a **limit** in GB written per rolling hour. When a process exceeds it, the app reacts.
 - Each rule is either **confirm** (a toast asks before suspending - the default for every new
   rule) or **Auto** (suspend immediately, then notify with a *Resume* button).
 - Suspended processes appear under **Currently suspended** with a **Resume** button, and the
-  auto-suspend toasts carry *Suspend now* / *Resume* actions.
+  auto-suspend toasts carry *Suspend now* / *Resume* actions. Resume validates the recorded
+  process ID, creation time, and executable path before acting.
+
+Name-wide rules always require confirmation; automatic suspension is available only to rules
+bound to an exact executable path. If exact resume identity is unavailable, the app leaves the
+suspended record in place instead of guessing by process name.
 
 Suspending freezes every thread in the target. The dashboard runs in your user session, so it
 can suspend your own processes; suspending an elevated/other-user process requires the app to
@@ -289,8 +301,9 @@ flowchart LR
 
 ## Configuration
 
-Settings live at `%ProgramData%\DiskActivityMonitor\config.json` and can be edited from the
-dashboard or by hand (the collector watches the file). Thresholds are in GB.
+Machine-wide collector settings live at `%ProgramData%\DiskActivityMonitor\config.json` and can
+be edited from the dashboard or by hand (the collector watches the file). Invalid or oversized
+replacements are ignored in favor of the last known-good settings. Thresholds are in GB.
 
 | Key | Meaning | Default |
 |-----|---------|---------|
@@ -312,12 +325,21 @@ dashboard or by hand (the collector watches the file). Thresholds are in GB.
 | `diskTbwRatingsUpper` | Optional per-disk upper TBW; when set, endurance %/projection are shown as a range | none |
 | `tbwProjectionWarnYears` / `tbwProjectionCriticalYears` | Projected-years warning / critical thresholds | 2 / 1 |
 | `ssdWearWarnPercent` | SMART wear warning threshold | 90 |
-| `enableNotifications` | Show desktop balloon notifications | true |
+
+Action-bearing preferences are isolated per Windows user in
+`%LOCALAPPDATA%\DiskActivityMonitor\user-settings.json`:
+
+| Key | Meaning | Default |
+|-----|---------|---------|
+| `enableNotifications` | Show desktop notifications | true |
 | `enableTbwWebLookup` | Enable online evidence search + local verification | true |
 | `suppressTbwOnlineSetupPrompt` | Suppress guided lookup setup at startup | false |
 | `webSearchProvider` | Search backend (`serper` recommended; `google` for existing customers) | serper |
 | `tbwLookupModel` | Optional Foundry Local model override | automatic |
 | `autoSuspendRules` | Per-process confirm/automatic suspension rules | none |
+
+Upgrades copy legacy notification and online-lookup preferences into the current user's file,
+but do not import legacy machine-wide auto-suspend rules.
 
 See [HELP.md](HELP.md#settings-reference) for the full operational explanation of each setting.
 

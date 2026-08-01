@@ -654,9 +654,11 @@ installation</h3>
 <p>From an elevated PowerShell prompt in the repository root:</p>
 <div class="sourceCode" id="cb4"><pre
 class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\install<span class="op">.</span><span class="fu">ps1</span></span></code></pre></div>
-<p>This publishes the service and tray under the repository’s
-<code>publish</code> directory, recreates the service, starts it, adds a
-Startup shortcut, and opens the dashboard.</p>
+<p>This publishes staging files under the repository’s
+<code>publish</code> directory, copies runnable files to the
+ACL-protected <code>%ProgramFiles%\Disk Activity Monitor Dev</code>
+directory, recreates the service from that protected path, starts it,
+adds a Startup shortcut, and opens the dashboard.</p>
 <hr />
 <h2 id="dashboard-tour">Dashboard tour</h2>
 <h3 id="header">Header</h3>
@@ -908,16 +910,20 @@ rolling-hour logical write requests cross a threshold.</p>
 <h3 id="create-a-rule">Create a rule</h3>
 <ol type="1">
 <li>Open Settings.</li>
-<li>Pick a process already seen by the collector, or browse to an
-executable.</li>
+<li>Pick a process already seen by the collector for a name-wide rule,
+or browse to an executable to bind the rule to that exact path.</li>
 <li>Set the GB/hour threshold.</li>
 <li>Choose behavior:
 <ul>
 <li><strong>Confirm:</strong> ask through a toast before
 suspending.</li>
-<li><strong>Auto:</strong> suspend immediately and notify
-afterward.</li>
 </ul></li>
+</ol>
+<ul>
+<li><strong>Auto:</strong> suspend an exact-path rule immediately and
+notify afterward. Name-wide rules are confirmation-only.</li>
+</ul>
+<ol start="5" type="1">
 <li>Save rules.</li>
 </ol>
 <h3 id="resume-a-process">Resume a process</h3>
@@ -925,8 +931,15 @@ afterward.</li>
 list or the action on the suspension toast.</p>
 <h3 id="safety-notes">Safety notes</h3>
 <ul>
-<li>Rules match the executable image name and can affect multiple
-processes with that name.</li>
+<li>Rules created from the seen-process list match the executable image
+name and can affect multiple processes with that name. Browsed rules
+match only the selected executable path.</li>
+<li>Resume actions validate the recorded process ID, creation time, and
+executable path so a recycled process ID or same-name executable is not
+resumed accidentally.</li>
+<li>If an older or damaged suspended record lacks exact identities,
+resume fails closed and keeps the record instead of selecting a process
+by name.</li>
 <li>Suspending system, security, storage, or shell processes can
 destabilize Windows or interrupt data operations.</li>
 <li>The tray can control ordinary processes owned by the current user.
@@ -936,9 +949,11 @@ instance.</li>
 </ul>
 <hr />
 <h2 id="settings-reference">Settings reference</h2>
-<p>Machine-wide settings are stored in
+<p>Machine-wide collector settings are stored in
 <code>%ProgramData%\DiskActivityMonitor\config.json</code>. The service
-watches this file and reloads changes.</p>
+watches this file and reloads valid changes. Malformed files and files
+larger than 1 MiB are ignored, preserving the last known-good
+settings.</p>
 <table>
 <colgroup>
 <col style="width: 30%" />
@@ -1058,40 +1073,63 @@ watches this file and reloads changes.</p>
 <td style="text-align: right;"><code>90</code></td>
 <td>SMART wear warning threshold.</td>
 </tr>
-<tr>
-<td><code>enableNotifications</code></td>
-<td style="text-align: right;"><code>true</code></td>
-<td>Show alert desktop notifications.</td>
-</tr>
-<tr>
-<td><code>enableTbwWebLookup</code></td>
-<td style="text-align: right;"><code>true</code></td>
-<td>Enable rated-TBW web lookup.</td>
-</tr>
-<tr>
-<td><code>suppressTbwOnlineSetupPrompt</code></td>
-<td style="text-align: right;"><code>false</code></td>
-<td>Suppress guided lookup startup prompt.</td>
-</tr>
-<tr>
-<td><code>webSearchProvider</code></td>
-<td style="text-align: right;"><code>serper</code></td>
-<td><code>serper</code> or <code>google</code>.</td>
-</tr>
-<tr>
-<td><code>tbwLookupModel</code></td>
-<td style="text-align: right;">automatic</td>
-<td>Optional Foundry Local model override.</td>
-</tr>
-<tr>
-<td><code>autoSuspendRules</code></td>
-<td style="text-align: right;">empty</td>
-<td>Process suspension rules.</td>
-</tr>
 </tbody>
 </table>
 <p>Prefer the dashboard or CLI over hand-editing. If hand-editing JSON,
 keep valid JSON syntax and preserve numeric/boolean types.</p>
+<p>Session behavior and network-use preferences are stored per Windows
+user in
+<code>%LOCALAPPDATA%\DiskActivityMonitor\user-settings.json</code>.</p>
+<table>
+<colgroup>
+<col style="width: 30%" />
+<col style="width: 40%" />
+<col style="width: 30%" />
+</colgroup>
+<thead>
+<tr>
+<th>Setting</th>
+<th style="text-align: right;">Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enableNotifications</code></td>
+<td style="text-align: right;"><code>true</code></td>
+<td>Show alert desktop notifications for this user.</td>
+</tr>
+<tr>
+<td><code>enableTbwWebLookup</code></td>
+<td style="text-align: right;"><code>true</code></td>
+<td>Enable rated-TBW web lookup for this user.</td>
+</tr>
+<tr>
+<td><code>suppressTbwOnlineSetupPrompt</code></td>
+<td style="text-align: right;"><code>false</code></td>
+<td>Suppress this user’s guided lookup startup prompt.</td>
+</tr>
+<tr>
+<td><code>webSearchProvider</code></td>
+<td style="text-align: right;"><code>serper</code></td>
+<td>This user’s <code>serper</code> or <code>google</code> backend.</td>
+</tr>
+<tr>
+<td><code>tbwLookupModel</code></td>
+<td style="text-align: right;">automatic</td>
+<td>Optional per-user Foundry Local model override.</td>
+</tr>
+<tr>
+<td><code>autoSuspendRules</code></td>
+<td style="text-align: right;">empty</td>
+<td>Rules allowed to suspend processes in this user’s session.</td>
+</tr>
+</tbody>
+</table>
+<p>On the first launch after upgrading from a machine-wide settings
+version, notification and online-lookup preferences are copied to the
+current user’s file. Legacy auto-suspend rules are not imported;
+recreate them deliberately in each user’s dashboard.</p>
 <hr />
 <h2 id="command-line-guide">Command-line guide</h2>
 <p>Use the repository helper during development:</p>
@@ -1144,8 +1182,9 @@ class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb10
 <div class="sourceCode" id="cb11"><pre
 class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> config get</span>
 <span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> config get ssdWarnGbPerHour</span>
-<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> config <span class="fu">set</span> ssdWarnGbPerHour <span class="dv">20</span></span>
-<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> config <span class="fu">set</span> enableNotifications false</span></code></pre></div>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> config <span class="fu">set</span> ssdWarnGbPerHour <span class="dv">20</span></span></code></pre></div>
+<p>Change notification, online lookup, and auto-suspend preferences in
+the dashboard; they are not machine-wide CLI settings.</p>
 <h3 id="live-terminal-dashboard">Live terminal dashboard</h3>
 <div class="sourceCode" id="cb12"><pre
 class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> watch <span class="op">--</span>interval <span class="dv">5</span></span></code></pre></div>
@@ -1192,9 +1231,44 @@ active.</td>
 </tbody>
 </table>
 <h3 id="per-user-files">Per-user files</h3>
-<p><code>%LOCALAPPDATA%\DiskActivityMonitor\ai-secrets.json</code></p>
-<p>Contains DPAPI-protected API key values and the non-secret Google CSE
-identifier when configured.</p>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>%LOCALAPPDATA%\DiskActivityMonitor\user-settings.json</code></td>
+<td>Per-user notification, lookup, and auto-suspend preferences.</td>
+</tr>
+<tr>
+<td><code>%LOCALAPPDATA%\DiskActivityMonitor\ai-secrets.json</code></td>
+<td>DPAPI-protected API key values and the non-secret Google CSE
+identifier.</td>
+</tr>
+</tbody>
+</table>
+<p>The installer pins service binaries to its expected Program Files
+directory. It opens directories with no-follow handles, rejects reparse
+points from handle metadata, holds the directory identity while applying
+protected ownership and ACLs, and grants standard users read/execute
+access only to service code. Install and uninstall stop only the tray
+executable at that exact path. Foundry Local requests accept loopback
+endpoints only and do not follow HTTP redirects or use a system proxy.
+Credentialed search requests also reject redirects so API-key headers
+cannot cross origins. The shared <code>%ProgramData%</code> database and
+machine configuration still support tray/CLI writes and are not a
+tamper-evident boundary between mutually untrusted local accounts:
+another local user can alter telemetry or deny service, but cannot
+modify protected service code or read another user’s DPAPI secrets.
+Security-sensitive process-control and network-use preferences therefore
+live only in the per-user file.</p>
 <h3 id="backup">Backup</h3>
 <p>For a consistent database copy:</p>
 <ol type="1">
@@ -1204,10 +1278,10 @@ identifier when configured.</p>
 directory.</li>
 <li>Start the service and tray again.</li>
 </ol>
-<p>Also back up the per-user secrets file if online lookup configuration
-should move with the same Windows account. DPAPI-protected keys
-generally cannot be moved to a different Windows account; re-enter keys
-there instead.</p>
+<p>Also back up the per-user settings and secrets files if those
+preferences should move with the same Windows account. DPAPI-protected
+keys generally cannot be moved to a different Windows account; re-enter
+keys there instead.</p>
 <hr />
 <h2 id="troubleshooting">Troubleshooting</h2>
 <h3 id="dashboard-says-no-disks-are-detected">Dashboard says no disks
@@ -1254,8 +1328,9 @@ event timestamps before acting.</p>
 <h3 id="online-tbw-lookup-cannot-run">Online TBW lookup cannot run</h3>
 <p>Check:</p>
 <ol type="1">
-<li><code>enableTbwWebLookup</code> is true.</li>
-<li><code>webSearchProvider</code> is <code>serper</code> for new
+<li><strong>Enable rated-TBW web lookup</strong> is selected in this
+user’s dashboard settings.</li>
+<li>The selected provider is <strong>serper</strong> for new
 setups.</li>
 <li>A Serper key is saved in guided setup or <code>SERPER_API_KEY</code>
 is set.</li>
@@ -1268,7 +1343,8 @@ action when offered.</li>
 rating. Enter the manufacturer’s rating manually when known.</p>
 <h3 id="notifications-do-not-appear">Notifications do not appear</h3>
 <ul>
-<li>Confirm <code>enableNotifications</code> is true.</li>
+<li>Confirm notifications are enabled in this user’s dashboard
+settings.</li>
 <li>Check Windows notification settings and Focus Assist/Do Not
 Disturb.</li>
 <li>Confirm the tray app is running.</li>
@@ -1302,11 +1378,13 @@ inspected through Windows Event Viewer where available.</p>
 <h2 id="uninstall-and-reset">Uninstall and reset</h2>
 <h3 id="packaged-uninstaller">Packaged uninstaller</h3>
 <p>The packaged uninstaller asks whether to keep settings for a future
-reinstall. Choosing not to keep them removes <code>config.json</code>
-only; monitoring history remains. A later installer detects a retained
-configuration and asks whether to reuse it. Existing values are
-preserved, while settings introduced by the newer version receive their
-current defaults.</p>
+reinstall. Choosing not to keep them removes machine
+<code>config.json</code> and the invoking Windows account’s
+<code>user-settings.json</code>; monitoring history and DPAPI-protected
+API keys remain. A later installer detects retained machine or
+current-account settings and asks whether to reuse them. Existing values
+are preserved, while settings introduced by the newer version receive
+their current defaults.</p>
 <h3 id="scripted-uninstall">Scripted uninstall</h3>
 <p>Run elevated:</p>
 <div class="sourceCode" id="cb15"><pre
@@ -1343,9 +1421,19 @@ class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb19
 <h3 id="commit-push-and-release">Commit, push, and release</h3>
 <div class="sourceCode" id="cb20"><pre
 class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span> <span class="op">-</span>Commit</span>
-<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span> <span class="op">-</span>Push</span></code></pre></div>
-<p>With <code>-Push</code>, the script asks whether the GitHub release
-should be:</p>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Push</span></code></pre></div>
+<p><code>-Commit</code> and <code>-Push</code> attempt focused commits
+by functional area. The script preserves any already-staged changes as
+the first commit, then groups remaining changes by whole file. It never
+creates partial-file hunks automatically. Possible renames or other
+ambiguous path expansion are kept together in one residual release
+commit.</p>
+<p>With <code>-Push</code>, omitting <code>-Version</code> increments
+the patch number of the latest stable local tag, origin tag, or GitHub
+release, including drafts (for example, <code>v1.5.0</code> becomes
+<code>v1.5.1</code>). Pass <code>-Version</code> to override that
+selection. The script then asks whether the GitHub release should
+be:</p>
 <ul>
 <li><strong>Draft:</strong> upload for review without official
 publication.</li>
@@ -1353,9 +1441,9 @@ publication.</li>
 </ul>
 <p>For unattended operation:</p>
 <div class="sourceCode" id="cb21"><pre
-class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span> <span class="op">-</span>Push <span class="op">-</span>ReleaseMode Draft</span>
-<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span> <span class="op">-</span>Push <span class="op">-</span>ReleaseMode Published</span>
-<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span> <span class="op">-</span>Push <span class="op">-</span>SkipRelease</span></code></pre></div>
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Push <span class="op">-</span>ReleaseMode Draft</span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Push <span class="op">-</span>ReleaseMode Published</span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Push <span class="op">-</span>SkipRelease</span></code></pre></div>
 <p>The lower-level builder remains available at
 <code>installer\build-installer.ps1</code> for direct x64/x86
 packaging.</p>
