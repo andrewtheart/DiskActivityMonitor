@@ -18,23 +18,26 @@
   duplicates are normalized and canonical build order is preserved.
 
 .PARAMETER Version
-  Installer version, without a leading "v". When omitted, uses the newest local
-  Git tag matching v<version>, or 1.0.0 when no version tag exists. Pass an
-  explicit version when preparing a new release.
+    Installer version, without a leading "v". When omitted with Push, increments
+    the patch number of the newest stable local tag, origin tag, or GitHub release
+    (including drafts). Otherwise uses the newest stable local tag, or 1.0.0 when
+    no version tag exists.
 
 .PARAMETER Configuration
   .NET build configuration passed to build-installer.ps1. Defaults to Release.
 
 .PARAMETER Commit
-  After every requested installer succeeds, stage all pending repository changes
-  and commit them as "Build installers v<version> (<variants>)". Does nothing
-  when the working tree is clean.
+    After every requested installer succeeds, attempt to commit pending changes in
+    focused functional groups. Existing staged changes are preserved as the first
+    commit. Automatic grouping uses whole files only; mixed files and ambiguous
+    changes fall back to one residual release commit. Does nothing when clean.
 
 .PARAMETER Push
     Implies Commit, pushes the current branch, and prompts whether the GitHub
     release should remain a draft or be published officially unless SkipRelease
-    is specified. Re-running an existing release version refreshes its installer
-    assets with --clobber.
+    is specified. When Version is omitted, automatically increments the patch
+    version. An explicit existing release version refreshes its installer assets
+    with --clobber.
 
 .PARAMETER ReleaseMode
     GitHub release publication mode used with Push: Prompt (the default), Draft,
@@ -62,12 +65,12 @@
 
 .EXAMPLE
   .\build-all-installers.ps1 -Version 1.5.0 -Commit
-  Builds both installers, then stages and commits all pending changes.
+    Builds both installers, then attempts focused, low-risk commits for pending changes.
 
 .EXAMPLE
-  .\build-all-installers.ps1 -Version 1.5.0 -Push
-    Builds both installers, commits, pushes, then asks whether to create a draft
-    or officially published GitHub release.
+    .\build-all-installers.ps1 -Push
+        Increments the latest release patch version, builds both installers, commits,
+        pushes, then asks whether to create a draft or officially published release.
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
@@ -109,15 +112,264 @@ function Resolve-ReleaseMode {
     }
 }
 
-if ([string]::IsNullOrWhiteSpace($Version)) {
-    $Version = $null
-    if (Get-Command git -ErrorAction SilentlyContinue) {
-        $latestTag = (& git -C $repoRoot tag --list 'v[0-9]*' --sort=-version:refname 2>$null | Select-Object -First 1)
-        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace("$latestTag")) {
-            $Version = "$latestTag".Trim() -replace '^v', ''
+function Get-FunctionalCommitGroup {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $normalized = $Path.Replace('\', '/')
+    if ($normalized -match '^(docs/|README\.md$|HELP\.md$|installer/README\.md$|src/DiskActivityMonitor\.Tray/HELP\.html$)') {
+        return [pscustomobject]@{ Key = 'documentation'; Message = 'Update documentation'; Order = 50 }
+    }
+    if ($normalized -match '^(installer/|scripts/)') {
+        return [pscustomobject]@{ Key = 'installer'; Message = 'Update installer and release tooling'; Order = 40 }
+    }
+    if ($normalized -match '^src/DiskActivityMonitor\.Core/Ai/' -or
+        $normalized -match '^tests/DiskActivityMonitor\.Tests/(AiSecretsStore|TbwLookup)Tests\.cs$') {
+        return [pscustomobject]@{ Key = 'ai'; Message = 'Update AI lookup and credential handling'; Order = 20 }
+    }
+    if ($normalized -match '^src/DiskActivityMonitor\.Core/(AtomicFile\.cs|Configuration/)' -or
+        $normalized -eq 'src/DiskActivityMonitor.Cli/CliRunner.cs' -or
+        $normalized -match '^tests/DiskActivityMonitor\.Tests/(AppConfig|ConfigStore|UserSettingsStore)Tests\.cs$') {
+        return [pscustomobject]@{ Key = 'configuration'; Message = 'Update configuration persistence'; Order = 10 }
+    }
+    if ($normalized -match '^src/DiskActivityMonitor\.Core/(Collection/ProcessControl\.cs|Data/MonitorRepository\.cs)$' -or
+        $normalized -match '^src/DiskActivityMonitor\.Tray/(App\.xaml\.cs|AutoSuspendManager\.cs|MainWindow\.xaml(?:\.cs)?|TrayController\.cs)$' -or
+        $normalized -match '^tests/DiskActivityMonitor\.Tests/(ProcessControl|MonitorRepository|MainWindowCoverage)Tests\.cs$') {
+        return [pscustomobject]@{ Key = 'process-control'; Message = 'Update process monitoring and control'; Order = 30 }
+    }
+    if ($normalized -match '^tests/') {
+        return [pscustomobject]@{ Key = 'tests'; Message = 'Update regression coverage'; Order = 70 }
+    }
+    if ($normalized -match '^src/') {
+        return [pscustomobject]@{ Key = 'application'; Message = 'Update application functionality'; Order = 60 }
+    }
+    return [pscustomobject]@{ Key = 'release'; Message = "Prepare release v$Version"; Order = 80 }
+}
+
+function Get-GitPaths {
+    param([switch]$Staged)
+
+    $arguments = @('-C', $repoRoot, 'diff', '--name-only', '--no-renames')
+    if ($Staged) { $arguments += '--cached' }
+    $arguments += @('HEAD', '--')
+    $tracked = @(& git @arguments)
+    if ($LASTEXITCODE -ne 0) { throw "Could not inspect pending Git paths (exit $LASTEXITCODE)." }
+
+    if (-not $Staged) {
+        $untracked = @(& git -C $repoRoot ls-files --others --exclude-standard --)
+        if ($LASTEXITCODE -ne 0) { throw "Could not inspect untracked Git paths (exit $LASTEXITCODE)." }
+        $tracked += $untracked
+    }
+
+    return @($tracked | ForEach-Object { "$($_)".Trim() } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        Sort-Object -Unique)
+}
+
+function Get-FunctionalCommitPlan {
+    param([Parameter(Mandatory = $true)][string[]]$Paths)
+
+    $entries = foreach ($path in $Paths) {
+        $group = Get-FunctionalCommitGroup -Path $path
+        [pscustomobject]@{
+            Path = $path
+            Key = $group.Key
+            Message = $group.Message
+            Order = $group.Order
         }
     }
-    if ([string]::IsNullOrWhiteSpace($Version)) { $Version = '1.0.0' }
+
+    return @($entries |
+        Group-Object Key |
+        ForEach-Object {
+            $first = $_.Group | Select-Object -First 1
+            [pscustomobject]@{
+                Key = $first.Key
+                Message = $first.Message
+                Order = $first.Order
+                Paths = @($_.Group.Path | Sort-Object -Unique)
+            }
+        } |
+        Sort-Object Order, Key)
+}
+
+function Test-SamePathSet {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Expected,
+        [Parameter(Mandatory = $true)][string[]]$Actual
+    )
+
+    $left = @($Expected | Sort-Object -Unique)
+    $right = @($Actual | Sort-Object -Unique)
+    if ($left.Count -ne $right.Count) { return $false }
+    return (Compare-Object -ReferenceObject $left -DifferenceObject $right).Count -eq 0
+}
+
+function Test-HasAmbiguousRename {
+    $deleted = @(& git -C $repoRoot diff --name-only --diff-filter=D HEAD --)
+    if ($LASTEXITCODE -ne 0) { throw 'Could not inspect deleted paths for rename safety.' }
+    if ($deleted.Count -eq 0) { return $false }
+
+    $untracked = @(& git -C $repoRoot ls-files --others --exclude-standard --)
+    if ($LASTEXITCODE -ne 0) { throw 'Could not inspect untracked paths for rename safety.' }
+    return $untracked.Count -gt 0
+}
+
+function Invoke-StagedCommit {
+    param([Parameter(Mandatory = $true)][string]$Message)
+
+    & git -C $repoRoot diff --cached --check
+    if ($LASTEXITCODE -ne 0) { throw 'Staged changes failed git diff --cached --check.' }
+
+    & git -C $repoRoot diff --cached --quiet
+    $stagedExit = $LASTEXITCODE
+    if ($stagedExit -gt 1) { throw "git diff --cached failed (exit $stagedExit)." }
+    if ($stagedExit -eq 0) { return $false }
+
+    Write-Host "Committing: $Message" -ForegroundColor Cyan
+    & git -C $repoRoot commit -m $Message
+    if ($LASTEXITCODE -ne 0) { throw "git commit failed (exit $LASTEXITCODE)." }
+    Write-Host 'Committed.' -ForegroundColor Green
+    return $true
+}
+
+function Show-FunctionalCommitPlan {
+    $staged = @(Get-GitPaths -Staged)
+    $pending = @(Get-GitPaths)
+
+    if ($staged.Count -gt 0) {
+        Write-Host "  commit 1: preserve $($staged.Count) already-staged path(s)" -ForegroundColor Yellow
+        $pending = @($pending | Where-Object { $staged -notcontains $_ })
+    }
+
+    if ($pending.Count -gt 0 -and (Test-HasAmbiguousRename)) {
+        Write-Host "  commit: Prepare release v$Version [$($pending.Count) residual path(s); possible rename]" -ForegroundColor Yellow
+    }
+    else {
+        if ($pending.Count -gt 0) {
+            foreach ($group in @(Get-FunctionalCommitPlan -Paths $pending)) {
+                Write-Host "  commit: $($group.Message) [$($group.Paths.Count) path(s)]" -ForegroundColor Yellow
+            }
+        }
+    }
+    if ($staged.Count -eq 0 -and $pending.Count -eq 0) {
+        Write-Host '  no pending changes to commit' -ForegroundColor DarkGray
+    }
+    Write-Host '  safety: whole-file groups only; mixed-file hunks remain together' -ForegroundColor DarkGray
+}
+
+function Invoke-FunctionalCommits {
+    $committed = 0
+    $staged = @(Get-GitPaths -Staged)
+    if ($staged.Count -gt 0) {
+        $stagedPlan = @(Get-FunctionalCommitPlan -Paths $staged)
+        $message = if ($stagedPlan.Count -eq 1) {
+            $stagedPlan[0].Message
+        }
+        else {
+            "Preserve staged changes for v$Version"
+        }
+        Write-Host "Preserving the existing index as its own commit ($($staged.Count) path(s))." -ForegroundColor Cyan
+        if (Invoke-StagedCommit -Message $message) { $committed++ }
+    }
+
+    $pending = @(Get-GitPaths)
+    if ($pending.Count -gt 0 -and (Test-HasAmbiguousRename)) {
+        Write-Warning 'A deletion and an untracked path may be an unstaged rename. Keeping all residual changes in one release commit.'
+        & git -C $repoRoot add -A
+        if ($LASTEXITCODE -ne 0) { throw "git add -A failed (exit $LASTEXITCODE)." }
+        if (Invoke-StagedCommit -Message "Prepare release v$Version") { $committed++ }
+        $pending = @()
+    }
+
+    $plan = if ($pending.Count -gt 0) { @(Get-FunctionalCommitPlan -Paths $pending) } else { @() }
+    foreach ($group in $plan) {
+        if ($group.Paths.Count -eq 0) { continue }
+        Write-Host "Staging functional group '$($group.Key)' ($($group.Paths.Count) path(s))..." -ForegroundColor Cyan
+        $addArguments = @('-C', $repoRoot, 'add', '-A', '--') + @($group.Paths)
+        & git @addArguments
+        if ($LASTEXITCODE -ne 0) { throw "git add failed for group '$($group.Key)' (exit $LASTEXITCODE)." }
+
+        $actual = @(Get-GitPaths -Staged)
+        if (-not (Test-SamePathSet -Expected $group.Paths -Actual $actual)) {
+            Write-Warning "Git expanded group '$($group.Key)' beyond its planned paths (for example, a rename). Falling back to one residual release commit."
+            & git -C $repoRoot reset --quiet HEAD
+            if ($LASTEXITCODE -ne 0) { throw 'Could not restore the index before the residual commit.' }
+            break
+        }
+
+        if (Invoke-StagedCommit -Message $group.Message) { $committed++ }
+    }
+
+    $residual = @(Get-GitPaths)
+    if ($residual.Count -gt 0) {
+        Write-Host "Staging $($residual.Count) residual path(s) without splitting file hunks..." -ForegroundColor Cyan
+        & git -C $repoRoot add -A
+        if ($LASTEXITCODE -ne 0) { throw "git add -A failed (exit $LASTEXITCODE)." }
+        if (Invoke-StagedCommit -Message "Prepare release v$Version") { $committed++ }
+    }
+
+    if ($committed -eq 0) {
+        Write-Host 'Nothing to commit - working tree already clean.' -ForegroundColor DarkGray
+    }
+    else {
+        Write-Host "Created $committed focused commit(s)." -ForegroundColor Green
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $versionTags = New-Object System.Collections.Generic.List[string]
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        $localTags = @(& git -C $repoRoot tag --list 'v[0-9]*' 2>$null)
+        if ($LASTEXITCODE -eq 0) {
+            foreach ($tag in $localTags) { $versionTags.Add("$tag") }
+        }
+
+        if ($Push) {
+            $remoteTags = @(& git -C $repoRoot ls-remote --tags origin 'refs/tags/v*' 2>$null)
+            if ($LASTEXITCODE -eq 0) {
+                foreach ($tag in $remoteTags) { $versionTags.Add("$tag") }
+            }
+            else {
+                Write-Warning 'Could not read release tags from origin; auto-incrementing from local tags only.'
+            }
+
+            $gh = Get-Command gh -ErrorAction SilentlyContinue
+            $originUrl = (& git -C $repoRoot remote get-url origin 2>$null)
+            if ($gh -and "$originUrl" -match 'github\.com[:/](?<owner>[^/]+)/(?<repo>[^/]+?)(?:\.git)?/?$') {
+                $repoSlug = "$($Matches.owner)/$($Matches.repo)"
+                $releaseJson = "$(& $gh.Source release list --limit 100 --json tagName --repo $repoSlug 2>$null)"
+                if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($releaseJson)) {
+                    try {
+                        foreach ($release in @($releaseJson | ConvertFrom-Json)) {
+                            $versionTags.Add("$($release.tagName)")
+                        }
+                    }
+                    catch {
+                        Write-Warning 'Could not parse GitHub release versions; continuing with Git tags only.'
+                    }
+                }
+            }
+        }
+    }
+
+    $stableVersions = @(
+        foreach ($tag in $versionTags) {
+            if ($tag -match '(?:^|refs/tags/)v(?<version>\d+\.\d+\.\d+)(?:\^\{\})?$') {
+                [version]$Matches.version
+            }
+        }
+    )
+    $latestVersion = $stableVersions | Sort-Object -Descending | Select-Object -First 1
+
+    if ($Push -and $null -ne $latestVersion) {
+        $Version = '{0}.{1}.{2}' -f $latestVersion.Major, $latestVersion.Minor, ($latestVersion.Build + 1)
+    }
+    elseif ($null -ne $latestVersion) {
+        $Version = $latestVersion.ToString(3)
+    }
+    else {
+        $Version = '1.0.0'
+    }
 }
 else {
     $Version = $Version.Trim() -replace '^v', ''
@@ -152,7 +404,10 @@ if ($WhatIfPreference) {
         Write-Host ("  {0,-4} -> installer\build-installer.ps1 -Runtime {1} -Version {2} -Configuration {3}" -f $name, $runtime, $Version, $Configuration)
     }
     if ($Commit -or $Push) {
-        Write-Host ("  post-build: git add -A + commit{0}" -f $(if ($Push) { ' + push' } else { '' })) -ForegroundColor Yellow
+        Write-Host ("  post-build: conservative functional commits{0}" -f $(if ($Push) { ' + push' } else { '' })) -ForegroundColor Yellow
+        if (Get-Command git -ErrorAction SilentlyContinue) {
+            Show-FunctionalCommitPlan
+        }
     }
     if ($Push -and -not $SkipRelease) {
         $plannedMode = if ($ReleaseMode -eq 'Prompt') { 'prompt for Draft or Published' } else { $ReleaseMode }
@@ -233,24 +488,8 @@ if ($Commit -or $Push) {
         }
 
         Write-Host ''
-        Write-Host 'Staging all changes (git add -A)...' -ForegroundColor Cyan
-        & git -C $repoRoot add -A
-        if ($LASTEXITCODE -ne 0) { throw "git add -A failed (exit $LASTEXITCODE)." }
-
-        & git -C $repoRoot diff --cached --quiet
-        $stagedExit = $LASTEXITCODE
-        if ($stagedExit -gt 1) { throw "git diff --cached failed (exit $stagedExit)." }
-
-        if ($stagedExit -eq 1) {
-            $commitMessage = "Build installers v$Version ($($requested -join ', '))"
-            Write-Host "Committing: $commitMessage" -ForegroundColor Cyan
-            & git -C $repoRoot commit -m $commitMessage
-            if ($LASTEXITCODE -ne 0) { throw "git commit failed (exit $LASTEXITCODE)." }
-            Write-Host 'Committed.' -ForegroundColor Green
-        }
-        else {
-            Write-Host 'Nothing to commit - working tree already clean.' -ForegroundColor DarkGray
-        }
+        Write-Host 'Planning conservative functional commits...' -ForegroundColor Cyan
+        Invoke-FunctionalCommits
 
         if ($Push) {
             $branch = ("$(& git -C $repoRoot rev-parse --abbrev-ref HEAD)").Trim()

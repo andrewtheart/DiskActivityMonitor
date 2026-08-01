@@ -5,6 +5,21 @@ param()
 
 $ErrorActionPreference = 'SilentlyContinue'
 
+function Stop-ProcessAtPath([string]$ProcessName, [string]$ExecutablePath) {
+    $targetPath = [IO.Path]::GetFullPath($ExecutablePath)
+    foreach ($process in @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue)) {
+        try {
+            $candidatePath = $process.MainModule.FileName
+            if ([string]::Equals([IO.Path]::GetFullPath($candidatePath), $targetPath, [StringComparison]::OrdinalIgnoreCase)) {
+                Stop-Process -Id $process.Id -Force -ErrorAction Stop
+                $process.WaitForExit(5000) | Out-Null
+            }
+        } finally {
+            $process.Dispose()
+        }
+    }
+}
+
 Write-Host 'Stopping and removing the service...' -ForegroundColor Cyan
 $svc = Get-Service -Name 'DiskActivityMonitor' -ErrorAction SilentlyContinue
 if ($svc) {
@@ -16,7 +31,9 @@ if ($svc) {
 }
 
 # Stop the tray app and remove its Startup shortcut.
-Get-Process -Name 'DiskActivityMonitor.Tray' -ErrorAction SilentlyContinue | Stop-Process -Force
+$programFiles = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+$trayExe = Join-Path $programFiles 'Disk Activity Monitor Dev\tray\DiskActivityMonitor.Tray.exe'
+Stop-ProcessAtPath 'DiskActivityMonitor.Tray' $trayExe
 $startup = [Environment]::GetFolderPath('Startup')
 $lnkPath = Join-Path $startup 'Disk Activity Monitor.lnk'
 if (Test-Path $lnkPath) { Remove-Item $lnkPath -Force; Write-Host "Removed startup shortcut: $lnkPath" -ForegroundColor Green }
