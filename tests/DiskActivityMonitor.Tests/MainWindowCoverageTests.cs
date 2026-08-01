@@ -20,6 +20,7 @@ public sealed class MainWindowCoverageTests : IDisposable
 {
     private readonly string _db = Path.Combine(Path.GetTempPath(), $"dam_wpf_{Guid.NewGuid():N}.db");
     private readonly string _cfg = Path.Combine(Path.GetTempPath(), $"dam_wpf_{Guid.NewGuid():N}.json");
+    private readonly string _userSettings = Path.Combine(Path.GetTempPath(), $"dam_wpf_user_{Guid.NewGuid():N}.json");
     private readonly string _secrets = AiSecretsStore.FilePath;
     private readonly string? _secretBackup;
 
@@ -32,6 +33,7 @@ public sealed class MainWindowCoverageTests : IDisposable
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         foreach (string file in Directory.GetFiles(Path.GetTempPath(), Path.GetFileName(_db) + "*")) try { File.Delete(file); } catch { }
         try { File.Delete(_cfg); } catch { }
+        try { File.Delete(_userSettings); } catch { }
     }
 
     [Fact]
@@ -49,12 +51,14 @@ public sealed class MainWindowCoverageTests : IDisposable
                 DiskId = "8", InstanceName = "8 G:", FriendlyName = "", Volumes = "G:", MediaType = DiskMediaType.Ssd,
             }]);
             using var config = new ConfigStore(_cfg);
+            var userSettings = new UserSettingsStore(_userSettings);
+            UpdateUserSettings(userSettings, settings => settings.EnableNotifications = false);
             var now = DateTime.UtcNow;
             long ordinaryId = repo.InsertAlert(Alert(now.AddMinutes(-3), AlertSeverity.Info, "ordinary", 0));
             repo.InsertAlert(Alert(now.AddMinutes(-2), AlertSeverity.Warning, "disk-controller:2", 4));
             repo.InsertAlert(Alert(now.AddMinutes(-1), AlertSeverity.Critical, "disk-controller:2", 5));
 
-            var window = new MainWindow(repo, config);
+            var window = new MainWindow(repo, config, userSettings);
             window.Resources["TextPrimary"] = new SolidColorBrush(Colors.White);
             window.Resources["Caption"] = new Style(typeof(TextBlock));
             window.Resources["ToolButton"] = new Style(typeof(Button));
@@ -63,7 +67,10 @@ public sealed class MainWindowCoverageTests : IDisposable
             window.DiskSelector.SelectedItem = hddChoice;
             try
             {
-                using (var defaultPresenterController = new TrayController(repo, config))
+                Invoke(window, "SaveRules_Click", window, new RoutedEventArgs());
+                Assert.False(userSettings.Current.EnableNotifications);
+
+                using (var defaultPresenterController = new TrayController(repo, config, userSettings))
                 {
                     typeof(TrayController).GetField("_window", BindingFlags.Instance | BindingFlags.NonPublic)!
                         .SetValue(defaultPresenterController, window);
@@ -244,12 +251,12 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Assert.False(window.HandleTbwReadiness(new TbwReadiness(false, null, false, null, false)));
                 Assert.Equal("Web TBW lookup is unavailable.", window.TbwLookupStatus.Text);
 
-                config.Current.EnableTbwWebLookup = false;
+                UpdateUserSettings(userSettings, settings => settings.EnableTbwWebLookup = false);
                 await window.StartTbwLookupAsync(knownSsd);
-                config.Current.EnableTbwWebLookup = true;
-                config.Current.DiskTbwRatings[knownSsd.DiskId] = 600;
+                UpdateUserSettings(userSettings, settings => settings.EnableTbwWebLookup = true);
+                config.Update(settings => settings.DiskTbwRatings[knownSsd.DiskId] = 600);
                 await window.StartTbwLookupAsync(knownSsd);
-                config.Current.DiskTbwRatings.Remove(knownSsd.DiskId);
+                config.Update(settings => settings.DiskTbwRatings.Remove(knownSsd.DiskId));
                 TbwLookupCache.Put(new TbwLookupResult(knownSsd.FriendlyName,
                     [new TbwCandidate(600, 1, 1, ["example.com"], "https://example.com")], DateTime.UtcNow));
                 await window.StartTbwLookupAsync(knownSsd);
@@ -274,13 +281,13 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Assert.Equal("Verified candidates found", window.TbwLookupHeadline.Text);
                 Assert.Equal(2, window.TbwCandidateList.Children.Count);
 
-                config.Current.WebSearchProvider = "google";
+                UpdateUserSettings(userSettings, settings => settings.WebSearchProvider = "google");
                 window.LoadSettingsFields();
                 window.Save_Click(window, new RoutedEventArgs());
                 await window.StartTbwLookupAsync(knownSsd, force: true, userInitiated: true);
                 Assert.Equal("Lookup unavailable", window.TbwLookupHeadline.Text);
 
-                config.Current.WebSearchProvider = "serper";
+                UpdateUserSettings(userSettings, settings => settings.WebSearchProvider = "serper");
                 window.LoadSettingsFields();
                 window.TxtSerperKey.Password = AiSecretsStore.Load().SerperApiKey ?? "";
                 window.Save_Click(window, new RoutedEventArgs());
@@ -310,11 +317,11 @@ public sealed class MainWindowCoverageTests : IDisposable
                 await Task.Delay(50);
                 Assert.Contains("download failed", window.TbwLookupStatus.Text);
 
-                Assert.True(MainWindow.ShouldPromptTbwOnlineSetup(new AppConfig(), new AiSecrets()));
+                Assert.True(MainWindow.ShouldPromptTbwOnlineSetup(new UserSettings(), new AiSecrets()));
                 Assert.False(MainWindow.ShouldPromptTbwOnlineSetup(
-                    new AppConfig { SuppressTbwOnlineSetupPrompt = true }, new AiSecrets()));
+                    new UserSettings { SuppressTbwOnlineSetupPrompt = true }, new AiSecrets()));
                 Assert.False(MainWindow.ShouldPromptTbwOnlineSetup(
-                    new AppConfig(), new AiSecrets { SerperApiKey = "configured" }));
+                    new UserSettings(), new AiSecrets { SerperApiKey = "configured" }));
 
                 window.ShowTbwOnlineSetup();
                 Assert.Equal(Visibility.Visible, window.TbwSetupOverlay.Visibility);
@@ -348,9 +355,9 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Invoke(window, "TbwSetupSave_Click", window, new RoutedEventArgs());
                 await Task.Delay(50);
                 Assert.Equal(Visibility.Collapsed, window.TbwSetupOverlay.Visibility);
-                Assert.Equal("serper", config.Current.WebSearchProvider);
-                Assert.True(config.Current.EnableTbwWebLookup);
-                Assert.True(config.Current.SuppressTbwOnlineSetupPrompt);
+                Assert.Equal("serper", userSettings.Current.WebSearchProvider);
+                Assert.True(userSettings.Current.EnableTbwWebLookup);
+                Assert.True(userSettings.Current.SuppressTbwOnlineSetupPrompt);
                 string encryptedJson = File.ReadAllText(AiSecretsStore.FilePath);
                 Assert.DoesNotContain(onboardingKey, encryptedJson);
                 Assert.Equal(onboardingKey, AiSecretsStore.Load().SerperApiKey);
@@ -364,31 +371,27 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Assert.Contains("DPAPI unavailable", window.TbwSetupErrorText.Text);
                 window.TbwSetupSecretsSaver = AiSecretsStore.Save;
 
-                config.Current.SuppressTbwOnlineSetupPrompt = false;
-                config.Save(config.Current);
+                UpdateUserSettings(userSettings, settings => settings.SuppressTbwOnlineSetupPrompt = false);
                 window.ShowTbwOnlineSetup();
                 Invoke(window, "TbwSetupNotNow_Click", window, new RoutedEventArgs());
-                Assert.False(config.Current.SuppressTbwOnlineSetupPrompt);
+                Assert.False(userSettings.Current.SuppressTbwOnlineSetupPrompt);
                 window.ShowTbwOnlineSetup();
                 window.TbwSetupDontShowAgain.IsChecked = true;
                 Invoke(window, "TbwSetupNotNow_Click", window, new RoutedEventArgs());
-                Assert.True(config.Current.SuppressTbwOnlineSetupPrompt);
+                Assert.True(userSettings.Current.SuppressTbwOnlineSetupPrompt);
 
-                config.Current.SuppressTbwOnlineSetupPrompt = false;
-                config.Save(config.Current);
+                UpdateUserSettings(userSettings, settings => settings.SuppressTbwOnlineSetupPrompt = false);
                 try { File.Delete(AiSecretsStore.FilePath); } catch { }
-                using var controller = new TrayController(repo, config);
+                using var controller = new TrayController(repo, config, userSettings);
                 bool presented = false;
                 controller.TbwSetupPresenter = () => { presented = true; window.ShowTbwOnlineSetup(); };
                 Assert.True(controller.PromptTbwOnlineSetupIfNeeded());
                 Assert.True(presented);
                 Assert.Equal(Visibility.Visible, window.TbwSetupOverlay.Visibility);
-                config.Current.SuppressTbwOnlineSetupPrompt = true;
-                config.Save(config.Current);
+                UpdateUserSettings(userSettings, settings => settings.SuppressTbwOnlineSetupPrompt = true);
                 Assert.False(controller.PromptTbwOnlineSetupIfNeeded());
 
-                config.Current.SuppressTbwOnlineSetupPrompt = true;
-                config.Save(config.Current);
+                UpdateUserSettings(userSettings, settings => settings.SuppressTbwOnlineSetupPrompt = true);
                 controller.Initialize();
                 repo.AcknowledgeAlerts();
                 Invoke(controller, "Update");
@@ -420,6 +423,16 @@ public sealed class MainWindowCoverageTests : IDisposable
         Assert.DoesNotContain("---", text);
     }
 
+    [Theory]
+    [InlineData("https://example.test/help", true)]
+    [InlineData("http://127.0.0.1/help", true)]
+    [InlineData("file:///C:/Windows/win.ini", false)]
+    [InlineData("javascript:alert(1)", false)]
+    [InlineData("custom-protocol:payload", false)]
+    [InlineData("not a uri", false)]
+    public void ExternalHelpUriPolicy_AllowsOnlyHttpAndHttps(string value, bool expected)
+        => Assert.Equal(expected, MainWindow.IsAllowedExternalHelpUri(value));
+
     [Fact]
     public void DriveLifeUsed_UsesPreciseLifetimeWritesPercentage()
     {
@@ -434,16 +447,15 @@ public sealed class MainWindowCoverageTests : IDisposable
                 LifetimeBytesWritten = 70_800_000_000_000,
             }]);
             using var config = new ConfigStore(_cfg);
-            config.Current.DefaultSsdTbw = 750;
-            config.Save(config.Current);
+            config.Update(settings => settings.DefaultSsdTbw = 750);
 
-            var window = new MainWindow(repo, config);
+            var window = new MainWindow(repo, config, new UserSettingsStore(_userSettings));
             try
             {
                 Assert.Equal("~9.44%", window.SmartWearValue.Text);
                 Assert.Contains("drive SMART reports 2% used", window.SmartWearText.Text);
 
-                config.Current.DefaultSsdTbwUpper = 1_000;
+                config.Update(settings => settings.DefaultSsdTbwUpper = 1_000);
                 Invoke(window, "UpdateEndurance", repo.GetDisks().Single(), DateTime.UtcNow, 0L);
                 Assert.Equal("~7.08%\u20139.44%", window.SmartWearValue.Text);
 
@@ -491,6 +503,13 @@ public sealed class MainWindowCoverageTests : IDisposable
     private static void Invoke(object target, string method, params object[] args)
         => target.GetType().GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(target, args);
 
+    private static void UpdateUserSettings(UserSettingsStore store, Action<UserSettings> update)
+    {
+        var settings = store.Current;
+        update(settings);
+        store.Save(settings);
+    }
+
     [Fact]
     public void AlertHistory_RendersEmptyAndSingularStates()
     {
@@ -500,7 +519,7 @@ public sealed class MainWindowCoverageTests : IDisposable
             var repo = new MonitorRepository(_db); repo.EnsureSchema();
             repo.UpsertDisks([Disk()]);
             using var config = new ConfigStore(_cfg);
-            var window = new MainWindow(repo, config);
+            var window = new MainWindow(repo, config, new UserSettingsStore(_userSettings));
             try
             {
                 window.UpdateAlertHistory();

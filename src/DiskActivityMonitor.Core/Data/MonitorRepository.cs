@@ -1,7 +1,15 @@
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
+using DiskActivityMonitor.Core.Collection;
 using DiskActivityMonitor.Core.Models;
 
 namespace DiskActivityMonitor.Core.Data;
+
+public sealed record SuspendedProcessState(
+    string Name,
+    DateTime SuspendedUtc,
+    string? ExecutablePath,
+    IReadOnlyList<ProcessControl.ProcessIdentity> ProcessIdentities);
 
 /// <summary>
 /// Thin SQLite repository shared by the collector (writer) and tray app (reader).
@@ -11,14 +19,16 @@ namespace DiskActivityMonitor.Core.Data;
 public sealed class MonitorRepository
 {
     private readonly string _connectionString;
+    private readonly bool _readOnly;
 
     public MonitorRepository(string? databasePath = null, bool readOnly = false)
     {
         Paths.EnsureCreated();
+        _readOnly = readOnly;
         var builder = new SqliteConnectionStringBuilder
         {
             DataSource = databasePath ?? Paths.DatabasePath,
-            Mode = readOnly ? SqliteOpenMode.ReadWrite : SqliteOpenMode.ReadWriteCreate,
+            Mode = readOnly ? SqliteOpenMode.ReadOnly : SqliteOpenMode.ReadWriteCreate,
             Cache = SqliteCacheMode.Shared,
             Pooling = true,
         };
@@ -30,9 +40,11 @@ public sealed class MonitorRepository
         var conn = new SqliteConnection(_connectionString);
         conn.Open();
         using var pragma = conn.CreateCommand();
-        // wal_autocheckpoint folds the WAL back into the main DB every ~1000 pages on write;
-        // the collector also runs an explicit TRUNCATE checkpoint periodically (see Checkpoint).
-        pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000; PRAGMA wal_autocheckpoint=1000;";
+        pragma.CommandText = _readOnly
+            ? "PRAGMA query_only=ON; PRAGMA busy_timeout=5000;"
+            // wal_autocheckpoint folds the WAL back into the main DB every ~1000 pages on write;
+            // the collector also runs an explicit TRUNCATE checkpoint periodically (see Checkpoint).
+            : "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000; PRAGMA wal_autocheckpoint=1000;";
         pragma.ExecuteNonQuery();
         return conn;
     }
@@ -107,6 +119,8 @@ public sealed class MonitorRepository
         EnsureColumn(conn, "disks", "wear_percent", "INTEGER");
         EnsureColumn(conn, "disks", "life_write_bytes", "INTEGER");
         EnsureColumn(conn, "disks", "life_read_bytes", "INTEGER");
+        EnsureColumn(conn, "suspended_processes", "executable_path", "TEXT");
+        EnsureColumn(conn, "suspended_processes", "process_identities", "TEXT");
     }
 
     private static void EnsureColumn(SqliteConnection conn, string table, string column, string definition)
@@ -618,17 +632,32 @@ public sealed class MonitorRepository
         return list;
     }
 
-    /// <summary>Records that a process (by name) is currently suspended by the app.</summary>
-    public void AddSuspendedProcess(string name, DateTime suspendedUtc)
+    /// <summary>Records the exact processes currently suspended by the app.</summary>
+    public void AddSuspendedProcess(
+        string name,
+        DateTime suspendedUtc,
+        string? executablePath = null,
+        IReadOnlyList<ProcessControl.ProcessIdentity>? processIdentities = null)
     {
         using var conn = Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO suspended_processes(name, suspended_utc) VALUES($n, $u)
-            ON CONFLICT(name) DO UPDATE SET suspended_utc = excluded.suspended_utc;
+            INSERT INTO suspended_processes(
+                name, suspended_utc, executable_path, process_identities)
+            VALUES($n, $u, $p, $i)
+            ON CONFLICT(name) DO UPDATE SET
+                suspended_utc = excluded.suspended_utc,
+                executable_path = excluded.executable_path,
+                process_identities = excluded.process_identities;
             """;
         cmd.Parameters.AddWithValue("$n", name);
         cmd.Parameters.AddWithValue("$u", ToUnix(suspendedUtc));
+        cmd.Parameters.AddWithValue("$p", (object?)executablePath ?? DBNull.Value);
+        cmd.Parameters.AddWithValue(
+            "$i",
+            processIdentities is { Count: > 0 }
+                ? JsonSerializer.Serialize(processIdentities)
+                : DBNull.Value);
         cmd.ExecuteNonQuery();
     }
 
@@ -644,14 +673,48 @@ public sealed class MonitorRepository
 
     /// <summary>Processes the app currently considers suspended, with the time each was suspended.</summary>
     public List<(string Name, DateTime SuspendedUtc)> GetSuspendedProcesses()
+        => GetSuspendedProcessStates()
+            .Select(state => (state.Name, state.SuspendedUtc))
+            .ToList();
+
+    public List<SuspendedProcessState> GetSuspendedProcessStates()
     {
         using var conn = Open();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT name, suspended_utc FROM suspended_processes ORDER BY suspended_utc DESC;";
-        var list = new List<(string, DateTime)>();
+        cmd.CommandText = """
+            SELECT name, suspended_utc, executable_path, process_identities
+            FROM suspended_processes
+            ORDER BY suspended_utc DESC;
+            """;
+        var list = new List<SuspendedProcessState>();
         using var r = cmd.ExecuteReader();
-        while (r.Read()) list.Add((r.GetString(0), FromUnix(r.GetInt64(1))));
+        while (r.Read())
+        {
+            list.Add(new SuspendedProcessState(
+                r.GetString(0),
+                FromUnix(r.GetInt64(1)),
+                r.IsDBNull(2) ? null : r.GetString(2),
+                DeserializeProcessIdentities(r.IsDBNull(3) ? null : r.GetString(3))));
+        }
         return list;
+    }
+
+    public SuspendedProcessState? GetSuspendedProcessState(string name)
+        => GetSuspendedProcessStates()
+            .FirstOrDefault(state => string.Equals(state.Name, name, StringComparison.OrdinalIgnoreCase));
+
+    private static IReadOnlyList<ProcessControl.ProcessIdentity> DeserializeProcessIdentities(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json) || json.Length > 64 * 1024)
+            return [];
+        try
+        {
+            return JsonSerializer.Deserialize<List<ProcessControl.ProcessIdentity>>(json) ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
     }
 
     /// <summary>Set of process names the app currently considers suspended (case-insensitive).</summary>

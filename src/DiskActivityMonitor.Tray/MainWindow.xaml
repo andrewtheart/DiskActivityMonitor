@@ -510,6 +510,7 @@
                                                 <TextBlock Text="GB/h" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" Margin="6,0,0,0" />
                                             </StackPanel>
                                             <CheckBox Grid.Column="2" Content="Auto (skip prompt)" IsChecked="{Binding IsAuto, Mode=TwoWay}"
+                                                      IsEnabled="{Binding CanAuto}"
                                                       Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" Margin="16,0,0,0" />
                                             <CheckBox Grid.Column="3" Content="Enabled" IsChecked="{Binding Enabled, Mode=TwoWay}"
                                                       Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" Margin="16,0,0,0" />

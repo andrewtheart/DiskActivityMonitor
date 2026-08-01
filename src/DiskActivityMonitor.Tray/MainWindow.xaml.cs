@@ -3,7 +3,6 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.Net.Http;
 using System.Net;
 using System.Text.RegularExpressions;
 using System.Windows;
@@ -25,13 +24,13 @@ public partial class MainWindow : Window
 {
     private readonly MonitorRepository _repo;
     private readonly ConfigStore _config;
+    private readonly UserSettingsStore _userSettings;
     private readonly DispatcherTimer _refreshTimer;
     private bool _forceClose;
     private bool _helpInitialized;
     private Uri? _helpDocumentUri;
 
     // Rated-TBW web lookup (on-device Foundry Local model + web search).
-    private static readonly HttpClient TbwHttp = new() { Timeout = TimeSpan.FromMinutes(5) };
     private TbwLookupService? _tbwLookup;
     private CancellationTokenSource? _tbwCts;
     private bool _tbwLookupForceRequested;
@@ -109,6 +108,7 @@ public partial class MainWindow : Window
         public bool IsAuto { get; set; }
         public bool Enabled { get; set; } = true;
         public string? ExecutablePath { get; set; }
+        public bool CanAuto => !string.IsNullOrWhiteSpace(ExecutablePath);
     }
 
     private sealed record SuspendedRow(string Name, string Display);
@@ -119,10 +119,11 @@ public partial class MainWindow : Window
     private static readonly Brush WarningBrush = Frozen(0xF0, 0xA0, 0x20);
     private static readonly Brush InfoBrush = Frozen(0x3F, 0xB9, 0x50);
 
-    public MainWindow(MonitorRepository repo, ConfigStore config)
+    public MainWindow(MonitorRepository repo, ConfigStore config, UserSettingsStore userSettings)
     {
         _repo = repo;
         _config = config;
+        _userSettings = userSettings;
         TbwModelDownloader = (progress, ct) => TbwLookup.DownloadModelAsync(progress, ct);
         InitializeComponent();
 
@@ -261,6 +262,10 @@ public partial class MainWindow : Window
             Directory.CreateDirectory(userDataFolder);
             var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: userDataFolder);
             await HelpWebView.EnsureCoreWebView2Async(environment);
+            HelpWebView.CoreWebView2.Settings.AreDevToolsEnabled = false;
+            HelpWebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+            HelpWebView.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = false;
+            HelpWebView.CoreWebView2.Settings.AreHostObjectsAllowed = false;
             HelpWebView.DefaultBackgroundColor = System.Drawing.Color.FromArgb(0x15, 0x18, 0x1B);
             _helpDocumentUri = new Uri(htmlPath);
             HelpWebView.Source = _helpDocumentUri;
@@ -288,9 +293,14 @@ public partial class MainWindow : Window
             && string.Equals(target.LocalPath, _helpDocumentUri.LocalPath, StringComparison.OrdinalIgnoreCase))
             return;
         e.Cancel = true;
+        if (!IsAllowedExternalHelpUri(e.Uri)) return;
         try { Process.Start(new ProcessStartInfo(e.Uri) { UseShellExecute = true }); }
         catch { /* an external-link failure should not close help */ }
     }
+
+    internal static bool IsAllowedExternalHelpUri(string? value)
+        => Uri.TryCreate(value, UriKind.Absolute, out var uri)
+            && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp);
 
     private void HelpWebView_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
     {
@@ -852,6 +862,7 @@ public partial class MainWindow : Window
     internal void LoadSettingsFields()
     {
         var cfg = _config.Current;
+        var userSettings = _userSettings.Current;
         TxtWarnHour.Text = cfg.SsdWarnGbPerHour.ToString(CultureInfo.InvariantCulture);
         TxtWarnDay.Text = cfg.SsdWarnGbPerDay.ToString(CultureInfo.InvariantCulture);
         TxtCritDay.Text = cfg.SsdCriticalGbPerDay.ToString(CultureInfo.InvariantCulture);
@@ -865,11 +876,11 @@ public partial class MainWindow : Window
         TxtRefresh.Text = cfg.DashboardRefreshSeconds.ToString(CultureInfo.InvariantCulture);
         TxtEnduranceWarnYears.Text = cfg.TbwProjectionWarnYears.ToString(CultureInfo.InvariantCulture);
         ChkControllerErrors.IsChecked = cfg.EnableControllerErrorAlerts;
-        ChkNotify.IsChecked = cfg.EnableNotifications;
+        ChkNotify.IsChecked = userSettings.EnableNotifications;
 
         // Web TBW lookup settings.
-        ChkTbwLookup.IsChecked = cfg.EnableTbwWebLookup;
-        SelectProviderItem(cfg.WebSearchProvider);
+        ChkTbwLookup.IsChecked = userSettings.EnableTbwWebLookup;
+        SelectProviderItem(userSettings.WebSearchProvider);
         var secrets = AiSecretsStore.Load();
         TxtGoogleKey.Text = secrets.GoogleApiKey ?? "";
         TxtGoogleCx.Text = secrets.GoogleCseId ?? "";
@@ -902,27 +913,41 @@ public partial class MainWindow : Window
 
     internal void Save_Click(object sender, RoutedEventArgs e)
     {
-        var cfg = _config.Current;
-        cfg.SsdWarnGbPerHour = ParseOr(TxtWarnHour.Text, cfg.SsdWarnGbPerHour);
-        cfg.SsdWarnGbPerDay = ParseOr(TxtWarnDay.Text, cfg.SsdWarnGbPerDay);
-        cfg.SsdCriticalGbPerDay = ParseOr(TxtCritDay.Text, cfg.SsdCriticalGbPerDay);
-        cfg.ProcessWarnGbPerHour = ParseOr(TxtProcHour.Text, cfg.ProcessWarnGbPerHour);
-        cfg.AllProcessesWarnGbPerHour = ParseOr(TxtAllProcHour.Text, cfg.AllProcessesWarnGbPerHour);
-        cfg.AlertCooldownMinutes = (int)Math.Clamp(ParseOr(TxtCooldown.Text, cfg.AlertCooldownMinutes), 1, 1440);
-        cfg.ControllerErrorWindowDays = (int)Math.Clamp(ParseOr(TxtControllerWindow.Text, cfg.ControllerErrorWindowDays), 1, 365);
-        cfg.ControllerErrorWarnCount = (int)Math.Clamp(ParseOr(TxtControllerWarn.Text, cfg.ControllerErrorWarnCount), 0, 100000);
-        cfg.ControllerErrorCriticalCount = (int)Math.Clamp(ParseOr(TxtControllerCritical.Text, cfg.ControllerErrorCriticalCount), 0, 100000);
-        if (cfg.ControllerErrorWarnCount > 0 && cfg.ControllerErrorCriticalCount > 0)
-            cfg.ControllerErrorCriticalCount = Math.Max(cfg.ControllerErrorWarnCount, cfg.ControllerErrorCriticalCount);
-        cfg.SampleIntervalSeconds = (int)Math.Clamp(ParseOr(TxtInterval.Text, cfg.SampleIntervalSeconds), 1, 60);
-        cfg.DashboardRefreshSeconds = (int)Math.Clamp(ParseOr(TxtRefresh.Text, cfg.DashboardRefreshSeconds), 1, 600);
-        cfg.TbwProjectionWarnYears = ParseOr(TxtEnduranceWarnYears.Text, cfg.TbwProjectionWarnYears);
-        cfg.EnableControllerErrorAlerts = ChkControllerErrors.IsChecked == true;
-        cfg.EnableNotifications = ChkNotify.IsChecked == true;
-
+        bool enableNotifications = ChkNotify.IsChecked == true;
         var disk = SelectedDisk;
-        if (disk is not null)
+        bool enableTbwWebLookup = ChkTbwLookup.IsChecked == true;
+        string? webSearchProvider = null;
+        if ((TbwProviderSelector.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString() is string prov && prov.Length > 0)
+            webSearchProvider = prov;
+        AiSecretsStore.Save(new AiSecrets
         {
+            GoogleApiKey = NullIfBlank(TxtGoogleKey.Text),
+            GoogleCseId = NullIfBlank(TxtGoogleCx.Text),
+            SerperApiKey = NullIfBlank(TxtSerperKey.Password),
+        });
+        _tbwLookup = null; // recreate with the new backend/keys on the next lookup
+
+        _config.Update(cfg =>
+        {
+            cfg.SsdWarnGbPerHour = ParseOr(TxtWarnHour.Text, cfg.SsdWarnGbPerHour);
+            cfg.SsdWarnGbPerDay = ParseOr(TxtWarnDay.Text, cfg.SsdWarnGbPerDay);
+            cfg.SsdCriticalGbPerDay = ParseOr(TxtCritDay.Text, cfg.SsdCriticalGbPerDay);
+            cfg.ProcessWarnGbPerHour = ParseOr(TxtProcHour.Text, cfg.ProcessWarnGbPerHour);
+            cfg.AllProcessesWarnGbPerHour = ParseOr(TxtAllProcHour.Text, cfg.AllProcessesWarnGbPerHour);
+            cfg.AlertCooldownMinutes = (int)Math.Clamp(ParseOr(TxtCooldown.Text, cfg.AlertCooldownMinutes), 1, 1440);
+            cfg.ControllerErrorWindowDays = (int)Math.Clamp(ParseOr(TxtControllerWindow.Text, cfg.ControllerErrorWindowDays), 1, 365);
+            cfg.ControllerErrorWarnCount = (int)Math.Clamp(ParseOr(TxtControllerWarn.Text, cfg.ControllerErrorWarnCount), 0, 100000);
+            cfg.ControllerErrorCriticalCount = (int)Math.Clamp(ParseOr(TxtControllerCritical.Text, cfg.ControllerErrorCriticalCount), 0, 100000);
+            if (cfg.ControllerErrorWarnCount > 0 && cfg.ControllerErrorCriticalCount > 0)
+                cfg.ControllerErrorCriticalCount = Math.Max(cfg.ControllerErrorWarnCount, cfg.ControllerErrorCriticalCount);
+            cfg.SampleIntervalSeconds = (int)Math.Clamp(ParseOr(TxtInterval.Text, cfg.SampleIntervalSeconds), 1, 60);
+            cfg.DashboardRefreshSeconds = (int)Math.Clamp(ParseOr(TxtRefresh.Text, cfg.DashboardRefreshSeconds), 1, 600);
+            cfg.TbwProjectionWarnYears = ParseOr(TxtEnduranceWarnYears.Text, cfg.TbwProjectionWarnYears);
+            cfg.EnableControllerErrorAlerts = ChkControllerErrors.IsChecked == true;
+
+            if (disk is null)
+                return;
+
             double lower;
             if (double.TryParse(TxtTbw.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double tbw) && tbw > 0)
             {
@@ -935,26 +960,18 @@ public partial class MainWindow : Window
                 lower = cfg.DefaultSsdTbw;
             }
 
-            // Upper bound is optional; only kept when it parses and exceeds the lower rating.
             if (double.TryParse(TxtTbwUpper.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double upper) && upper > lower)
                 cfg.DiskTbwRatingsUpper[disk.DiskId] = upper;
             else
                 cfg.DiskTbwRatingsUpper.Remove(disk.DiskId);
-        }
-
-        // Web TBW lookup: feature toggle + backend to config, API keys to the per-user secrets store.
-        cfg.EnableTbwWebLookup = ChkTbwLookup.IsChecked == true;
-        if ((TbwProviderSelector.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString() is string prov && prov.Length > 0)
-            cfg.WebSearchProvider = prov;
-        AiSecretsStore.Save(new AiSecrets
-        {
-            GoogleApiKey = NullIfBlank(TxtGoogleKey.Text),
-            GoogleCseId = NullIfBlank(TxtGoogleCx.Text),
-            SerperApiKey = NullIfBlank(TxtSerperKey.Password),
         });
-        _tbwLookup = null; // recreate with the new backend/keys on the next lookup
-
-        _config.Save(cfg);
+        _userSettings.Update(settings =>
+        {
+            settings.EnableNotifications = enableNotifications;
+            settings.EnableTbwWebLookup = enableTbwWebLookup;
+            if (webSearchProvider is not null)
+                settings.WebSearchProvider = webSearchProvider;
+        });
         SaveStatus.Text = "Saved \u2713";
         ApplyRefreshInterval();
         LoadSettingsFields();
@@ -969,12 +986,12 @@ public partial class MainWindow : Window
     private void LoadSuspendRules()
     {
         _suspendRules.Clear();
-        foreach (var r in _config.Current.AutoSuspendRules)
+        foreach (var r in _userSettings.Current.AutoSuspendRules)
             _suspendRules.Add(new SuspendRuleVm
             {
                 ProcessName = r.ProcessName,
                 ThresholdText = r.ThresholdGbPerHour.ToString(CultureInfo.InvariantCulture),
-                IsAuto = r.Mode == SuspendMode.Auto,
+                IsAuto = r.Mode == SuspendMode.Auto && !string.IsNullOrWhiteSpace(r.ExecutablePath),
                 Enabled = r.Enabled,
                 ExecutablePath = r.ExecutablePath,
             });
@@ -984,7 +1001,7 @@ public partial class MainWindow : Window
 
     private void RefreshSuspended()
     {
-        var rows = _repo.GetSuspendedProcesses()
+        var rows = _repo.GetSuspendedProcessStates()
             .Select(s => new SuspendedRow(s.Name, $"{s.Name}  \u00b7  suspended {s.SuspendedUtc.ToLocalTime():HH:mm}"))
             .ToList();
         SuspendedList.ItemsSource = rows;
@@ -1041,7 +1058,6 @@ public partial class MainWindow : Window
 
     private void SaveRules_Click(object sender, RoutedEventArgs e)
     {
-        var cfg = _config.Current;
         var rules = new List<AutoSuspendRule>();
         foreach (var vm in _suspendRules)
         {
@@ -1051,13 +1067,12 @@ public partial class MainWindow : Window
             {
                 ProcessName = vm.ProcessName.Trim(),
                 ThresholdGbPerHour = thr,
-                Mode = vm.IsAuto ? SuspendMode.Auto : SuspendMode.Confirm,
+                Mode = vm.IsAuto && vm.CanAuto ? SuspendMode.Auto : SuspendMode.Confirm,
                 Enabled = vm.Enabled,
                 ExecutablePath = vm.ExecutablePath,
             });
         }
-        cfg.AutoSuspendRules = rules;
-        _config.Save(cfg);
+        _userSettings.Update(settings => settings.AutoSuspendRules = rules);
         SuspendStatus.Text = "Saved \u2713";
         LoadSuspendRules();
     }
@@ -1066,10 +1081,13 @@ public partial class MainWindow : Window
     {
         if ((sender as FrameworkElement)?.DataContext is SuspendedRow row)
         {
-            ProcessControl.Resume(row.Name);
-            _repo.RemoveSuspendedProcess(row.Name);
+            var result = AutoSuspendManager.ResumeTracked(_repo, row.Name);
             RefreshSuspended();
-            SuspendStatus.Text = $"Resumed '{row.Name}'.";
+            SuspendStatus.Text = result.IdentityUnavailable
+                ? $"Could not safely resume '{row.Name}' because its exact process identity is unavailable."
+                : result.AccessDenied
+                ? $"Could not resume '{row.Name}' (access denied)."
+                : $"Resumed '{row.Name}'.";
         }
     }
 
@@ -1099,8 +1117,8 @@ public partial class MainWindow : Window
 
     // ----------------------------------------------------------- Rated-TBW web lookup
 
-    internal static bool ShouldPromptTbwOnlineSetup(AppConfig config, AiSecrets secrets)
-        => !config.SuppressTbwOnlineSetupPrompt && string.IsNullOrWhiteSpace(secrets.SerperApiKey);
+    internal static bool ShouldPromptTbwOnlineSetup(UserSettings settings, AiSecrets secrets)
+        => !settings.SuppressTbwOnlineSetupPrompt && string.IsNullOrWhiteSpace(secrets.SerperApiKey);
 
     internal void ShowTbwOnlineSetup()
     {
@@ -1172,11 +1190,13 @@ public partial class MainWindow : Window
             secrets.SerperApiKey = key;
             TbwSetupSecretsSaver(secrets);
 
-            var config = _config.Current;
-            config.EnableTbwWebLookup = true;
-            config.WebSearchProvider = "serper";
-            config.SuppressTbwOnlineSetupPrompt = TbwSetupDontShowAgain.IsChecked == true;
-            _config.Save(config);
+            bool suppressPrompt = TbwSetupDontShowAgain.IsChecked == true;
+            _userSettings.Update(settings =>
+            {
+                settings.EnableTbwWebLookup = true;
+                settings.WebSearchProvider = "serper";
+                settings.SuppressTbwOnlineSetupPrompt = suppressPrompt;
+            });
 
             _tbwLookup = null;
             TbwSetupSerperKey.Password = "";
@@ -1197,12 +1217,10 @@ public partial class MainWindow : Window
     {
         if (TbwSetupDontShowAgain.IsChecked != true)
             return;
-        var config = _config.Current;
-        config.SuppressTbwOnlineSetupPrompt = true;
-        _config.Save(config);
+        _userSettings.Update(settings => settings.SuppressTbwOnlineSetupPrompt = true);
     }
 
-    private TbwLookupService TbwLookup => _tbwLookup ??= new TbwLookupService(_config.Current, TbwHttp);
+    private TbwLookupService TbwLookup => _tbwLookup ??= new TbwLookupService(_userSettings.Current);
 
     private void LookupRatedTbw_Click(object sender, RoutedEventArgs e)
     {
@@ -1245,7 +1263,7 @@ public partial class MainWindow : Window
         }
 
         var cfg = _config.Current;
-        if (!force && (!cfg.EnableTbwWebLookup || cfg.DiskTbwRatings.ContainsKey(disk.DiskId)))
+        if (!force && (!_userSettings.Current.EnableTbwWebLookup || cfg.DiskTbwRatings.ContainsKey(disk.DiskId)))
         { TbwLookupPanel.Visibility = Visibility.Collapsed; return; }
 
         string model = (disk.FriendlyName ?? "").Trim();
@@ -1422,9 +1440,7 @@ public partial class MainWindow : Window
     /// <summary>Applies a chosen TBW value as the drive's per-disk endurance rating.</summary>
     private void ApplyTbwCandidate(DiskInfo disk, double tbw)
     {
-        var cfg = _config.Current;
-        cfg.DiskTbwRatings[disk.DiskId] = tbw;
-        _config.Save(cfg);
+        _config.Update(cfg => cfg.DiskTbwRatings[disk.DiskId] = tbw);
         TbwCandidateList.Children.Clear();
         TbwLookupAction.Visibility = Visibility.Collapsed;
         SetTbwLookupOutcome(

@@ -1,4 +1,5 @@
 using DiskActivityMonitor.Core.Data;
+using DiskActivityMonitor.Core.Collection;
 using DiskActivityMonitor.Core.Models;
 
 namespace DiskActivityMonitor.Tests;
@@ -38,6 +39,26 @@ public class MonitorRepositoryTests : IDisposable
     {
         var repo = CreateRepo();
         repo.EnsureSchema(); // second call should be a no-op
+    }
+
+    [Fact]
+    public void ReadOnlyRepository_AllowsReadsAndRejectsWrites()
+    {
+        var writable = CreateRepo();
+        writable.UpsertDisks([new DiskInfo { DiskId = "0", InstanceName = "0 C:" }]);
+
+        var readOnly = new MonitorRepository(_dbPath, readOnly: true);
+
+        Assert.Single(readOnly.GetDisks());
+        Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(() =>
+            readOnly.InsertAlert(new AlertRecord
+            {
+                TimestampUtc = DateTime.UtcNow,
+                Severity = AlertSeverity.Info,
+                RuleKey = "read-only-test",
+                Title = "test",
+                Message = "test",
+            }));
     }
 
     // ────────────────────────────────────────── Disk CRUD
@@ -473,13 +494,20 @@ public class MonitorRepositoryTests : IDisposable
         var repo = CreateRepo();
         var now = DateTime.UtcNow;
 
-        repo.AddSuspendedProcess("chrome", now);
+        var identities = new[]
+        {
+            new ProcessControl.ProcessIdentity(42, 123456, @"C:\Apps\Chrome\chrome.exe"),
+        };
+        repo.AddSuspendedProcess("chrome", now, @"C:\Apps\Chrome\chrome.exe", identities);
         var suspended = repo.GetSuspendedProcessNames();
         Assert.Contains("chrome", suspended);
 
         var withTime = repo.GetSuspendedProcesses();
         Assert.Single(withTime);
         Assert.Equal("chrome", withTime[0].Name);
+        var state = Assert.IsType<SuspendedProcessState>(repo.GetSuspendedProcessState("CHROME"));
+        Assert.Equal(@"C:\Apps\Chrome\chrome.exe", state.ExecutablePath);
+        Assert.Equal(identities[0], Assert.Single(state.ProcessIdentities));
 
         repo.RemoveSuspendedProcess("chrome");
         Assert.Empty(repo.GetSuspendedProcessNames());

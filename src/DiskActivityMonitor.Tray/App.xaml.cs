@@ -51,8 +51,9 @@ public partial class App : System.Windows.Application
 
         var config = new ConfigStore();
         config.StartWatching();
+        var userSettings = new UserSettingsStore();
 
-        _tray = new TrayController(_repo, config);
+        _tray = new TrayController(_repo, config, userSettings);
         _tray.Initialize();
 
         // Background listener: a toast body click (possibly handled by a short-lived process)
@@ -103,14 +104,17 @@ public partial class App : System.Windows.Application
             }
             else if (action == "suspend" && args.TryGetValue("process", out var suspendName) && !string.IsNullOrEmpty(suspendName))
             {
-                var result = ProcessControl.Suspend(suspendName);
-                if (result.Affected > 0)
-                    _repo?.AddSuspendedProcess(suspendName, DateTime.UtcNow);
+                args.TryGetValue("path", out var executablePath);
+                if (_repo is not null)
+                    AutoSuspendManager.SuspendTracked(
+                        _repo,
+                        suspendName,
+                        string.IsNullOrWhiteSpace(executablePath) ? null : executablePath);
             }
             else if (action == "resume" && args.TryGetValue("process", out var resumeName) && !string.IsNullOrEmpty(resumeName))
             {
-                ProcessControl.Resume(resumeName);
-                _repo?.RemoveSuspendedProcess(resumeName);
+                if (_repo is not null)
+                    AutoSuspendManager.ResumeTracked(_repo, resumeName);
             }
             else if (action == "suspend-ignore")
             {

@@ -20,6 +20,7 @@ internal sealed class TrayController : IDisposable
 {
     private readonly MonitorRepository _repo;
     private readonly ConfigStore _config;
+    private readonly UserSettingsStore _userSettings;
     private readonly NotifyIcon _notifyIcon = new();
     private readonly DispatcherTimer _timer;
     private readonly AutoSuspendManager _autoSuspend;
@@ -37,11 +38,12 @@ internal sealed class TrayController : IDisposable
     /// dashboard log reflect only alerts raised within this trailing window, then auto-clear.</summary>
     private static readonly TimeSpan RecentAlertWindow = TimeSpan.FromHours(1);
 
-    public TrayController(MonitorRepository repo, ConfigStore config)
+    public TrayController(MonitorRepository repo, ConfigStore config, UserSettingsStore userSettings)
     {
         _repo = repo;
         _config = config;
-        _autoSuspend = new AutoSuspendManager(repo, config);
+        _userSettings = userSettings;
+        _autoSuspend = new AutoSuspendManager(repo, userSettings);
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
         _timer.Tick += (_, _) => SafeUpdate();
         // Drains queued alert toasts one at a time so each is visible (Windows replaces an
@@ -80,7 +82,7 @@ internal sealed class TrayController : IDisposable
 
     internal bool PromptTbwOnlineSetupIfNeeded()
     {
-        if (!MainWindow.ShouldPromptTbwOnlineSetup(_config.Current, AiSecretsStore.Load()))
+        if (!MainWindow.ShouldPromptTbwOnlineSetup(_userSettings.Current, AiSecretsStore.Load()))
             return false;
         TbwSetupPresenter();
         return true;
@@ -134,7 +136,7 @@ internal sealed class TrayController : IDisposable
         if (fresh.Count > 0)
         {
             _lastBalloonAlertId = fresh[^1].Id;
-            if (_config.Current.EnableNotifications)
+            if (_userSettings.Current.EnableNotifications)
             {
                 // Earliest alert id per rule within the recent window = the "episode opener".
                 var firstInWindowByRule = recent
@@ -240,14 +242,18 @@ internal sealed class TrayController : IDisposable
     {
         try
         {
+            var suspendButton = new ToastButton()
+                .SetContent("Suspend now")
+                .AddArgument("action", "suspend")
+                .AddArgument("process", rule.ProcessName);
+            if (!string.IsNullOrWhiteSpace(rule.ExecutablePath))
+                suspendButton.AddArgument("path", rule.ExecutablePath);
+
             new ToastContentBuilder()
                 .AddText($"{rule.ProcessName} is requesting heavy file writes")
                 .AddText($"{rule.ProcessName} requested {ByteFormat.Humanize(written)} of logical file writes in the last hour (limit {rule.ThresholdGbPerHour:0.#} GB/h). Physical disk writes may be lower. Suspend it?")
                 .SetToastDuration(ToastDuration.Long)
-                .AddButton(new ToastButton()
-                    .SetContent("Suspend now")
-                    .AddArgument("action", "suspend")
-                    .AddArgument("process", rule.ProcessName))
+                .AddButton(suspendButton)
                 .AddButton(new ToastButton()
                     .SetContent("Ignore")
                     .AddArgument("action", "suspend-ignore")
@@ -278,10 +284,15 @@ internal sealed class TrayController : IDisposable
                 .AddText(body)
                 .SetToastDuration(ToastDuration.Long);
             if (result.Affected > 0)
-                b.AddButton(new ToastButton()
+            {
+                var resumeButton = new ToastButton()
                     .SetContent("Resume")
                     .AddArgument("action", "resume")
-                    .AddArgument("process", rule.ProcessName));
+                    .AddArgument("process", rule.ProcessName);
+                if (!string.IsNullOrWhiteSpace(rule.ExecutablePath))
+                    resumeButton.AddArgument("path", rule.ExecutablePath);
+                b.AddButton(resumeButton);
+            }
             b.Show();
         }
         catch (Exception ex)
@@ -325,7 +336,7 @@ internal sealed class TrayController : IDisposable
 
     private void ShowDashboard()
     {
-        _window ??= new MainWindow(_repo, _config);
+        _window ??= new MainWindow(_repo, _config, _userSettings);
         _window.Icon = TrayIconFactory.CreateImageSource(_currentColor);
         _window.ShowAndActivate();
     }

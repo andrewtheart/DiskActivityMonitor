@@ -21,14 +21,14 @@ internal sealed record SuspendEvent(AutoSuspendRule Rule, long WrittenBytes, Sus
 internal sealed class AutoSuspendManager
 {
     private readonly MonitorRepository _repo;
-    private readonly ConfigStore _config;
+    private readonly UserSettingsStore _userSettings;
     private readonly Dictionary<string, DateTime> _lastPrompt = new(StringComparer.OrdinalIgnoreCase);
     private static readonly TimeSpan PromptCooldown = TimeSpan.FromMinutes(10);
 
-    public AutoSuspendManager(MonitorRepository repo, ConfigStore config)
+    public AutoSuspendManager(MonitorRepository repo, UserSettingsStore userSettings)
     {
         _repo = repo;
-        _config = config;
+        _userSettings = userSettings;
     }
 
     /// <summary>
@@ -39,7 +39,7 @@ internal sealed class AutoSuspendManager
     public List<SuspendEvent> Evaluate(DateTime nowUtc)
     {
         var events = new List<SuspendEvent>();
-        var rules = _config.Current.AutoSuspendRules;
+        var rules = _userSettings.Current.AutoSuspendRules;
         if (rules.Count == 0) return events;
 
         // Per-process data is bucketed per minute, so align the window to the last completed minute.
@@ -51,15 +51,15 @@ internal sealed class AutoSuspendManager
         {
             if (!rule.Enabled || string.IsNullOrWhiteSpace(rule.ProcessName)) continue;
             if (suspended.Contains(rule.ProcessName)) continue;       // already suspended by us
-            if (!ProcessControl.IsRunning(rule.ProcessName)) continue; // nothing to act on
+            if (!ProcessControl.IsRunning(rule.ProcessName, rule.ExecutablePath)) continue; // nothing to act on
 
             long written = _repo.GetProcessWrite(rule.ProcessName, from, end);
             double thresholdBytes = rule.ThresholdGbPerHour * ByteFormat.GiB;
             if (thresholdBytes <= 0 || written < thresholdBytes) continue;
 
-            if (rule.Mode == SuspendMode.Auto)
+            if (CanAutoSuspend(rule))
             {
-                var result = Suspend(rule.ProcessName);
+                var result = Suspend(rule.ProcessName, rule.ExecutablePath);
                 events.Add(new SuspendEvent(rule, written,
                     result.Affected > 0 ? SuspendOutcome.AutoSuspended : SuspendOutcome.AutoSuspendFailed, result));
             }
@@ -76,21 +76,49 @@ internal sealed class AutoSuspendManager
         return events;
     }
 
-    /// <summary>Suspends a process by name and records it as suspended when at least one instance was frozen.</summary>
-    public ProcessControl.Result Suspend(string name)
+    /// <summary>Suspends matching processes and records their exact identities.</summary>
+    public ProcessControl.Result Suspend(string name, string? executablePath = null)
     {
-        var result = ProcessControl.Suspend(name);
-        if (result.Affected > 0)
-            _repo.AddSuspendedProcess(name, DateTime.UtcNow);
-        return result;
+        return SuspendTracked(_repo, name, executablePath);
     }
 
-    /// <summary>Resumes a process by name and clears its suspended record and prompt cooldown.</summary>
+    /// <summary>Resumes only the identities previously suspended by this app.</summary>
     public ProcessControl.Result Resume(string name)
     {
-        var result = ProcessControl.Resume(name);
-        _repo.RemoveSuspendedProcess(name);
+        var result = ResumeTracked(_repo, name);
         _lastPrompt.Remove(name);
         return result;
     }
+
+    internal static ProcessControl.Result SuspendTracked(
+        MonitorRepository repo,
+        string name,
+        string? executablePath)
+    {
+        var result = ProcessControl.Suspend(name, executablePath);
+        if (result.Affected > 0)
+            repo.AddSuspendedProcess(name, DateTime.UtcNow, executablePath, result.Processes);
+        return result;
+    }
+
+    internal static ProcessControl.Result ResumeTracked(MonitorRepository repo, string name)
+    {
+        var state = repo.GetSuspendedProcessState(name);
+        if (state is not { ProcessIdentities.Count: > 0 })
+            return new ProcessControl.Result(0, 0, false, IdentityUnavailable: true);
+
+        var result = ProcessControl.Resume(state.ProcessIdentities);
+        if (result.Unresolved.Count > 0)
+            repo.AddSuspendedProcess(
+                state.Name,
+                state.SuspendedUtc,
+                state.ExecutablePath,
+                result.Unresolved);
+        else
+            repo.RemoveSuspendedProcess(name);
+        return result;
+    }
+
+    internal static bool CanAutoSuspend(AutoSuspendRule rule)
+        => rule.Mode == SuspendMode.Auto && !string.IsNullOrWhiteSpace(rule.ExecutablePath);
 }
