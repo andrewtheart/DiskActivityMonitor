@@ -78,6 +78,43 @@ Filename: "{sys}\sc.exe"; Parameters: "stop {#ServiceName}"; Flags: runhidden wa
 Filename: "{sys}\sc.exe"; Parameters: "delete {#ServiceName}"; Flags: runhidden waituntilterminated; RunOnceId: "DeleteSvc"
 
 [Code]
+var
+  UseExistingSettings: Boolean;
+  KeepSettingsAfterUninstall: Boolean;
+
+function SettingsPath(): String;
+begin
+  Result := ExpandConstant('{commonappdata}\{#ServiceName}\config.json');
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  UseExistingSettings := True;
+  if FileExists(SettingsPath()) then
+    UseExistingSettings :=
+      SuppressibleMsgBox(
+        'Existing Disk Activity Monitor settings were found.' + #13#10 + #13#10 +
+        'Do you want to use these settings?' + #13#10 + #13#10 +
+        'Choose Yes to keep your existing values. Settings added by this version ' +
+        'will use their new defaults.' + #13#10 + #13#10 +
+        'Choose No to start with default settings. Your monitoring history will not be removed.',
+        mbConfirmation, MB_YESNO, IDYES) = IDYES;
+  Result := True;
+end;
+
+function InitializeUninstall(): Boolean;
+begin
+  KeepSettingsAfterUninstall := True;
+  if FileExists(SettingsPath()) then
+    KeepSettingsAfterUninstall :=
+      SuppressibleMsgBox(
+        'Do you want to keep your Disk Activity Monitor settings for a future reinstall?' + #13#10 + #13#10 +
+        'Choose Yes to keep your settings, or No to delete them.' + #13#10 + #13#10 +
+        'Your monitoring history will remain on this computer either way.',
+        mbConfirmation, MB_YESNO, IDYES) = IDYES;
+  Result := True;
+end;
+
 // Stop and remove any prior install of the service and tray so their files unlock before copy.
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
@@ -88,5 +125,27 @@ begin
   Sleep(1500);
   Exec(ExpandConstant('{sys}\sc.exe'), 'delete {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, rc);
   Sleep(1000);
+  if not UseExistingSettings then
+  begin
+    if FileExists(SettingsPath()) and not DeleteFile(SettingsPath()) then
+    begin
+      Result := 'Setup could not remove the existing settings file. Close any programs ' +
+        'using it and run setup again.';
+      Exit;
+    end;
+    DeleteFile(SettingsPath() + '.tmp');
+  end;
   Result := '';
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if (CurUninstallStep = usPostUninstall) and (not KeepSettingsAfterUninstall) then
+  begin
+    DeleteFile(SettingsPath() + '.tmp');
+    if FileExists(SettingsPath()) and not DeleteFile(SettingsPath()) then
+      MsgBox(
+        'The settings file could not be removed. You can delete it manually from:' + #13#10 +
+        SettingsPath(), mbError, MB_OK);
+  end;
 end;

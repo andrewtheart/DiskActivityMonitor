@@ -525,6 +525,8 @@ diagnostics</a></li>
 <li><a href="#uninstall-and-reset"
 id="toc-uninstall-and-reset">Uninstall and reset</a>
 <ul>
+<li><a href="#packaged-uninstaller"
+id="toc-packaged-uninstaller">Packaged uninstaller</a></li>
 <li><a href="#scripted-uninstall" id="toc-scripted-uninstall">Scripted
 uninstall</a></li>
 <li><a href="#remove-all-data" id="toc-remove-all-data">Remove all
@@ -1298,6 +1300,13 @@ console. As a Windows Service, hosting/lifecycle messages can also be
 inspected through Windows Event Viewer where available.</p>
 <hr />
 <h2 id="uninstall-and-reset">Uninstall and reset</h2>
+<h3 id="packaged-uninstaller">Packaged uninstaller</h3>
+<p>The packaged uninstaller asks whether to keep settings for a future
+reinstall. Choosing not to keep them removes <code>config.json</code>
+only; monitoring history remains. A later installer detects a retained
+configuration and asks whether to reuse it. Existing values are
+preserved, while settings introduced by the newer version receive their
+current defaults.</p>
 <h3 id="scripted-uninstall">Scripted uninstall</h3>
 <p>Run elevated:</p>
 <div class="sourceCode" id="cb15"><pre

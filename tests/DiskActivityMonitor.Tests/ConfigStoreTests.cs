@@ -41,6 +41,22 @@ public class ConfigStoreTests : IDisposable
     }
 
     [Fact]
+    public void Constructor_LegacyConfig_PreservesValuesAndAppliesNewDefaults()
+    {
+        File.WriteAllText(_configPath, """
+            {
+              "sampleIntervalSeconds": 12
+            }
+            """);
+
+        using var store = new ConfigStore(_configPath);
+
+        Assert.Equal(12, store.Current.SampleIntervalSeconds);
+        Assert.Equal("serper", store.Current.WebSearchProvider);
+        Assert.True(store.Current.EnableControllerErrorAlerts);
+    }
+
+    [Fact]
     public void Reload_CorruptFile_ReturnsDefaults()
     {
         using var store = new ConfigStore(_configPath);

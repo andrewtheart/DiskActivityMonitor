@@ -18,6 +18,11 @@ Self-contained installers (no .NET runtime required on the target machine):
 The installer registers the collector as a Windows service (LocalSystem, auto-start) and
 installs the tray dashboard per user.
 
+When an existing `config.json` is found, setup asks whether to reuse it. Retained values are
+combined with defaults for settings introduced by the new version. Choosing fresh settings
+removes only the old configuration; monitoring history remains. The packaged uninstaller also
+asks whether settings should be kept for a future reinstall.
+
 ## Building locally
 
 Run from the repository root:

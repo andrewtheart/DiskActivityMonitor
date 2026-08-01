@@ -592,6 +592,13 @@ When run interactively, the collector writes structured logs to its console. As 
 
 ## Uninstall and reset
 
+### Packaged uninstaller
+
+The packaged uninstaller asks whether to keep settings for a future reinstall. Choosing not to
+keep them removes `config.json` only; monitoring history remains. A later installer detects a
+retained configuration and asks whether to reuse it. Existing values are preserved, while
+settings introduced by the newer version receive their current defaults.
+
 ### Scripted uninstall
 
 Run elevated:
