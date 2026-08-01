@@ -20,32 +20,56 @@ public interface IWebSearchProvider
 /// <summary>Creates the configured web search provider.</summary>
 public static class WebSearchProviderFactory
 {
+    private static readonly HttpClient SecureHttp = new(CreateSecureHandler())
+    {
+        Timeout = TimeSpan.FromMinutes(5),
+    };
+
     /// <summary>Returns the provider selected by <paramref name="providerName"/> ("google" or "serper").</summary>
-    public static IWebSearchProvider Create(string? providerName, AiSecrets secrets, HttpClient http) =>
+    public static IWebSearchProvider Create(string? providerName, AiSecrets secrets) =>
+        Create(providerName, secrets, SecureHttp);
+
+    internal static IWebSearchProvider Create(string? providerName, AiSecrets secrets, HttpClient http) =>
         (providerName ?? "google").Trim().ToLowerInvariant() switch
         {
             "serper" => new SerperSearchProvider(secrets, http),
             _ => new GoogleCseSearchProvider(secrets, http),
         };
+
+    internal static SocketsHttpHandler CreateSecureHandler() => new()
+    {
+        AllowAutoRedirect = false,
+        UseCookies = false,
+    };
 }
 
 /// <summary>Google Programmable Search via the official Custom Search JSON API (100 queries/day free).</summary>
-public sealed class GoogleCseSearchProvider(AiSecrets secrets, HttpClient http) : IWebSearchProvider
+public sealed class GoogleCseSearchProvider : IWebSearchProvider
 {
+    private readonly AiSecrets _secrets;
+    private readonly HttpClient _http;
+
+    internal GoogleCseSearchProvider(AiSecrets secrets, HttpClient http)
+    {
+        _secrets = secrets;
+        _http = http;
+    }
+
     public string Name => "Google Custom Search";
 
     public bool IsConfigured =>
-        !string.IsNullOrWhiteSpace(secrets.GoogleApiKey) && !string.IsNullOrWhiteSpace(secrets.GoogleCseId);
+        !string.IsNullOrWhiteSpace(_secrets.GoogleApiKey) && !string.IsNullOrWhiteSpace(_secrets.GoogleCseId);
 
     public async Task<IReadOnlyList<WebSearchHit>> SearchAsync(string query, int count, CancellationToken ct)
     {
         if (!IsConfigured) throw new InvalidOperationException("Google Custom Search key/engine id not configured.");
         int num = Math.Clamp(count, 1, 10);
-        string uri = "https://www.googleapis.com/customsearch/v1?key=" + Uri.EscapeDataString(secrets.GoogleApiKey!) +
-                     "&cx=" + Uri.EscapeDataString(secrets.GoogleCseId!) +
+        string uri = "https://www.googleapis.com/customsearch/v1?cx=" + Uri.EscapeDataString(_secrets.GoogleCseId!) +
                      "&q=" + Uri.EscapeDataString(query) + "&num=" + num;
 
-        using var resp = await http.GetAsync(uri, ct).ConfigureAwait(false);
+        using var req = new HttpRequestMessage(HttpMethod.Get, uri);
+        req.Headers.TryAddWithoutValidation("X-Goog-Api-Key", _secrets.GoogleApiKey!.Trim());
+        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
         resp.EnsureSuccessStatusCode();
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
 
@@ -69,11 +93,20 @@ public sealed class GoogleCseSearchProvider(AiSecrets secrets, HttpClient http) 
 }
 
 /// <summary>serper.dev Google Search API (single API key).</summary>
-public sealed class SerperSearchProvider(AiSecrets secrets, HttpClient http) : IWebSearchProvider
+public sealed class SerperSearchProvider : IWebSearchProvider
 {
+    private readonly AiSecrets _secrets;
+    private readonly HttpClient _http;
+
+    internal SerperSearchProvider(AiSecrets secrets, HttpClient http)
+    {
+        _secrets = secrets;
+        _http = http;
+    }
+
     public string Name => "Serper.dev";
 
-    public bool IsConfigured => !string.IsNullOrWhiteSpace(secrets.SerperApiKey);
+    public bool IsConfigured => !string.IsNullOrWhiteSpace(_secrets.SerperApiKey);
 
     public async Task<IReadOnlyList<WebSearchHit>> SearchAsync(string query, int count, CancellationToken ct)
     {
@@ -81,11 +114,11 @@ public sealed class SerperSearchProvider(AiSecrets secrets, HttpClient http) : I
         int num = Math.Clamp(count, 1, 10);
 
         using var req = new HttpRequestMessage(HttpMethod.Post, "https://google.serper.dev/search");
-        req.Headers.Add("X-API-KEY", secrets.SerperApiKey);
+        req.Headers.Add("X-API-KEY", _secrets.SerperApiKey);
         req.Content = new StringContent(
             JsonSerializer.Serialize(new { q = query, num }), Encoding.UTF8, "application/json");
 
-        using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
+        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
         resp.EnsureSuccessStatusCode();
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
 

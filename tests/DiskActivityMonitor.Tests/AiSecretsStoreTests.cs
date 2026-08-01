@@ -17,6 +17,8 @@ public sealed class AiSecretsStoreTests : IDisposable
     {
         const string google = "google-secret-key";
         const string serper = "synthetic-serper-key-for-dpapi-test-only";
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(PathName + ".tmp", "sentinel");
         AiSecretsStore.SaveToFile(PathName, new AiSecrets
         {
             GoogleApiKey = $" {google} ",
@@ -34,7 +36,7 @@ public sealed class AiSecretsStoreTests : IDisposable
         Assert.Equal(google, loaded.GoogleApiKey);
         Assert.Equal(" engine-id ", loaded.GoogleCseId);
         Assert.Equal(serper, loaded.SerperApiKey);
-        Assert.False(File.Exists(PathName + ".tmp"));
+        Assert.Equal("sentinel", File.ReadAllText(PathName + ".tmp"));
     }
 
     [Fact]

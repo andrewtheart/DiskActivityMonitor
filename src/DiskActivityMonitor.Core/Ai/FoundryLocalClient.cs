@@ -11,9 +11,26 @@ namespace DiskActivityMonitor.Core.Ai;
 /// models via the `foundry` CLI. The inference service is a separate process, so native genai
 /// crashes cannot take down the host app (unlike an in-process SDK).
 /// </summary>
-public sealed partial class FoundryLocalClient(HttpClient http, Action<string>? log = null)
+public sealed partial class FoundryLocalClient
 {
+    private static readonly HttpClient LoopbackHttp = new(CreateLoopbackHandler(), disposeHandler: true)
+    {
+        Timeout = TimeSpan.FromMinutes(5),
+    };
+
+    private readonly Action<string>? _log;
     private string? _endpoint;
+
+    public FoundryLocalClient(Action<string>? log = null) => _log = log;
+
+    internal static SocketsHttpHandler CreateLoopbackHandler() => new()
+    {
+        AllowAutoRedirect = false,
+        UseCookies = false,
+        UseProxy = false,
+        ConnectTimeout = TimeSpan.FromSeconds(10),
+        PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+    };
 
     // Tool-calling-capable families, in rough preference order (best instruction/tool followers first).
     private static readonly string[] PreferredFamilies =
@@ -26,7 +43,8 @@ public sealed partial class FoundryLocalClient(HttpClient http, Action<string>? 
     private static readonly string[] ExcludedFragments =
         ["whisper", "embedding", "-asr", "speech", "-vl-", "-coder", "reasoning", "deepseek-r1", "nemotron"];
 
-    [GeneratedRegex(@"https?://[\d.]+:\d+")] private static partial Regex EndpointRegex();
+    [GeneratedRegex(@"https?://(?:localhost|\[[0-9a-f:]+\]|[0-9a-f:.]+):\d+", RegexOptions.IgnoreCase)]
+    private static partial Regex EndpointRegex();
     [GeneratedRegex(@"(\d{1,3})\s*%")] private static partial Regex PercentRegex();
 
     /// <summary>True when the `foundry` CLI is on PATH.</summary>
@@ -57,7 +75,7 @@ public sealed partial class FoundryLocalClient(HttpClient http, Action<string>? 
         _endpoint = await DiscoverEndpointAsync(ct).ConfigureAwait(false);
         if (_endpoint is null)
         {
-            log?.Invoke("Foundry service not running; starting it...");
+            _log?.Invoke("Foundry service not running; starting it...");
             await RunProcessAsync("foundry", "service start", null, ct).ConfigureAwait(false);
             _endpoint = await DiscoverEndpointAsync(ct).ConfigureAwait(false);
         }
@@ -69,8 +87,19 @@ public sealed partial class FoundryLocalClient(HttpClient http, Action<string>? 
         var sb = new StringBuilder();
         try { await RunProcessAsync("foundry", "service status", line => sb.AppendLine(line), ct).ConfigureAwait(false); }
         catch { return null; }
-        var m = EndpointRegex().Match(sb.ToString());
-        return m.Success ? m.Value : null;
+        return ParseLoopbackEndpoint(sb.ToString());
+    }
+
+    internal static string? ParseLoopbackEndpoint(string output)
+    {
+        foreach (Match match in EndpointRegex().Matches(output ?? ""))
+        {
+            if (Uri.TryCreate(match.Value, UriKind.Absolute, out var uri)
+                && uri.IsLoopback
+                && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+                return uri.GetLeftPart(UriPartial.Authority);
+        }
+        return null;
     }
 
     /// <summary>Model ids already downloaded on the device (parsed from `foundry cache list`).</summary>
@@ -139,6 +168,8 @@ public sealed partial class FoundryLocalClient(HttpClient http, Action<string>? 
     /// <summary>Runs a single chat completion and returns the assistant's text content.</summary>
     public async Task<string> ChatAsync(string endpoint, string model, string systemPrompt, string userPrompt, int maxTokens, CancellationToken ct)
     {
+        string trustedEndpoint = ParseLoopbackEndpoint(endpoint)
+            ?? throw new InvalidOperationException("Foundry Local endpoint must use a loopback address.");
         var body = new
         {
             model,
@@ -151,7 +182,7 @@ public sealed partial class FoundryLocalClient(HttpClient http, Action<string>? 
             max_tokens = maxTokens,
         };
 
-        using var resp = await http.PostAsJsonAsync($"{endpoint}/v1/chat/completions", body, ct).ConfigureAwait(false);
+        using var resp = await LoopbackHttp.PostAsJsonAsync($"{trustedEndpoint}/v1/chat/completions", body, ct).ConfigureAwait(false);
         resp.EnsureSuccessStatusCode();
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
         var content = doc.RootElement

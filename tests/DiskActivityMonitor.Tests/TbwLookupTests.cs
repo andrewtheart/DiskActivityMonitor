@@ -191,14 +191,13 @@ public class TbwLookupTests
     [Fact]
     public async Task LookupAsync_LiveSerperAndLocalModel_ProducesVerifiedCandidate()
     {
-        var config = new DiskActivityMonitor.Core.Configuration.AppConfig
+        var settings = new DiskActivityMonitor.Core.Configuration.UserSettings
         {
             WebSearchProvider = "serper",
             EnableTbwWebLookup = true,
         };
-        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
         var logs = new List<string>();
-        var service = new TbwLookupService(config, http, logs.Add);
+        var service = new TbwLookupService(settings, logs.Add);
         var progress = new List<TbwLookupStage>();
 
         var result = await service.LookupAsync("Samsung SSD 870 EVO 1TB", true,
@@ -206,6 +205,94 @@ public class TbwLookupTests
 
         Assert.Contains(result.Candidates, candidate => Math.Abs(candidate.TbwTerabytes - 600) <= 5);
         Assert.DoesNotContain(result.Candidates, candidate => candidate.TbwTerabytes != 600);
+    }
+
+    [Fact]
+    public async Task GetReadiness_DisabledPerUser_DoesNotContactProviders()
+    {
+        var service = new TbwLookupService(
+            new DiskActivityMonitor.Core.Configuration.UserSettings { EnableTbwWebLookup = false });
+
+        var readiness = await service.GetReadinessAsync(CancellationToken.None);
+
+        Assert.False(readiness.CanRun);
+        Assert.Equal("Web TBW lookup is disabled in settings.", readiness.Reason);
+    }
+
+    [Theory]
+    [InlineData("Foundry at http://127.0.0.1:5273", "http://127.0.0.1:5273")]
+    [InlineData("https://localhost:9443 ready", "https://localhost:9443")]
+    [InlineData("http" + "://[::1]:5273", "http" + "://[::1]:5273")]
+    [InlineData("http" + "://192.168.1.20:5273", null)]
+    [InlineData("http" + "://8.8.8.8:5273", null)]
+    [InlineData("not running", null)]
+    public void ParseLoopbackEndpoint_RejectsNonLocalAddresses(string output, string? expected)
+        => Assert.Equal(expected, FoundryLocalClient.ParseLoopbackEndpoint(output));
+
+    [Fact]
+    public async Task ChatAsync_RejectsNonLoopbackEndpointBeforeSending()
+    {
+        var client = new FoundryLocalClient();
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.ChatAsync(
+            "http" + "://192.168.1.20:5273", "model", "system", "user", 10, CancellationToken.None));
+
+        Assert.Contains("loopback", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void FoundryTransport_DisablesRedirectsProxiesAndCookies()
+    {
+        using var handler = FoundryLocalClient.CreateLoopbackHandler();
+
+        Assert.False(handler.AllowAutoRedirect);
+        Assert.False(handler.UseProxy);
+        Assert.False(handler.UseCookies);
+    }
+
+    [Fact]
+    public void WebSearchTransport_DisablesRedirectsAndCookies()
+    {
+        using var handler = WebSearchProviderFactory.CreateSecureHandler();
+
+        Assert.False(handler.AllowAutoRedirect);
+        Assert.False(handler.UseCookies);
+    }
+
+    [Fact]
+    public async Task GoogleSearch_SendsApiKeyInHeaderNotUrl()
+    {
+        const string apiKey = "synthetic-google-api-key";
+        var handler = new CapturingHandler();
+        using var http = new HttpClient(handler);
+        var provider = new GoogleCseSearchProvider(new AiSecrets
+        {
+            GoogleApiKey = apiKey,
+            GoogleCseId = "engine-id",
+        }, http);
+
+        await provider.SearchAsync("drive model", 3, CancellationToken.None);
+
+        Assert.NotNull(handler.RequestUri);
+        Assert.DoesNotContain(apiKey, handler.RequestUri!.OriginalString);
+        Assert.DoesNotContain("key=", handler.RequestUri.Query, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(apiKey, handler.ApiKey);
+    }
+
+    private sealed class CapturingHandler : HttpMessageHandler
+    {
+        public Uri? RequestUri { get; private set; }
+        public string? ApiKey { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestUri = request.RequestUri;
+            ApiKey = request.Headers.TryGetValues("X-Goog-Api-Key", out var values) ? values.Single() : null;
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"items\":[]}"),
+            });
+        }
     }
 
     [Fact]

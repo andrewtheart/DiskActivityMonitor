@@ -19,8 +19,7 @@ public sealed record TbwReadiness(bool CanRun, string? Reason, bool NeedsModelDo
 /// </summary>
 public sealed class TbwLookupService
 {
-    private readonly Configuration.AppConfig _config;
-    private readonly HttpClient _http;
+    private readonly Configuration.UserSettings _settings;
     private readonly Action<string>? _log;
     private readonly FoundryLocalClient _foundry;
     private readonly HardwareCapabilityDetector _detector = new();
@@ -30,24 +29,23 @@ public sealed class TbwLookupService
     private string? _resolvedModel;
     private HardwareCapabilityDetector.HardwareCapabilities _caps;
 
-    public TbwLookupService(Configuration.AppConfig config, HttpClient http, Action<string>? log = null)
+    public TbwLookupService(Configuration.UserSettings settings, Action<string>? log = null)
     {
-        _config = config;
-        _http = http;
+        _settings = settings;
         _log = log;
-        _foundry = new FoundryLocalClient(http, log);
+        _foundry = new FoundryLocalClient(log);
         _secrets = AiSecretsStore.Load();
     }
 
     /// <summary>Reloads API keys from the per-user secrets store / environment.</summary>
     public void ReloadSecrets() => _secrets = AiSecretsStore.Load();
 
-    private IWebSearchProvider SearchProvider => WebSearchProviderFactory.Create(_config.WebSearchProvider, _secrets, _http);
+    private IWebSearchProvider SearchProvider => WebSearchProviderFactory.Create(_settings.WebSearchProvider, _secrets);
 
     /// <summary>Checks whether a lookup can run and, if not, what is missing.</summary>
     public async Task<TbwReadiness> GetReadinessAsync(CancellationToken ct)
     {
-        if (!_config.EnableTbwWebLookup)
+        if (!_settings.EnableTbwWebLookup)
             return new TbwReadiness(false, "Web TBW lookup is disabled in settings.", false, null, false);
 
         var provider = SearchProvider;
@@ -63,7 +61,7 @@ public sealed class TbwLookupService
 
         _caps = _detector.Detect();
         var cached = await _foundry.ListCachedModelIdsAsync(ct).ConfigureAwait(false);
-        _resolvedModel = FoundryLocalClient.SelectCachedModel(_caps, cached, _config.TbwLookupModel);
+        _resolvedModel = FoundryLocalClient.SelectCachedModel(_caps, cached, _settings.TbwLookupModel);
 
         if (_resolvedModel is null)
         {
@@ -81,7 +79,7 @@ public sealed class TbwLookupService
         var target = FoundryLocalClient.SelectDownloadTarget(_caps);
         await _foundry.DownloadModelAsync(target, progress, ct).ConfigureAwait(false);
         var cached = await _foundry.ListCachedModelIdsAsync(ct).ConfigureAwait(false);
-        _resolvedModel = FoundryLocalClient.SelectCachedModel(_caps, cached, _config.TbwLookupModel) ?? target;
+        _resolvedModel = FoundryLocalClient.SelectCachedModel(_caps, cached, _settings.TbwLookupModel) ?? target;
     }
 
     /// <summary>

@@ -86,9 +86,7 @@ public static class AiSecretsStore
             GoogleCseId = Coalesce(secrets.GoogleCseId, null),
             SerperApiKeyProtected = Protect(secrets.SerperApiKey),
         };
-        string temp = path + ".tmp";
-        File.WriteAllText(temp, JsonSerializer.Serialize(persisted, Options));
-        File.Move(temp, path, overwrite: true);
+        AtomicFile.WriteAllText(path, JsonSerializer.Serialize(persisted, Options));
     }
 
     private static string? Coalesce(string? a, string? b) => string.IsNullOrWhiteSpace(a) ? b : a;
