@@ -166,7 +166,7 @@
             <Setter Property="BorderBrush" Value="#7A343B" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Foreground" Value="#FF9494" />
-            <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
+            <Setter Property="FontFamily" Value="Segoe UI" />
             <Setter Property="FontSize" Value="12" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Template">

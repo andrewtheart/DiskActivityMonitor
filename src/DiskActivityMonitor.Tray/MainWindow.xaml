@@ -401,8 +401,8 @@
                                                      VerticalContentAlignment="Center" ToolTip="Filter alerts by keyword"
                                                      AutomationProperties.Name="Filter alerts by keyword" />
                                             <Button x:Name="AlertSearchClearButton" Grid.Column="2"
-                                                    Style="{StaticResource ToolButton}" Content="&#xE711;"
-                                                    FontFamily="Segoe MDL2 Assets" FontSize="10" Padding="0"
+                                                    Style="{StaticResource ToolButton}" Content="&#x2715;"
+                                                    FontFamily="Segoe UI" FontSize="10" Padding="0"
                                                     Width="22" Height="22" Background="Transparent" BorderThickness="0"
                                                     Visibility="Collapsed" ToolTip="Clear alert search"
                                                     AutomationProperties.Name="Clear alert search"
@@ -460,7 +460,7 @@
                                                         <TextBlock Grid.Column="1" Text="{Binding TimeText}" VerticalAlignment="Center"
                                                                    Foreground="{StaticResource TextSecondary}" FontSize="11" />
                                                         <Button x:Name="AlertDismissButton" Grid.Column="2"
-                                                            Style="{StaticResource AlertDismissButton}" Content="&#xE711;"
+                                                            Style="{StaticResource AlertDismissButton}" Content="&#x2715;"
                                                                 Margin="6,-3,-4,-3" ToolTip="Dismiss from Alert center"
                                                                 AutomationProperties.Name="Dismiss alert"
                                                                 CommandParameter="{Binding}" Click="DismissAlert_Click" />

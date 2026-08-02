@@ -113,6 +113,10 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Assert.Equal(28, alertDismissButton.Height);
                 Assert.Equal(new Thickness(1), alertDismissButton.BorderThickness);
                 Assert.Equal(Color.FromRgb(0x3B, 0x24, 0x28), Assert.IsType<SolidColorBrush>(alertDismissButton.Background).Color);
+                Assert.Equal("\u2715", alertDismissButton.Content);
+                Assert.Equal("Segoe UI", alertDismissButton.FontFamily.Source);
+                Assert.Equal("\u2715", window.AlertSearchClearButton.Content);
+                Assert.Equal("Segoe UI", window.AlertSearchClearButton.FontFamily.Source);
                 Assert.Equal(LocalTimeDisplay.ZoneLabel(), window.TrendTimeZoneText.Text);
                 Assert.All(rows, row => Assert.EndsWith($"({LocalTimeDisplay.ZoneId()})",
                     (string)row.GetType().GetProperty("TimeText")!.GetValue(row)!));
