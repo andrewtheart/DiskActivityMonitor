@@ -169,6 +169,8 @@ function RunDirectorySecurity(Path: String; Profile: String; var ErrorText: Stri
 var
   ResultCode: Integer;
   Parameters: String;
+  ErrorFile: String;
+  HelperDetail: AnsiString;
 begin
   Result := False;
   try
@@ -178,8 +180,11 @@ begin
       GetExceptionMessage();
     Exit;
   end;
-  Parameters := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%s" -Path "%s" -Profile %s';
-  Parameters := Format(Parameters, [ExpandConstant('{tmp}\secure-directory.ps1'), Path, Profile]);
+  ErrorFile := ExpandConstant('{tmp}\dam-security-error.txt');
+  DeleteFile(ErrorFile);
+  Parameters := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%s" -Path "%s" -Profile %s -ErrorFile "%s"';
+  Parameters := Format(Parameters, [ExpandConstant('{tmp}\secure-directory.ps1'), Path, Profile, ErrorFile]);
+  ResultCode := -1;
   if (not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
       Parameters, '', SW_HIDE,
       ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
@@ -187,6 +192,8 @@ begin
     ErrorText := 'Setup could not validate or secure this directory without following ' +
       'reparse points:' + #13#10 + Path + #13#10 +
       'Security helper exit code: ' + IntToStr(ResultCode);
+    if LoadStringFromFile(ErrorFile, HelperDetail) then
+      ErrorText := ErrorText + #13#10 + #13#10 + String(HelperDetail);
     Exit;
   end;
   Result := True;

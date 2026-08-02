@@ -6,7 +6,9 @@ param(
 
     [Parameter(Mandatory = $true)]
     [ValidateSet('Validate', 'Install', 'Data')]
-    [string]$Profile
+    [string]$Profile,
+
+    [string]$ErrorFile
 )
 
 $ErrorActionPreference = 'Stop'
@@ -195,8 +197,8 @@ namespace DiskActivityMonitor.Security
                     !daclPresent || dacl == IntPtr.Zero)
                     throw Win32("Could not read the directory access descriptor");
 
-                EnablePrivilege("SeTakeOwnershipPrivilege");
-                EnablePrivilege("SeRestorePrivilege");
+                TryEnablePrivilege("SeTakeOwnershipPrivilege");
+                TryEnablePrivilege("SeRestorePrivilege");
 
                 using (SafeFileHandle ownerHandle = OpenDirectory(path, WriteOwner))
                 {
@@ -285,7 +287,7 @@ namespace DiskActivityMonitor.Security
                 left.FileIndexLow == right.FileIndexLow;
         }
 
-        private static void EnablePrivilege(string name)
+        private static bool TryEnablePrivilege(string name)
         {
             SafeFileHandle token;
             if (!OpenProcessToken(
@@ -307,7 +309,8 @@ namespace DiskActivityMonitor.Security
                     throw Win32("Could not enable privilege " + name);
                 int error = Marshal.GetLastWin32Error();
                 if (error == ErrorNotAllAssigned)
-                    throw new Win32Exception(error, "The elevated installer lacks privilege " + name);
+                    return false;
+                return true;
             }
         }
 
@@ -320,19 +323,41 @@ namespace DiskActivityMonitor.Security
 '@
 }
 
-$resolvedPath = [IO.Path]::GetFullPath($Path)
-switch ($Profile) {
-    'Validate' {
-        [DiskActivityMonitor.Security.DirectoryHandleSecurity]::Validate($resolvedPath)
+try {
+    $resolvedPath = [IO.Path]::GetFullPath($Path)
+    switch ($Profile) {
+        'Validate' {
+            [DiskActivityMonitor.Security.DirectoryHandleSecurity]::Validate($resolvedPath)
+        }
+        'Install' {
+            [DiskActivityMonitor.Security.DirectoryHandleSecurity]::Apply(
+                $resolvedPath,
+                'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;BU)')
+        }
+        'Data' {
+            [DiskActivityMonitor.Security.DirectoryHandleSecurity]::Apply(
+                $resolvedPath,
+                'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;GRGXGW;;;BU)(A;OICIIO;0x1301bf;;;BU)')
+        }
     }
-    'Install' {
-        [DiskActivityMonitor.Security.DirectoryHandleSecurity]::Apply(
-            $resolvedPath,
-            'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;BU)')
+} catch {
+    $details = [Collections.Generic.List[string]]::new()
+    $exception = $_.Exception
+    while ($null -ne $exception) {
+        $detail = "$($exception.GetType().Name): $($exception.Message)"
+        if ($exception -is [ComponentModel.Win32Exception]) {
+            $nativeMessage = [ComponentModel.Win32Exception]::new($exception.NativeErrorCode).Message
+            $detail += " (Win32 $($exception.NativeErrorCode): $nativeMessage)"
+        }
+        $details.Add($detail)
+        $exception = $exception.InnerException
     }
-    'Data' {
-        [DiskActivityMonitor.Security.DirectoryHandleSecurity]::Apply(
-            $resolvedPath,
-            'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;GRGXGW;;;BU)(A;OICIIO;0x1301bf;;;BU)')
+    $detailText = $details -join [Environment]::NewLine
+    if (-not [string]::IsNullOrWhiteSpace($ErrorFile)) {
+        [IO.File]::WriteAllText(
+            [IO.Path]::GetFullPath($ErrorFile),
+            $detailText,
+            [Text.UTF8Encoding]::new($false))
     }
+    throw $detailText
 }
