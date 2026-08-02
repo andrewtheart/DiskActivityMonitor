@@ -116,6 +116,24 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Assert.Equal(LocalTimeDisplay.ZoneLabel(), window.TrendTimeZoneText.Text);
                 Assert.All(rows, row => Assert.EndsWith($"({LocalTimeDisplay.ZoneId()})",
                     (string)row.GetType().GetProperty("TimeText")!.GetValue(row)!));
+
+                window.AlertSearchBox.Text = "ORDINARY";
+                object searchResult = Assert.Single(((IEnumerable)window.AlertList.ItemsSource).Cast<object>());
+                Assert.Equal("ordinary", searchResult.GetType().GetProperty("Title")!.GetValue(searchResult));
+                Assert.Equal(Visibility.Visible, window.AlertSearchClearButton.Visibility);
+                window.UpdateAlerts();
+                Assert.Single(((IEnumerable)window.AlertList.ItemsSource).Cast<object>());
+                window.AlertSearchBox.Text = "MESSAGE";
+                Assert.Equal(2, ((IEnumerable)window.AlertList.ItemsSource).Cast<object>().Count());
+                window.AlertSearchBox.Text = "no matching alert";
+                Assert.Empty(((IEnumerable)window.AlertList.ItemsSource).Cast<object>());
+                Assert.Equal(Visibility.Visible, window.AlertEmpty.Visibility);
+                Assert.Equal("No alerts match your search.", window.AlertEmpty.Text);
+                Invoke(window, "AlertSearchClear_Click", window.AlertSearchClearButton, new RoutedEventArgs());
+                Assert.Equal("", window.AlertSearchBox.Text);
+                Assert.Equal(2, ((IEnumerable)window.AlertList.ItemsSource).Cast<object>().Count());
+                Assert.Equal(Visibility.Collapsed, window.AlertSearchClearButton.Visibility);
+
                 foreach (object row in rows)
                     foreach (PropertyInfo property in row.GetType().GetProperties())
                         _ = property.GetValue(row);

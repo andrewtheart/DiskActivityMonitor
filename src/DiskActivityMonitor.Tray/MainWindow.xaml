@@ -383,6 +383,32 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Style="{StaticResource H2}" Text="Alert center" VerticalAlignment="Center" />
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Border Width="124" Height="28" Margin="0,0,9,0" Background="#15181B"
+                                            BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="5">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="26" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="24" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="&#xE721;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                                       Foreground="{StaticResource TextSecondary}"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       IsHitTestVisible="False" />
+                                            <TextBox x:Name="AlertSearchBox" Grid.Column="1" Background="Transparent"
+                                                     Foreground="{StaticResource TextPrimary}" CaretBrush="{StaticResource TextPrimary}"
+                                                     BorderThickness="0" Padding="0" FontSize="11.5"
+                                                     VerticalContentAlignment="Center" ToolTip="Filter alerts by keyword"
+                                                     AutomationProperties.Name="Filter alerts by keyword" />
+                                            <Button x:Name="AlertSearchClearButton" Grid.Column="2"
+                                                    Style="{StaticResource ToolButton}" Content="&#xE711;"
+                                                    FontFamily="Segoe MDL2 Assets" FontSize="10" Padding="0"
+                                                    Width="22" Height="22" Background="Transparent" BorderThickness="0"
+                                                    Visibility="Collapsed" ToolTip="Clear alert search"
+                                                    AutomationProperties.Name="Clear alert search"
+                                                    Click="AlertSearchClear_Click" />
+                                        </Grid>
+                                    </Border>
                                     <TextBlock Style="{StaticResource Caption}" Text="Last hour" VerticalAlignment="Center"
                                                Foreground="{StaticResource TextSecondary}" Margin="0,0,7,0" />
                                     <Button x:Name="ShowAllAlertsButton" Content="All alerts" Click="ShowAllAlerts_Click"

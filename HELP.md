@@ -139,6 +139,7 @@ The throughput card shows average, median, and busiest-minute MB/s for 1 hour, 2
 
 - **Top application write requests** ranks process-level logical writes for the selected time range.
 - **Alert center** shows non-dismissed alerts from the last hour.
+- **Search alerts** filters visible Alert center rows by title or message; matching is case-insensitive.
 - **All alerts** opens complete retained alert history, including dismissed records.
 
 ### Tray behavior

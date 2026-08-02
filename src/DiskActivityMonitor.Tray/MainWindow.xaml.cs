@@ -65,6 +65,11 @@ public partial class MainWindow : Window
         Visibility DismissVisibility,
         Visibility RestoreVisibility);
 
+    internal static bool AlertMatchesSearch(string title, string message, string query)
+        => string.IsNullOrWhiteSpace(query)
+            || title.Contains(query.Trim(), StringComparison.OrdinalIgnoreCase)
+            || message.Contains(query.Trim(), StringComparison.OrdinalIgnoreCase);
+
     private DiskInfo? _smartScanDisk;
     private int _smartScanControllerErrors;
     private int _smartScanGeneration;
@@ -99,6 +104,7 @@ public partial class MainWindow : Window
 
     private TimeSpan _processWindow = TimeSpan.FromHours(24);
     private TimeSpan _throughputWindow = TimeSpan.FromHours(24);
+    private IReadOnlyList<AlertRow> _alertRows = [];
 
     /// <summary>Editable view-model for one auto-suspend rule row.</summary>
     private sealed class SuspendRuleVm
@@ -135,6 +141,7 @@ public partial class MainWindow : Window
         ProcessRangeSelector.ItemsSource = ProcessRanges;
         ProcessRangeSelector.SelectedItem = ProcessRanges.First(r => r.Span == _processWindow);
         TrendTimeZoneText.Text = LocalTimeDisplay.ZoneLabel();
+        AlertSearchBox.TextChanged += AlertSearch_TextChanged;
         SuspendRuleList.ItemsSource = _suspendRules;
         _suspendRules.CollectionChanged += (_, _) =>
             SuspendRuleEmpty.Visibility = _suspendRules.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -611,7 +618,7 @@ public partial class MainWindow : Window
 
         // The alert engine re-raises the same rule every cooldown period while a condition stays
         // tripped, so collapse repeats: show one row per rule (its latest occurrence) with a count.
-        var rows = alerts
+        _alertRows = alerts
             .GroupBy(a => a.RuleKey)
             .OrderByDescending(g => g.Max(a => a.Id))
             .Select(g =>
@@ -643,8 +650,32 @@ public partial class MainWindow : Window
             })
             .ToList();
 
-        AlertList.ItemsSource = rows;
-        AlertEmpty.Visibility = rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        ApplyAlertFilter();
+    }
+
+    private void AlertSearch_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+        => ApplyAlertFilter();
+
+    private void AlertSearchClear_Click(object sender, RoutedEventArgs e)
+    {
+        AlertSearchBox.Clear();
+        AlertSearchBox.Focus();
+    }
+
+    private void ApplyAlertFilter()
+    {
+        string query = AlertSearchBox.Text;
+        var visibleRows = _alertRows
+            .Where(row => AlertMatchesSearch(row.Title, row.Message, query))
+            .ToList();
+        bool hasQuery = !string.IsNullOrWhiteSpace(query);
+
+        AlertList.ItemsSource = visibleRows;
+        AlertSearchClearButton.Visibility = hasQuery ? Visibility.Visible : Visibility.Collapsed;
+        AlertEmpty.Text = hasQuery
+            ? "No alerts match your search."
+            : "No visible alerts in the last hour. Dismissed alerts remain available under All alerts.";
+        AlertEmpty.Visibility = visibleRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     internal void UpdateAlertHistory()
