@@ -36,6 +36,7 @@
   <ItemGroup>
     <Content Include="HELP.html" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\..\HELP.md" Link="HELP.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Resource Include="..\..\assets\app-icon.png" Link="Assets\app-icon.png" />
   </ItemGroup>
 
   <ItemGroup>
