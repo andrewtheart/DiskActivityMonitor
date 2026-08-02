@@ -66,10 +66,15 @@
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <StackPanel>
-                <TextBlock Text="Disk Activity Monitor" Style="{StaticResource H1}" />
-                <TextBlock x:Name="SubtitleText" Style="{StaticResource Caption}"
-                           Text="Tracking SSD write volume to protect drive endurance" Margin="0,2,0,0" />
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <Image x:Name="HeaderAppIcon" Width="42" Height="42" Margin="0,0,11,0"
+                       Source="/DiskActivityMonitor.Tray;component/Assets/app-icon.png"
+                       Stretch="Uniform" AutomationProperties.Name="Disk Activity Monitor icon" />
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Disk Activity Monitor" Style="{StaticResource H1}" />
+                    <TextBlock x:Name="SubtitleText" Style="{StaticResource Caption}"
+                               Text="Tracking SSD write volume to protect drive endurance" Margin="0,2,0,0" />
+                </StackPanel>
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                 <TextBlock Text="Disk" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,8,0" />

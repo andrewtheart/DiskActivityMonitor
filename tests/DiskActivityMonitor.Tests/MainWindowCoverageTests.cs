@@ -68,6 +68,15 @@ public sealed class MainWindowCoverageTests : IDisposable
             window.DiskSelector.SelectedItem = hddChoice;
             try
             {
+                Assert.NotNull(window.HeaderAppIcon.Source);
+                Assert.Equal(42, window.HeaderAppIcon.Width);
+                Assert.Equal(42, window.HeaderAppIcon.Height);
+                var headerPanel = Assert.IsType<StackPanel>(window.HeaderAppIcon.Parent);
+                Assert.Equal(Orientation.Horizontal, headerPanel.Orientation);
+                Assert.Same(window.HeaderAppIcon, headerPanel.Children[0]);
+                var titlePanel = Assert.IsType<StackPanel>(headerPanel.Children[1]);
+                Assert.Equal("Disk Activity Monitor", Assert.IsType<TextBlock>(titlePanel.Children[0]).Text);
+
                 Invoke(window, "SaveRules_Click", window, new RoutedEventArgs());
                 Assert.False(userSettings.Current.EnableNotifications);
 
