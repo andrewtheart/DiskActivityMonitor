@@ -261,6 +261,7 @@
                             <StackPanel>
                                 <TextBlock x:Name="TrendTitle" Style="{StaticResource H2}" Text="Write volume per hour" />
                                 <TextBlock Style="{StaticResource Caption}" Text="Bars show bytes written to the device in each bucket" Margin="0,2,0,0" />
+                                <TextBlock x:Name="TrendTimeZoneText" Style="{StaticResource Caption}" Margin="0,2,0,0" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal">
                                 <ToggleButton x:Name="Btn24h" Style="{StaticResource ToggleTool}" Content="24h" Click="Range_Click" />

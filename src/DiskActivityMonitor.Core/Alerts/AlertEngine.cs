@@ -176,7 +176,7 @@ public sealed class AlertEngine
             string mapping = disk is null
                 ? "The physical disk is not currently present, so no volume mapping is available."
                 : $"That device number currently maps to {disk.DisplayName}.";
-            string latest = error.LatestUtc.ToLocalTime().ToString("MMM d, yyyy HH:mm");
+            string latest = LocalTimeDisplay.FormatUtcWithZone(error.LatestUtc, "MMM d, yyyy HH:mm");
             string countWord = error.Count == 1 ? "error" : "errors";
 
             Emit(raised, cooldown, nowUtc,

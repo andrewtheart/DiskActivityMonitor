@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using DiskActivityMonitor.Core;
 using DiskActivityMonitor.Core.Ai;
 using DiskActivityMonitor.Core.Collection;
 using DiskActivityMonitor.Core.Configuration;
@@ -106,6 +107,9 @@ public sealed class MainWindowCoverageTests : IDisposable
                 window.UpdateAlerts();
                 var rows = ((IEnumerable)window.AlertList.ItemsSource).Cast<object>().ToList();
                 Assert.Equal(2, rows.Count);
+                Assert.Equal(LocalTimeDisplay.ZoneLabel(), window.TrendTimeZoneText.Text);
+                Assert.All(rows, row => Assert.EndsWith($"({LocalTimeDisplay.ZoneId()})",
+                    (string)row.GetType().GetProperty("TimeText")!.GetValue(row)!));
                 foreach (object row in rows)
                     foreach (PropertyInfo property in row.GetType().GetProperties())
                         _ = property.GetValue(row);
@@ -119,6 +123,8 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Assert.Equal(Visibility.Visible, window.AlertHistoryOverlay.Visibility);
                 var historyRows = ((IEnumerable)window.AlertHistoryList.ItemsSource).Cast<object>().ToList();
                 Assert.Equal(3, historyRows.Count);
+                Assert.All(historyRows, row => Assert.EndsWith($"({LocalTimeDisplay.ZoneId()})",
+                    (string)row.GetType().GetProperty("TimeText")!.GetValue(row)!));
                 foreach (object row in historyRows)
                     foreach (PropertyInfo property in row.GetType().GetProperties())
                         _ = property.GetValue(row);
@@ -168,6 +174,7 @@ public sealed class MainWindowCoverageTests : IDisposable
                         temperature: grade == SmartScanGrade.Critical ? 60 : grade == SmartScanGrade.Healthy ? 50 : null,
                         telemetry: grade != SmartScanGrade.Limited));
                     Assert.Equal(Visibility.Visible, window.SmartScanResultPanel.Visibility);
+                    Assert.EndsWith($"({LocalTimeDisplay.ZoneId()})", window.SmartScanTimeValue.Text);
                 }
                 window.RenderSmartScanResult(Result(SmartScanGrade.Healthy, 0, 49, true, maximum: 70));
                 window.RenderSmartScanFailure(Disk(), "boom");

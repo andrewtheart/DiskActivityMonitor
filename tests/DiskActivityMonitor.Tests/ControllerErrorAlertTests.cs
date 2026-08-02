@@ -1,3 +1,4 @@
+using DiskActivityMonitor.Core;
 using DiskActivityMonitor.Core.Alerts;
 using DiskActivityMonitor.Core.Configuration;
 using DiskActivityMonitor.Core.Data;
@@ -63,6 +64,7 @@ public sealed class ControllerErrorAlertTests : IDisposable
         Assert.Contains("3 Disk event 11 controller errors", alert.Message);
         Assert.Contains(@"\Device\Harddisk2\DR2", alert.Message);
         Assert.Contains("Healthy/Online", alert.Message);
+        Assert.Contains($"({LocalTimeDisplay.ZoneId()})", alert.Message);
         Assert.Equal(3, alert.Value);
         Assert.Equal(3, alert.Threshold);
     }

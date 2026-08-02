@@ -133,16 +133,16 @@ internal static class CliRunner
         if (File.Exists(Paths.DatabasePath))
         {
             var fi = new FileInfo(Paths.DatabasePath);
-            Console.WriteLine($"  Database          : {fi.Length / 1024.0 / 1024.0:0.0} MB, updated {fi.LastWriteTime:g}");
+            Console.WriteLine($"  Database          : {fi.Length / 1024.0 / 1024.0:0.0} MB, updated {fi.LastWriteTime:g} ({LocalTimeDisplay.ZoneId()})");
         }
         else
         {
             Console.WriteLine("  Database          : (none yet)");
         }
-        Console.WriteLine($"  Monitoring since  : {(earliest == default ? "(no samples yet)" : earliest.ToLocalTime().ToString("g"))}");
+        Console.WriteLine($"  Monitoring since  : {(earliest == default ? "(no samples yet)" : LocalTimeDisplay.FormatUtcWithZone(earliest, "g"))}");
         Console.WriteLine($"  Disks             : {disks.Count} ({disks.Count(d => d.IsSsd)} SSD)");
         Console.WriteLine($"  Unacked alerts    : {unacked}");
-        Console.WriteLine($"  Snoozes           : {(globalUntil is null ? "no global" : $"GLOBAL until {globalUntil.Value.ToLocalTime():g}")}, {procSnoozes} process(es)");
+        Console.WriteLine($"  Snoozes           : {(globalUntil is null ? "no global" : $"GLOBAL until {LocalTimeDisplay.FormatUtcWithZone(globalUntil.Value, "g")}")}, {procSnoozes} process(es)");
         return 0;
     }
 
@@ -248,6 +248,7 @@ internal static class CliRunner
         var buckets = Trends.Build(hourly, bucket, count, nowLocal);
 
         Out.Header($"{disk.DisplayName} — writes per {bucket.ToString().ToLowerInvariant()} (last {count})");
+        Out.Dim(LocalTimeDisplay.ZoneLabel());
         double max = Math.Max(1, buckets.Max(b => (double)b.WriteBytes));
         foreach (var b in buckets)
         {
@@ -296,7 +297,7 @@ internal static class CliRunner
                 string readPart = disk.LifetimeBytesRead is long lifeR ? $", {ByteFormat.Humanize(lifeR)} read" : "";
                 Console.WriteLine($"  Lifetime (drive)  : {ByteFormat.Humanize(lifeW)} written{readPart}  ({pctText} of TBW)");
             }
-            Console.WriteLine($"  Written (tracked) : {ByteFormat.Humanize(writtenObserved)}  ({consumedPct:0.###}% of TBW since {(earliest is null ? "n/a" : earliest.Value.ToLocalTime().ToString("d"))})");
+            Console.WriteLine($"  Written (tracked) : {ByteFormat.Humanize(writtenObserved)}  ({consumedPct:0.###}% of TBW since {(earliest is null ? "n/a" : LocalTimeDisplay.FormatUtcWithZone(earliest.Value, "d"))})");
 
             if (earliest is not null)
             {
@@ -329,7 +330,7 @@ internal static class CliRunner
         {
             var prev = Console.ForegroundColor;
             Console.ForegroundColor = SevColor(al.Severity);
-            Console.Write($"  #{al.Id,-4} {al.TimestampUtc.ToLocalTime():MMM d HH:mm}  {SevText(al.Severity),-4} ");
+            Console.Write($"  #{al.Id,-4} {LocalTimeDisplay.FormatUtcWithZone(al.TimestampUtc, "MMM d HH:mm")}  {SevText(al.Severity),-4} ");
             Console.ForegroundColor = prev;
             Console.WriteLine($"{(al.Acknowledged ? "[ack] " : "")}{al.Title}");
             if (full) Out.Dim($"        {al.Message}");
@@ -365,11 +366,11 @@ internal static class CliRunner
             case "list":
                 var g = repo.GetGlobalSnoozeUntil(nowUtc);
                 Out.Header("Active snoozes");
-                Console.WriteLine($"  Global : {(g is null ? "none" : $"all alerts until {g.Value.ToLocalTime():g}")}");
+                Console.WriteLine($"  Global : {(g is null ? "none" : $"all alerts until {LocalTimeDisplay.FormatUtcWithZone(g.Value, "g")}")}");
                 var ps = repo.GetProcessSnoozes(nowUtc);
                 if (ps.Count == 0) Console.WriteLine("  Process: none");
                 else foreach (var (name, until) in ps)
-                    Console.WriteLine($"  Process: {name,-24} until {until.ToLocalTime():g}");
+                    Console.WriteLine($"  Process: {name,-24} until {LocalTimeDisplay.FormatUtcWithZone(until, "g")}");
                 return 0;
 
             case "process" or "proc":
@@ -379,7 +380,7 @@ internal static class CliRunner
                 if (name is null || dur is null) { Out.Error("Usage: dam snooze process <name> <duration>  (e.g. 30m, 1h, 1d, 1w)"); return 2; }
                 repo.SnoozeProcess(name, nowUtc + dur.Value);
                 repo.AcknowledgeProcessAlerts(name);
-                Console.WriteLine($"Snoozed '{name}' for {Duration.Humanize(dur.Value)} (until {(DateTime.Now + dur.Value):g}).");
+                Console.WriteLine($"Snoozed '{name}' for {Duration.Humanize(dur.Value)} (until {LocalTimeDisplay.FormatUtcWithZone(nowUtc + dur.Value, "g")}).");
                 return 0;
             }
 
@@ -389,7 +390,7 @@ internal static class CliRunner
                 if (dur is null) { Out.Error("Usage: dam snooze all <duration>  (e.g. 30m, 1h, 1d, 1w)"); return 2; }
                 repo.SnoozeAllAlerts(nowUtc + dur.Value);
                 repo.AcknowledgeAlerts();
-                Console.WriteLine($"Snoozed ALL alerts for {Duration.Humanize(dur.Value)} (until {(DateTime.Now + dur.Value):g}).");
+                Console.WriteLine($"Snoozed ALL alerts for {Duration.Humanize(dur.Value)} (until {LocalTimeDisplay.FormatUtcWithZone(nowUtc + dur.Value, "g")}).");
                 return 0;
             }
 
@@ -487,7 +488,7 @@ internal static class CliRunner
             {
                 Console.Clear();
                 var nowUtc = DateTime.UtcNow;
-                Out.Header($"Disk Activity Monitor — live  ({DateTime.Now:HH:mm:ss}, every {interval}s, Ctrl+C to exit)");
+                Out.Header($"Disk Activity Monitor — live  ({LocalTimeDisplay.FormatUtcWithZone(nowUtc, "HH:mm:ss")}, every {interval}s, Ctrl+C to exit)");
                 Console.WriteLine();
 
                 var disk = repo.GetDisks().FirstOrDefault(d => d.IsSsd) ?? repo.GetDisks().FirstOrDefault();

@@ -134,6 +134,7 @@ public partial class MainWindow : Window
         TpBtn24h.IsChecked = true;
         ProcessRangeSelector.ItemsSource = ProcessRanges;
         ProcessRangeSelector.SelectedItem = ProcessRanges.First(r => r.Span == _processWindow);
+        TrendTimeZoneText.Text = LocalTimeDisplay.ZoneLabel();
         SuspendRuleList.ItemsSource = _suspendRules;
         _suspendRules.CollectionChanged += (_, _) =>
             SuspendRuleEmpty.Visibility = _suspendRules.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -540,7 +541,7 @@ public partial class MainWindow : Window
         }
         string sinceLine = earliest is null
             ? "No history recorded yet."
-            : $"Recorded by this app since {earliest.Value.ToLocalTime():MMM d}: {ByteFormat.Humanize(observedBytes)} written.";
+            : $"Recorded by this app since {LocalTimeDisplay.FormatUtcWithZone(earliest.Value, "MMM d")}: {ByteFormat.Humanize(observedBytes)} written.";
         EnduranceConsumedText.Text = lifeLine + sinceLine;
     }
 
@@ -617,7 +618,7 @@ public partial class MainWindow : Window
             {
                 var latest = g.OrderByDescending(a => a.Id).First();
                 int count = g.Count();
-                var time = latest.TimestampUtc.ToLocalTime().ToString("MMM d, HH:mm", CultureInfo.CurrentCulture);
+                var time = LocalTimeDisplay.FormatUtc(latest.TimestampUtc, "MMM d, HH:mm");
                 const string controllerPrefix = "disk-controller:";
                 bool canScan = latest.RuleKey.StartsWith(controllerPrefix, StringComparison.OrdinalIgnoreCase);
                 string? diskId = canScan ? latest.RuleKey[controllerPrefix.Length..] : null;
@@ -627,7 +628,7 @@ public partial class MainWindow : Window
                 return new AlertRow(
                     latest.Title,
                     latest.Message,
-                    count > 1 ? $"{time}  \u00b7  \u00d7{count} since {g.Min(a => a.TimestampUtc).ToLocalTime():HH:mm}" : time,
+                    $"{(count > 1 ? $"{time}  \u00b7  \u00d7{count} since {LocalTimeDisplay.FormatUtc(g.Min(a => a.TimestampUtc), "HH:mm")}" : time)} ({LocalTimeDisplay.ZoneId()})",
                     latest.Severity switch
                     {
                         AlertSeverity.Critical => CriticalBrush,
@@ -653,7 +654,7 @@ public partial class MainWindow : Window
             a.Id,
             a.Title,
             a.Message,
-            a.TimestampUtc.ToLocalTime().ToString("MMM d, yyyy  HH:mm", CultureInfo.CurrentCulture),
+            LocalTimeDisplay.FormatUtcWithZone(a.TimestampUtc, "MMM d, yyyy  HH:mm"),
             a.Severity switch
             {
                 AlertSeverity.Critical => CriticalBrush,
@@ -807,7 +808,7 @@ public partial class MainWindow : Window
         SmartScanSerialValue.Text = BlankAsDash(result.SerialNumber);
         SmartScanPathValue.Text = result.DevicePath;
         SmartScanLifetimeValue.Text = FormatLifetime(result.LifetimeBytesWritten, result.LifetimeBytesRead);
-        SmartScanTimeValue.Text = result.ScannedUtc.ToLocalTime().ToString("HH:mm:ss", CultureInfo.CurrentCulture);
+        SmartScanTimeValue.Text = LocalTimeDisplay.FormatUtcWithZone(result.ScannedUtc, "HH:mm:ss");
         SmartScanFindings.ItemsSource = result.Findings;
 
         SmartScanProgressPanel.Visibility = Visibility.Collapsed;
@@ -1002,7 +1003,7 @@ public partial class MainWindow : Window
     private void RefreshSuspended()
     {
         var rows = _repo.GetSuspendedProcessStates()
-            .Select(s => new SuspendedRow(s.Name, $"{s.Name}  \u00b7  suspended {s.SuspendedUtc.ToLocalTime():HH:mm}"))
+            .Select(s => new SuspendedRow(s.Name, $"{s.Name}  \u00b7  suspended {LocalTimeDisplay.FormatUtcWithZone(s.SuspendedUtc, "HH:mm")}"))
             .ToList();
         SuspendedList.ItemsSource = rows;
         SuspendedHeader.Visibility = rows.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
