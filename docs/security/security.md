@@ -184,7 +184,7 @@ The helper then:
 2. Requires the object to be a directory.
 3. Rejects any object carrying `FILE_ATTRIBUTE_REPARSE_POINT`.
 4. Captures volume serial number and file index as the directory identity.
-5. Enables only the ownership/restore privileges needed for the operation.
+5. Attempts to enable ownership/restore privileges when the token exposes them.
 6. Applies trusted ownership through an open handle with `SetSecurityInfo`.
 7. Opens the DACL handle while the owner handle remains open.
 8. Compares both handles' volume/file identities.
@@ -212,7 +212,11 @@ Before copying service code, setup:
 5. Optionally removes selected settings.
 6. Copies binaries and registers the service.
 
-A security-helper failure aborts installation instead of continuing with weak permissions.
+A token may legitimately omit `SeTakeOwnershipPrivilege` or `SeRestorePrivilege` even when its
+directory access grants the required owner and DACL rights. Missing optional token privileges do
+not abort setup by themselves. The handle-based owner and protected-DACL writes remain mandatory,
+and any failure still aborts installation instead of continuing with weak permissions. The setup
+dialog includes the helper's nested exception and native Win32 error when available.
 
 Relevant implementation:
 
