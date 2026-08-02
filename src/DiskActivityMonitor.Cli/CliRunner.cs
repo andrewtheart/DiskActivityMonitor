@@ -275,16 +275,16 @@ internal static class CliRunner
             double tbwLow = cfg.EffectiveTbw(disk.DiskId);
             double? tbwHigh = cfg.EffectiveTbwUpper(disk.DiskId);
             bool ranged = tbwHigh.HasValue;
+            bool estimatedTbw = !cfg.DiskTbwRatings.ContainsKey(disk.DiskId);
             double tbwLowBytes = tbwLow * 1e12;
             double tbwHighBytes = (tbwHigh ?? tbwLow) * 1e12;
-            string tbwLabel = ranged ? $"{tbwLow:0.#}-{tbwHigh:0.#} TB" : $"{tbwLow:0.#} TB";
+            string tbwLabel = ranged ? $"{tbwLow:0.#} to {tbwHigh:0.#} TBW" : $"{tbwLow:0.#} TBW";
             var earliest = repo.GetEarliestSample(disk.DiskId);
             long writtenObserved = earliest is null ? 0 : repo.GetDiskTotals(disk.DiskId, earliest.Value, nowUtc).Write;
-            double consumedPct = tbwLowBytes > 0 ? writtenObserved / tbwLowBytes * 100 : 0;
             long consumed = disk.LifetimeBytesWritten ?? writtenObserved;
 
-            Console.WriteLine($"  TBW rating        : {tbwLabel}");
-            string usedPct = ranged ? $"~{consumed / tbwHighBytes * 100:0.#}-{consumed / tbwLowBytes * 100:0.#}%" : $"~{consumed / tbwLowBytes * 100:0.#}%";
+            Console.WriteLine($"  {(estimatedTbw ? "TBW estimate" : "TBW rating"),-18}: {tbwLabel}");
+            string usedPct = ranged ? $"~{consumed / tbwHighBytes * 100:0.#}% to {consumed / tbwLowBytes * 100:0.#}%" : $"~{consumed / tbwLowBytes * 100:0.#}%";
             string wearText = disk.WearPercent is int w
                 ? $"{w}% used"
                 : disk.LifetimeBytesWritten is not null && tbwLowBytes > 0
@@ -297,7 +297,10 @@ internal static class CliRunner
                 string readPart = disk.LifetimeBytesRead is long lifeR ? $", {ByteFormat.Humanize(lifeR)} read" : "";
                 Console.WriteLine($"  Lifetime (drive)  : {ByteFormat.Humanize(lifeW)} written{readPart}  ({pctText} of TBW)");
             }
-            Console.WriteLine($"  Written (tracked) : {ByteFormat.Humanize(writtenObserved)}  ({consumedPct:0.###}% of TBW since {(earliest is null ? "n/a" : LocalTimeDisplay.FormatUtcWithZone(earliest.Value, "d"))})");
+            string trackedPct = ranged
+                ? $"{writtenObserved / tbwHighBytes * 100:0.###}% to {writtenObserved / tbwLowBytes * 100:0.###}%"
+                : $"{writtenObserved / tbwLowBytes * 100:0.###}%";
+            Console.WriteLine($"  Written (tracked) : {ByteFormat.Humanize(writtenObserved)}  ({trackedPct} of TBW since {(earliest is null ? "n/a" : LocalTimeDisplay.FormatUtcWithZone(earliest.Value, "d"))})");
 
             if (earliest is not null)
             {

@@ -57,6 +57,23 @@ public class ConfigStoreTests : IDisposable
     }
 
     [Fact]
+    public void Constructor_PreviousUnknownTbwDefault_MigratesToEstimateRange()
+    {
+        File.WriteAllText(_configPath, """
+            {
+              "defaultSsdTbw": 750,
+              "diskTbwRatings": { "known": 1200 }
+            }
+            """);
+
+        using var store = new ConfigStore(_configPath);
+
+        Assert.Equal(150, store.Current.DefaultSsdTbw);
+        Assert.Equal(600, store.Current.DefaultSsdTbwUpper);
+        Assert.Equal(1200, store.Current.DiskTbwRatings["known"]);
+    }
+
+    [Fact]
     public void Reload_CorruptFile_RetainsLastGoodConfig()
     {
         using var store = new ConfigStore(_configPath);

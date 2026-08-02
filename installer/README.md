@@ -23,8 +23,8 @@ and ACLs through no-follow directory handles that reject reparse points.
 When existing machine settings or current-account preferences are found, setup asks whether to
 reuse them. Retained values are combined with defaults for settings introduced by the new
 version. Choosing fresh settings removes machine `config.json` and the current account's
-`user-settings.json`; monitoring history and DPAPI-protected API keys remain. The packaged
-uninstaller offers the same settings choice.
+`user-settings.json` and DPAPI-protected `ai-secrets.json`; monitoring history remains. The
+packaged uninstaller offers the same settings choice.
 
 ## Building locally
 

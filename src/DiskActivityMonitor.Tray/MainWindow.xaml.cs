@@ -4,8 +4,11 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Net;
+using System.Text.Encodings.Web;
 using System.Text.RegularExpressions;
+using System.Text.Json;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using DiskActivityMonitor.Core;
@@ -33,8 +36,15 @@ public partial class MainWindow : Window
     // Rated-TBW web lookup (on-device Foundry Local model + web search).
     private TbwLookupService? _tbwLookup;
     private CancellationTokenSource? _tbwCts;
+    private string? _loadedTbwDiskId;
+    private double? _loadedTbwLower;
+    private double? _loadedTbwUpper;
+    private bool _loadedTbwHadOverride;
     private bool _tbwLookupForceRequested;
+    private TbwLookupDiagnostics? _tbwLookupDiagnostics;
     internal Func<IProgress<int>?, CancellationToken, Task> TbwModelDownloader = null!;
+    internal Func<IProgress<string>?, CancellationToken, Task> FoundryLocalInstaller = null!;
+    internal Func<DiskInfo, Task> TbwPostInstallLookup = null!;
     internal Action<string> TbwSetupUrlLauncher { get; set; } = url =>
         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
     internal Action<AiSecrets> TbwSetupSecretsSaver { get; set; } = AiSecretsStore.Save;
@@ -131,6 +141,11 @@ public partial class MainWindow : Window
         _config = config;
         _userSettings = userSettings;
         TbwModelDownloader = (progress, ct) => TbwLookup.DownloadModelAsync(progress, ct);
+        FoundryLocalInstaller = FoundryLocalClient.InstallAsync;
+        TbwPostInstallLookup = disk => StartTbwLookupAsync(
+            disk,
+            force: _tbwLookupForceRequested,
+            userInitiated: true);
         InitializeComponent();
 
         // Taskbar/window icon uses the exact same glyph as the system-tray icon.
@@ -437,9 +452,11 @@ public partial class MainWindow : Window
         double tbwLow = cfg.EffectiveTbw(disk.DiskId);
         double? tbwHigh = cfg.EffectiveTbwUpper(disk.DiskId);
         bool ranged = tbwHigh.HasValue;
+        bool estimatedTbw = !cfg.DiskTbwRatings.ContainsKey(disk.DiskId);
         double tbwLowBytes = tbwLow * 1_000_000_000_000d;            // TBW specs use decimal terabytes.
         double tbwHighBytes = (tbwHigh ?? tbwLow) * 1_000_000_000_000d;
-        string tbwLabel = ranged ? $"{tbwLow:0.#}\u2013{tbwHigh:0.#} TBW" : $"{tbwLow:0.#} TBW";
+        string tbwLabel = ranged ? $"{tbwLow:0.#} to {tbwHigh:0.#} TBW" : $"{tbwLow:0.#} TBW";
+        string tbwBasisLabel = estimatedTbw ? $"{tbwLabel} default estimate" : tbwLabel;
 
         // Prefer the drive's own lifetime-written total (from SMART) over what we've observed.
         long? lifeWritten = disk.LifetimeBytesWritten;
@@ -462,17 +479,17 @@ public partial class MainWindow : Window
         if (avgPerDay > 0 && !double.IsNaN(yearsLow))
         {
             WearMetric.Text = yearsText;
-            WearSub.Text = $"to {tbwLabel} at {ByteFormat.Humanize(avgPerDay)}/day";
+            WearSub.Text = $"using {tbwBasisLabel} at {ByteFormat.Humanize(avgPerDay)}/day";
         }
         else
         {
             WearMetric.Text = "-";
-            WearSub.Text = $"Rated {tbwLabel}. Collecting data to project lifespan.";
+            WearSub.Text = $"Using {tbwBasisLabel}. Collecting data to project lifespan.";
         }
 
         // Endurance panel.
         EnduranceDiskText.Text = disk.DisplayName;
-        EnduranceRatedText.Text = $"{tbwLabel} rated";
+        EnduranceRatedText.Text = estimatedTbw ? $"{tbwLabel} estimated" : $"{tbwLabel} rated";
 
         // Headline 1: precise lifetime writes / configured TBW when available. Drive SMART wear is
         // typically reported only as a whole percentage, so retain it as supporting context rather
@@ -481,14 +498,14 @@ public partial class MainWindow : Window
         {
             double fill = Math.Clamp(pctHigh, 0, 100);
             SmartWearValue.Text = ranged
-                ? $"~{FormatPercent(pctLow)}\u2013{FormatPercent(pctHigh)}"
+                ? $"~{FormatPercent(pctLow)} to {FormatPercent(pctHigh)}"
                 : $"~{FormatPercent(pctHigh)}";
             SmartWearFillCol.Width = new GridLength(fill, GridUnitType.Star);
             SmartWearRestCol.Width = new GridLength(100 - fill, GridUnitType.Star);
             string smartContext = disk.WearPercent is int wear
                 ? $"; drive SMART reports {wear}% used (whole-percent precision)"
                 : "; this drive reports no SMART wear attribute";
-            SmartWearText.Text = $"estimated from lifetime writes \u00f7 {tbwLabel}{smartContext}";
+            SmartWearText.Text = $"estimated from lifetime writes \u00f7 {tbwBasisLabel}{smartContext}";
         }
         else if (disk.WearPercent is int wear)
         {
@@ -524,7 +541,7 @@ public partial class MainWindow : Window
         {
             EnduranceProjValue.Text = yearsText;
             EnduranceProjSub.Text = ranged
-                ? $"reaches {tbwLabel} at {ByteFormat.Humanize(avgPerDay)}/day"
+                ? $"reaches {tbwBasisLabel} at {ByteFormat.Humanize(avgPerDay)}/day"
                 : $"reaches {tbwLabel} about {DateTime.Now.AddDays(Math.Min(yearsLow, 5000) * 365.0):MMM yyyy}, at {ByteFormat.Humanize(avgPerDay)}/day";
         }
         else
@@ -544,7 +561,7 @@ public partial class MainWindow : Window
         {
             string readPart = disk.LifetimeBytesRead is long lr ? $", {ByteFormat.Humanize(lr)} read" : "";
             string pctText = ranged ? $"{FormatPercent(pctLow)} to {FormatPercent(pctHigh)}" : FormatPercent(pctHigh);
-            lifeLine = $"Lifetime (from the drive): {ByteFormat.Humanize(lw)} written{readPart} \u2014 {pctText} of {tbwLabel}. ";
+            lifeLine = $"Lifetime (from the drive): {ByteFormat.Humanize(lw)} written{readPart} \u2014 {pctText} of {tbwBasisLabel}. ";
         }
         string sinceLine = earliest is null
             ? "No history recorded yet."
@@ -913,6 +930,8 @@ public partial class MainWindow : Window
         // Web TBW lookup settings.
         ChkTbwLookup.IsChecked = userSettings.EnableTbwWebLookup;
         SelectProviderItem(userSettings.WebSearchProvider);
+        RadTbwLookupFoundry.IsChecked = userSettings.TbwLookupMethod == TbwLookupMethod.FoundryLocal;
+        RadTbwLookupSerperOnly.IsChecked = userSettings.TbwLookupMethod == TbwLookupMethod.SerperOnly;
         var secrets = AiSecretsStore.Load();
         TxtGoogleKey.Text = secrets.GoogleApiKey ?? "";
         TxtGoogleCx.Text = secrets.GoogleCseId ?? "";
@@ -924,12 +943,54 @@ public partial class MainWindow : Window
     private void LoadTbwField()
     {
         var disk = SelectedDisk;
-        if (disk is null) { TxtTbw.Text = ""; TxtTbwUpper.Text = ""; return; }
+        if (disk is null)
+        {
+            TxtTbw.Text = "";
+            TxtTbwUpper.Text = "";
+            _loadedTbwDiskId = null;
+            _loadedTbwLower = null;
+            _loadedTbwUpper = null;
+            _loadedTbwHadOverride = false;
+            RadTbwRange.IsChecked = true;
+            return;
+        }
+        var cfg = _config.Current;
         var label = string.IsNullOrWhiteSpace(disk.Volumes) ? $"Disk {disk.DiskId}" : disk.Volumes.Trim();
-        TbwLabel.Text = $"TBW rating for {label} (TB)";
-        TxtTbw.Text = _config.Current.EffectiveTbw(disk.DiskId).ToString(CultureInfo.InvariantCulture);
-        var upper = _config.Current.EffectiveTbwUpper(disk.DiskId);
+        TbwLabel.Text = $"TBW setting for {label}";
+        double lower = cfg.EffectiveTbw(disk.DiskId);
+        var upper = cfg.EffectiveTbwUpper(disk.DiskId);
+        TxtTbw.Text = lower.ToString(CultureInfo.InvariantCulture);
         TxtTbwUpper.Text = upper.HasValue ? upper.Value.ToString(CultureInfo.InvariantCulture) : "";
+        _loadedTbwDiskId = disk.DiskId;
+        _loadedTbwLower = lower;
+        _loadedTbwUpper = upper;
+        _loadedTbwHadOverride = cfg.DiskTbwRatings.ContainsKey(disk.DiskId);
+        RadTbwRange.IsChecked = upper.HasValue;
+        RadTbwSingle.IsChecked = !upper.HasValue;
+    }
+
+    internal void TbwMode_Checked(object sender, RoutedEventArgs e)
+    {
+        if (TbwUpperPanel is null || TbwLowerLabel is null)
+            return;
+
+        bool range = RadTbwRange.IsChecked == true;
+        TbwUpperPanel.Visibility = range ? Visibility.Visible : Visibility.Collapsed;
+        TbwLowerLabel.Text = range ? "Minimum TBW (TB)" : "TBW rating (TB)";
+    }
+
+    internal void TbwLookupMethod_Checked(object sender, RoutedEventArgs e)
+    {
+        if (TbwProviderSelector is null || TbwLookupMethodHint is null)
+            return;
+
+        bool serperOnly = RadTbwLookupSerperOnly.IsChecked == true;
+        if (serperOnly)
+            SelectProviderItem("serper");
+        TbwProviderSelector.IsEnabled = !serperOnly;
+        TbwLookupMethodHint.Text = serperOnly
+            ? "Uses only explicit, capacity-matched values in Serper evidence. Foundry Local is not installed or started."
+            : "Foundry verifies search evidence with an on-device model before candidates are shown.";
     }
 
     private void SelectProviderItem(string provider)
@@ -948,9 +1009,37 @@ public partial class MainWindow : Window
         bool enableNotifications = ChkNotify.IsChecked == true;
         var disk = SelectedDisk;
         bool enableTbwWebLookup = ChkTbwLookup.IsChecked == true;
+        var lookupMethod = RadTbwLookupSerperOnly.IsChecked == true
+            ? TbwLookupMethod.SerperOnly
+            : TbwLookupMethod.FoundryLocal;
         string? webSearchProvider = null;
         if ((TbwProviderSelector.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString() is string prov && prov.Length > 0)
             webSearchProvider = prov;
+        if (lookupMethod == TbwLookupMethod.SerperOnly)
+            webSearchProvider = "serper";
+
+        double? tbwLower = null;
+        double? tbwUpper = null;
+        bool useTbwRange = RadTbwRange.IsChecked == true;
+        if (disk is not null)
+        {
+            if (!double.TryParse(TxtTbw.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double lower) || lower <= 0)
+            {
+                SaveStatus.Text = useTbwRange ? "Enter a minimum TBW greater than 0." : "Enter a TBW rating greater than 0.";
+                return;
+            }
+            tbwLower = lower;
+
+            if (useTbwRange &&
+                (!double.TryParse(TxtTbwUpper.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double upper) || upper <= lower))
+            {
+                SaveStatus.Text = "Maximum TBW must be greater than minimum TBW.";
+                return;
+            }
+            if (useTbwRange)
+                tbwUpper = double.Parse(TxtTbwUpper.Text, NumberStyles.Float, CultureInfo.InvariantCulture);
+        }
+
         AiSecretsStore.Save(new AiSecrets
         {
             GoogleApiKey = NullIfBlank(TxtGoogleKey.Text),
@@ -980,27 +1069,29 @@ public partial class MainWindow : Window
             if (disk is null)
                 return;
 
-            double lower;
-            if (double.TryParse(TxtTbw.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double tbw) && tbw > 0)
-            {
-                cfg.DiskTbwRatings[disk.DiskId] = tbw;
-                lower = tbw;
-            }
-            else
+            bool unchangedInheritedEstimate = !_loadedTbwHadOverride
+                && _loadedTbwDiskId == disk.DiskId
+                && _loadedTbwLower == tbwLower
+                && _loadedTbwUpper == tbwUpper;
+            if (unchangedInheritedEstimate)
             {
                 cfg.DiskTbwRatings.Remove(disk.DiskId);
-                lower = cfg.DefaultSsdTbw;
-            }
-
-            if (double.TryParse(TxtTbwUpper.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double upper) && upper > lower)
-                cfg.DiskTbwRatingsUpper[disk.DiskId] = upper;
-            else
                 cfg.DiskTbwRatingsUpper.Remove(disk.DiskId);
+            }
+            else
+            {
+                cfg.DiskTbwRatings[disk.DiskId] = tbwLower!.Value;
+                if (tbwUpper.HasValue)
+                    cfg.DiskTbwRatingsUpper[disk.DiskId] = tbwUpper.Value;
+                else
+                    cfg.DiskTbwRatingsUpper.Remove(disk.DiskId);
+            }
         });
         _userSettings.Update(settings =>
         {
             settings.EnableNotifications = enableNotifications;
             settings.EnableTbwWebLookup = enableTbwWebLookup;
+            settings.TbwLookupMethod = lookupMethod;
             if (webSearchProvider is not null)
                 settings.WebSearchProvider = webSearchProvider;
         });
@@ -1154,12 +1245,12 @@ public partial class MainWindow : Window
 
     internal void ShowTbwOnlineSetup()
     {
+        ClearTbwSetupSecretEntry();
         TbwSetupIntroPanel.Visibility = Visibility.Visible;
         TbwSetupKeyPanel.Visibility = Visibility.Collapsed;
         TbwSetupIntroButtons.Visibility = Visibility.Visible;
         TbwSetupKeyButtons.Visibility = Visibility.Collapsed;
         TbwSetupDontShowAgain.IsChecked = false;
-        TbwSetupSerperKey.Password = "";
         TbwSetupErrorText.Visibility = Visibility.Collapsed;
         TbwSetupOverlay.Visibility = Visibility.Visible;
         TbwSetupOverlay.Focus();
@@ -1179,6 +1270,7 @@ public partial class MainWindow : Window
 
     private void TbwSetupBack_Click(object sender, RoutedEventArgs e)
     {
+        HideTbwSetupSecretEntry();
         TbwSetupIntroPanel.Visibility = Visibility.Visible;
         TbwSetupKeyPanel.Visibility = Visibility.Collapsed;
         TbwSetupIntroButtons.Visibility = Visibility.Visible;
@@ -1189,7 +1281,45 @@ public partial class MainWindow : Window
     private void TbwSetupNotNow_Click(object sender, RoutedEventArgs e)
     {
         SaveTbwSetupSuppressionIfRequested();
+        ClearTbwSetupSecretEntry();
         TbwSetupOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private void TbwSetupRevealKey_Checked(object sender, RoutedEventArgs e)
+    {
+        TbwSetupSerperKeyReveal.Text = TbwSetupSerperKey.Password;
+        TbwSetupSerperKey.Visibility = Visibility.Collapsed;
+        TbwSetupSerperKeyReveal.Visibility = Visibility.Visible;
+        TbwSetupSerperKeyRevealGlyph.Text = "\uE8F5";
+        TbwSetupSerperKeyRevealButton.ToolTip = "Hide API key";
+        AutomationProperties.SetName(TbwSetupSerperKeyRevealButton, "Hide API key");
+        TbwSetupSerperKeyReveal.Focus();
+        TbwSetupSerperKeyReveal.CaretIndex = TbwSetupSerperKeyReveal.Text.Length;
+    }
+
+    private void TbwSetupRevealKey_Unchecked(object sender, RoutedEventArgs e)
+    {
+        HideTbwSetupSecretEntry();
+        TbwSetupSerperKey.Focus();
+    }
+
+    private void HideTbwSetupSecretEntry()
+    {
+        if (TbwSetupSerperKeyReveal.Visibility == Visibility.Visible)
+            TbwSetupSerperKey.Password = TbwSetupSerperKeyReveal.Text;
+        TbwSetupSerperKeyReveal.Clear();
+        TbwSetupSerperKeyReveal.Visibility = Visibility.Collapsed;
+        TbwSetupSerperKey.Visibility = Visibility.Visible;
+        TbwSetupSerperKeyRevealButton.IsChecked = false;
+        TbwSetupSerperKeyRevealGlyph.Text = "\uE890";
+        TbwSetupSerperKeyRevealButton.ToolTip = "Show API key";
+        AutomationProperties.SetName(TbwSetupSerperKeyRevealButton, "Show API key");
+    }
+
+    private void ClearTbwSetupSecretEntry()
+    {
+        HideTbwSetupSecretEntry();
+        TbwSetupSerperKey.Password = "";
     }
 
     private void TbwSetupOpenSerper_Click(object sender, RoutedEventArgs e)
@@ -1208,7 +1338,9 @@ public partial class MainWindow : Window
 
     private async void TbwSetupSave_Click(object sender, RoutedEventArgs e)
     {
-        string key = TbwSetupSerperKey.Password.Trim();
+        string key = (TbwSetupSerperKeyReveal.Visibility == Visibility.Visible
+            ? TbwSetupSerperKeyReveal.Text
+            : TbwSetupSerperKey.Password).Trim();
         if (key.Length < 20)
         {
             TbwSetupErrorText.Text = "Paste the API key from Serper's API Keys page.";
@@ -1231,7 +1363,7 @@ public partial class MainWindow : Window
             });
 
             _tbwLookup = null;
-            TbwSetupSerperKey.Password = "";
+            ClearTbwSetupSecretEntry();
             TbwSetupOverlay.Visibility = Visibility.Collapsed;
             LoadSettingsFields();
 
@@ -1267,12 +1399,16 @@ public partial class MainWindow : Window
     internal async Task StartTbwLookupAsync(DiskInfo? disk, bool force = false, bool userInitiated = false)
     {
         _tbwCts?.Cancel();
+        SetTbwLookupDiagnostics(null);
         _tbwLookupForceRequested = force;
         if (disk is null)
         {
             TbwLookupPanel.Visibility = Visibility.Collapsed;
             return;
         }
+
+        var userSettings = _userSettings.Current;
+        UpdateTbwLookupMethodUi(userSettings.TbwLookupMethod);
 
         if (!disk.IsSsd)
         {
@@ -1295,7 +1431,7 @@ public partial class MainWindow : Window
         }
 
         var cfg = _config.Current;
-        if (!force && (!_userSettings.Current.EnableTbwWebLookup || cfg.DiskTbwRatings.ContainsKey(disk.DiskId)))
+        if (!force && (!userSettings.EnableTbwWebLookup || cfg.DiskTbwRatings.ContainsKey(disk.DiskId)))
         { TbwLookupPanel.Visibility = Visibility.Collapsed; return; }
 
         string model = (disk.FriendlyName ?? "").Trim();
@@ -1325,14 +1461,19 @@ public partial class MainWindow : Window
         TbwCandidateList.Children.Clear();
         TbwLookupAction.Visibility = Visibility.Collapsed;
 
-        if (!force && TbwLookupCache.TryGet(model, out var cachedResult) && cachedResult is not null)
+        if (!force && TbwLookupCache.TryGet(model, out var cachedResult)
+            && cachedResult is not null
+            && cachedResult.LookupMethod == userSettings.TbwLookupMethod)
         { RenderTbwResult(disk, cachedResult); return; }
 
         _tbwCts = new CancellationTokenSource();
         var ct = _tbwCts.Token;
+        bool serperOnly = userSettings.TbwLookupMethod == TbwLookupMethod.SerperOnly;
         SetTbwLookupProgress(
-            "Preparing local verification",
-            $"Preparing the on-device model to look up \u201C{model}\u201D endurance\u2026");
+            serperOnly ? "Preparing Serper evidence search" : "Preparing local verification",
+            serperOnly
+                ? $"Preparing deterministic evidence parsing for \u201C{model}\u201D\u2026"
+                : $"Preparing the on-device model to look up \u201C{model}\u201D endurance\u2026");
 
         try
         {
@@ -1350,8 +1491,10 @@ public partial class MainWindow : Window
                         "Searching web evidence",
                         $"Searching Serper for \u201C{model}\u201D endurance specifications\u2026"),
                     TbwLookupStage.Analyzing => SetTbwLookupProgress(
-                        "Verifying with the local model",
-                        "Reading the search evidence with the on-device model and rejecting unsupported values\u2026"),
+                        serperOnly ? "Parsing explicit TBW evidence" : "Verifying with the local model",
+                        serperOnly
+                            ? "Accepting only capacity-matched TBW values explicitly present in Serper titles and snippets\u2026"
+                            : "Reading the search evidence with the on-device model and rejecting unsupported values\u2026"),
                     _ => TbwLookupStatus.Text,
                 };
             });
@@ -1368,7 +1511,18 @@ public partial class MainWindow : Window
         if (readiness.CanRun)
             return true;
 
-        if (readiness.NeedsModelDownload)
+        if (readiness.NeedsFoundryInstall)
+        {
+            SetTbwLookupOutcome(
+                "Foundry Local required",
+                readiness.Reason ?? "Install Foundry Local to enable on-device verification.",
+                TbwLookupOutcome.Unavailable);
+            TbwLookupAction.Content = "Install Foundry Local";
+            TbwLookupAction.Tag = "install-foundry";
+            TbwLookupAction.Visibility = Visibility.Visible;
+            TbwLookupAgainButton.Visibility = Visibility.Collapsed;
+        }
+        else if (readiness.NeedsModelDownload)
         {
             string reason = readiness.HasUsableGpu
                 ? $"A GPU was detected. Download the on-device AI model ({readiness.DownloadAlias}) to search the web for this drive's TBW rating."
@@ -1377,6 +1531,7 @@ public partial class MainWindow : Window
             TbwLookupAction.Content = "Download model";
             TbwLookupAction.Tag = "download";
             TbwLookupAction.Visibility = Visibility.Visible;
+            TbwLookupAgainButton.Visibility = Visibility.Collapsed;
         }
         else
         {
@@ -1395,32 +1550,50 @@ public partial class MainWindow : Window
             Dispatcher.BeginInvoke(new Action(() => TbwLookupPanel.Focus()));
     }
 
+    private void UpdateTbwLookupMethodUi(TbwLookupMethod method)
+    {
+        bool serperOnly = method == TbwLookupMethod.SerperOnly;
+        TbwLookupAnalysisHeading.Text = serperOnly ? "DETERMINISTIC PARSING" : "LOCAL VERIFICATION";
+        TbwLookupAnalysisTitle.Text = serperOnly ? "Serper evidence only" : "On-device model";
+        TbwLookupAnalysisText.Text = serperOnly
+            ? "Accepts only explicit, capacity-matched TBW values; no local AI is used."
+            : "Extracts candidates; unsupported values are rejected.";
+        TbwLookupFooterText.Text = "Nothing changes until you explicitly apply a single value or range.";
+    }
+
     /// <summary>Renders the candidate TBW values with confidence scores and per-value Apply buttons.</summary>
     internal void RenderTbwResult(DiskInfo disk, TbwLookupResult result)
     {
         TbwCandidateList.Children.Clear();
         TbwLookupAction.Visibility = Visibility.Collapsed;
+        SetTbwLookupDiagnostics(result.Diagnostics);
+        UpdateTbwLookupMethodUi(result.LookupMethod);
+        bool serperOnly = result.LookupMethod == TbwLookupMethod.SerperOnly;
         if (!result.HasCandidates)
         {
             SetTbwLookupOutcome(
-                "No verified TBW rating found",
+                serperOnly ? "No explicit TBW evidence found" : "No verified TBW rating found",
                 result.Note ?? "No TBW rating was found on the web for this drive.",
                 TbwLookupOutcome.Empty);
             return;
         }
 
         SetTbwLookupOutcome(
-            result.Candidates.Count == 1 ? "Verified candidate found" : "Verified candidates found",
-            result.Candidates.Count == 1
-                ? "One source-backed TBW candidate passed evidence validation. Review it before applying."
-                : $"{result.Candidates.Count} source-backed candidates passed validation. Higher confidence means more independent sources agree.",
+            serperOnly
+                ? result.Candidates.Count == 1 ? "Evidence candidate found" : "Evidence candidates found"
+                : result.Candidates.Count == 1 ? "Verified candidate found" : "Verified candidates found",
+            serperOnly
+                ? $"Serper-only mode found {result.Candidates.Count} explicit, capacity-matched value{(result.Candidates.Count == 1 ? "" : "s")}. No local AI verification was used."
+                : result.Candidates.Count == 1
+                    ? "One source-backed TBW candidate passed evidence validation. Review it before applying."
+                    : $"{result.Candidates.Count} source-backed candidates passed validation. Higher confidence means more independent sources agree.",
             TbwLookupOutcome.Success);
 
         var textPrimary = (Brush)FindResource("TextPrimary");
         var captionStyle = (Style)FindResource("Caption");
         var toolButton = (Style)FindResource("ToolButton");
 
-        foreach (var c in result.Candidates)
+        void AddCandidateRow(string title, string detail, string buttonText, Action applyValue)
         {
             var row = new System.Windows.Controls.Grid();
             row.ColumnDefinitions.Add(new System.Windows.Controls.ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -1429,16 +1602,14 @@ public partial class MainWindow : Window
             var info = new System.Windows.Controls.StackPanel { VerticalAlignment = VerticalAlignment.Center };
             info.Children.Add(new System.Windows.Controls.TextBlock
             {
-                Text = $"{c.TbwTerabytes:0.#} TBW",
+                Text = title,
                 Foreground = textPrimary,
                 FontWeight = FontWeights.SemiBold,
                 FontSize = 14,
             });
-            int pct = (int)Math.Round(c.Confidence * 100);
-            string sources = string.Join(", ", c.Sources.Take(3)) + (c.Sources.Count > 3 ? $" +{c.Sources.Count - 3}" : "");
             info.Children.Add(new System.Windows.Controls.TextBlock
             {
-                Text = $"~{pct}% confidence \u00B7 {c.SourceCount} source{(c.SourceCount == 1 ? "" : "s")}: {sources}",
+                Text = detail,
                 Style = captionStyle,
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 1, 0, 0),
@@ -1448,13 +1619,12 @@ public partial class MainWindow : Window
 
             var apply = new System.Windows.Controls.Button
             {
-                Content = "Apply",
+                Content = buttonText,
                 Style = toolButton,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(10, 0, 0, 0),
             };
-            double value = c.TbwTerabytes;
-            apply.Click += (_, _) => ApplyTbwCandidate(disk, value);
+            apply.Click += (_, _) => applyValue();
             System.Windows.Controls.Grid.SetColumn(apply, 1);
             row.Children.Add(apply);
 
@@ -1467,17 +1637,62 @@ public partial class MainWindow : Window
                 Child = row,
             });
         }
+
+        var orderedCandidates = result.Candidates.OrderBy(candidate => candidate.TbwTerabytes).ToList();
+        if (orderedCandidates.Count > 1)
+        {
+            double lower = orderedCandidates[0].TbwTerabytes;
+            double upper = orderedCandidates[^1].TbwTerabytes;
+            AddCandidateRow(
+                $"{lower:0.#} to {upper:0.#} TBW range",
+                $"Preserves all {orderedCandidates.Count} distinct source-backed values instead of choosing one.",
+                "Apply range",
+                () => ApplyTbwRange(disk, lower, upper));
+        }
+
+        foreach (var candidate in result.Candidates)
+        {
+            int pct = (int)Math.Round(candidate.Confidence * 100);
+            string sources = string.Join(", ", candidate.Sources.Take(3))
+                + (candidate.Sources.Count > 3 ? $" +{candidate.Sources.Count - 3}" : "");
+            AddCandidateRow(
+                $"{candidate.TbwTerabytes:0.#} TBW",
+                $"~{pct}% source agreement \u00B7 {candidate.SourceCount} source{(candidate.SourceCount == 1 ? "" : "s")}: {sources}",
+                "Apply single",
+                () => ApplyTbwCandidate(disk, candidate.TbwTerabytes));
+        }
     }
 
     /// <summary>Applies a chosen TBW value as the drive's per-disk endurance rating.</summary>
     private void ApplyTbwCandidate(DiskInfo disk, double tbw)
     {
-        _config.Update(cfg => cfg.DiskTbwRatings[disk.DiskId] = tbw);
+        _config.Update(cfg =>
+        {
+            cfg.DiskTbwRatings[disk.DiskId] = tbw;
+            cfg.DiskTbwRatingsUpper.Remove(disk.DiskId);
+        });
         TbwCandidateList.Children.Clear();
         TbwLookupAction.Visibility = Visibility.Collapsed;
         SetTbwLookupOutcome(
             $"Applied {tbw:0.#} TBW",
             "The selected endurance rating is now used for lifespan and wear projections. You can change it anytime in Settings.",
+            TbwLookupOutcome.Success);
+        LoadTbwField();
+        RefreshAll();
+    }
+
+    private void ApplyTbwRange(DiskInfo disk, double lowerTbw, double upperTbw)
+    {
+        _config.Update(cfg =>
+        {
+            cfg.DiskTbwRatings[disk.DiskId] = lowerTbw;
+            cfg.DiskTbwRatingsUpper[disk.DiskId] = upperTbw;
+        });
+        TbwCandidateList.Children.Clear();
+        TbwLookupAction.Visibility = Visibility.Collapsed;
+        SetTbwLookupOutcome(
+            $"Applied {lowerTbw:0.#} to {upperTbw:0.#} TBW",
+            "The selected endurance range is now used for lifespan and wear projections. You can change it anytime in Settings.",
             TbwLookupOutcome.Success);
         LoadTbwField();
         RefreshAll();
@@ -1520,7 +1735,78 @@ public partial class MainWindow : Window
     private void TbwLookupClose_Click(object sender, RoutedEventArgs e)
     {
         _tbwCts?.Cancel();
+        CloseTbwRawResults();
         TbwLookupPanel.Visibility = Visibility.Collapsed;
+    }
+
+    private void TbwLookupRawResults_Click(object sender, RoutedEventArgs e)
+    {
+        var diagnostics = _tbwLookupDiagnostics;
+        if (diagnostics is null)
+            return;
+
+        TbwRawSearchMeta.Text = diagnostics.HasSearchResponse
+            ? $"Provider: {diagnostics.SearchProvider}"
+            : $"Provider: {diagnostics.SearchProvider} - no response body was returned.";
+        TbwRawSearchText.Text = FormatTbwRawResponse(
+            diagnostics.SearchResponseJson,
+            "No raw search response was returned. The request may have failed before the provider sent a body.");
+
+        TbwRawModelMeta.Text = diagnostics.HasModelResponse
+            ? $"Model: {diagnostics.ModelName ?? "Foundry Local model"} - exact completion response"
+            : "No model response was requested or returned for this lookup.";
+        TbwRawModelText.Text = FormatTbwRawResponse(
+            diagnostics.ModelResponseJson,
+            "No raw model response is available. Serper-only lookups do not call a model, and failed requests may return no body.");
+
+        TbwRawResultsTabs.SelectedItem = diagnostics.HasSearchResponse ? TbwRawSearchTab : TbwRawModelTab;
+        TbwRawResultsOverlay.Visibility = Visibility.Visible;
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            var textBox = TbwRawResultsTabs.SelectedItem == TbwRawSearchTab
+                ? TbwRawSearchText
+                : TbwRawModelText;
+            textBox.Focus();
+        }));
+    }
+
+    private void TbwRawResultsClose_Click(object sender, RoutedEventArgs e) => CloseTbwRawResults();
+
+    private void SetTbwLookupDiagnostics(TbwLookupDiagnostics? diagnostics)
+    {
+        _tbwLookupDiagnostics = diagnostics;
+        TbwLookupRawResultsButton.Visibility = diagnostics is not null
+            && (diagnostics.HasSearchResponse || diagnostics.HasModelResponse)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        CloseTbwRawResults();
+    }
+
+    private void CloseTbwRawResults()
+    {
+        TbwRawResultsOverlay.Visibility = Visibility.Collapsed;
+        TbwRawSearchText.Clear();
+        TbwRawModelText.Clear();
+    }
+
+    internal static string FormatTbwRawResponse(string? response, string unavailableMessage)
+    {
+        if (string.IsNullOrWhiteSpace(response))
+            return unavailableMessage;
+
+        try
+        {
+            using var document = JsonDocument.Parse(response);
+            return JsonSerializer.Serialize(document.RootElement, new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            });
+        }
+        catch (JsonException)
+        {
+            return response;
+        }
     }
 
     private async void TbwLookupAgain_Click(object sender, RoutedEventArgs e)
@@ -1528,12 +1814,19 @@ public partial class MainWindow : Window
         await StartTbwLookupAsync(SelectedDisk, force: true, userInitiated: true);
     }
 
-    /// <summary>Handles the panel's action button (currently: download the on-device model).</summary>
+    /// <summary>Handles dependency actions offered by the rated-TBW lookup modal.</summary>
     private async void TbwLookupAction_Click(object sender, RoutedEventArgs e)
     {
-        if ((sender as System.Windows.Controls.Button)?.Tag as string != "download") return;
+        string? action = (sender as System.Windows.Controls.Button)?.Tag as string;
         var disk = SelectedDisk;
         if (disk is null) return;
+
+        if (action == "install-foundry")
+        {
+            await InstallFoundryLocalAndRetryAsync(disk);
+            return;
+        }
+        if (action != "download") return;
 
         TbwLookupAction.Visibility = Visibility.Collapsed;
         _tbwCts = new CancellationTokenSource();
@@ -1552,6 +1845,37 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             SetTbwLookupOutcome("Model download failed", ex.Message, TbwLookupOutcome.Error);
+        }
+    }
+
+    internal async Task InstallFoundryLocalAndRetryAsync(DiskInfo disk)
+    {
+        TbwLookupAction.Visibility = Visibility.Collapsed;
+        _tbwCts = new CancellationTokenSource();
+        var ct = _tbwCts.Token;
+        try
+        {
+            var progress = new Progress<string>(message => TbwLookupStatus.Text = message);
+            SetTbwLookupProgress(
+                "Installing Foundry Local",
+                "Windows Package Manager is preparing the official Microsoft package...");
+            await FoundryLocalInstaller(progress, ct);
+            if (ct.IsCancellationRequested) return;
+
+            _tbwLookup = null;
+            SetTbwLookupProgress(
+                "Foundry Local installed",
+                "Checking for an on-device verification model...");
+            await TbwPostInstallLookup(disk);
+        }
+        catch (OperationCanceledException) { /* cancelled */ }
+        catch (Exception ex)
+        {
+            SetTbwLookupOutcome("Foundry Local installation failed", ex.Message, TbwLookupOutcome.Error);
+            TbwLookupAction.Content = "Try install again";
+            TbwLookupAction.Tag = "install-foundry";
+            TbwLookupAction.Visibility = Visibility.Visible;
+            TbwLookupAgainButton.Visibility = Visibility.Collapsed;
         }
     }
 

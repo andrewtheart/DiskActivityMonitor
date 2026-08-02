@@ -53,7 +53,7 @@ warns you when a drive or process crosses a threshold you set.
   <tr>
     <td width="33%" align="center">
       <h3>🤖 Private TBW Lookup</h3>
-      Search endurance evidence with Serper and verify candidates locally through Foundry Local.
+      Search endurance evidence with Serper; verify locally with Foundry or use deterministic parsing.
     </td>
     <td width="33%" align="center">
       <h3>🗂️ Alert History</h3>
@@ -107,7 +107,10 @@ points and applies protected ownership and ACLs through no-follow directory hand
 - .NET 10 SDK.
 - [Inno Setup 6](https://jrsoftware.org/isinfo.php) to build installers.
 - Authenticated GitHub CLI (`gh`) only when using installer `-Push` release automation.
-- Foundry Local plus a suitable local model only for the optional rated-TBW lookup.
+- Foundry Local plus a suitable local model only for the optional local-verification lookup mode. When Foundry
+  Local is missing, the lookup modal can install Microsoft's official `Microsoft.FoundryLocal`
+  package through Windows Package Manager (`winget`) and then continue setup in-app. The degraded
+  Serper-only mode does not install, start, or require Foundry Local.
 
 ---
 
@@ -160,10 +163,16 @@ keys remain under `%LOCALAPPDATA%\DiskActivityMonitor\`.
 - **Disk selector** (top right): SSDs are listed first and tagged. Trends and endurance apply
   to the selected disk.
 - **Summary cards**: written today, last 24h, last 7 days, and an endurance/projection card.
-- **Rated-TBW pill**: right-click the **“xxx TBW rated”** badge in SSD endurance and choose
+- **Rated-TBW pill**: right-click the **TBW rated/estimated** badge in SSD endurance and choose
   **Look up rated TBW**. This forces a fresh lookup even if the drive already has a configured
-  rating or cached result. A dedicated modal shows Serper search progress, local-model verification,
-  empty/error states, source confidence, and Apply actions; nothing changes without confirmation.
+  rating or cached result. A dedicated modal shows Serper search progress, evidence analysis,
+  empty/error states, source agreement, and explicit **Apply single** / **Apply range** actions.
+  Choose **Foundry Local verification** for local-model analysis or **Serper-only evidence parsing**
+  for a degraded deterministic path that accepts only explicit, capacity-matched snippet values.
+  Nothing changes until an Apply action is selected.
+  If Foundry Local is absent, choose **Install Foundry Local** in the modal. The app installs the
+  exact Microsoft package through `winget`, verifies the CLI, and then offers the separate local
+  model download when needed. Windows may request installation approval.
   Google's Custom Search JSON API is closed to new customers; its 100 free daily queries apply
   only to existing customers until the service is retired. New setups should select the supported
   **Serper** backend in Settings.
@@ -184,7 +193,9 @@ keys remain under `%LOCALAPPDATA%\DiskActivityMonitor\`.
   errors, temperature, model/firmware/serial, lifetime I/O, and actionable findings. The scan is
   read-only and does not start a destructive or long-running ATA/NVMe self-test.
 - **Settings**: thresholds (in GB), sample interval, desktop notifications, and the selected
-  drive's **TBW rating** (TB). Click **Save settings**; the collector applies them live.
+  drive's explicit **Single TBW** or **TBW Range**. Unknown drives use a clearly labeled
+  **150 to 600 TBW estimate** until a per-drive rating is saved. Click **Save settings**; the
+  collector applies changes live.
 - **Online lookup setup**: the startup prompt explains what is sent online, links to Serper signup,
   accepts the API key, and stores it with Windows DPAPI. Choosing **Not now** shows the prompt again
   at the next startup unless **Don't show this again** is checked. Guided setup can be reopened from
@@ -338,7 +349,7 @@ replacements are ignored in favor of the last known-good settings. Thresholds ar
 | `controllerErrorWindowDays` | Trailing event-count window | 14 |
 | `controllerErrorWarnCount` | Warning threshold inside the event-count window | 3 |
 | `controllerErrorCriticalCount` | Critical threshold inside the event-count window | 10 |
-| `defaultSsdTbw` / `defaultSsdTbwUpper` | Fallback SSD TBW rating and optional upper range | 750 / none |
+| `defaultSsdTbw` / `defaultSsdTbwUpper` | Estimated SSD TBW range when the rating is unknown | 150 / 600 |
 | `diskTbwRatings` | Per-disk TBW endurance rating (TB) | none |
 | `diskTbwRatingsUpper` | Optional per-disk upper TBW; when set, endurance %/projection are shown as a range | none |
 | `tbwProjectionWarnYears` / `tbwProjectionCriticalYears` | Projected-years warning / critical thresholds | 2 / 1 |
@@ -350,9 +361,10 @@ Action-bearing preferences are isolated per Windows user in
 | Key | Meaning | Default |
 |-----|---------|---------|
 | `enableNotifications` | Show desktop notifications | true |
-| `enableTbwWebLookup` | Enable online evidence search + local verification | true |
+| `enableTbwWebLookup` | Enable online TBW evidence search | true |
 | `suppressTbwOnlineSetupPrompt` | Suppress guided lookup setup at startup | false |
 | `webSearchProvider` | Search backend (`serper` recommended; `google` for existing customers) | serper |
+| `tbwLookupMethod` | Evidence analysis (`FoundryLocal` or degraded `SerperOnly`) | FoundryLocal |
 | `tbwLookupModel` | Optional Foundry Local model override | automatic |
 | `autoSuspendRules` | Per-process confirm/automatic suspension rules | none |
 

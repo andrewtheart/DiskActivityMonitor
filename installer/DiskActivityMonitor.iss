@@ -80,13 +80,56 @@ Filename: "{sys}\sc.exe"; Parameters: "delete {#ServiceName}"; Flags: runhidden 
 const
   DamFileAttributeReparsePoint = $400;
   DamInvalidFileAttributes = $FFFFFFFF;
+  InstallPreparationStepCount = 15;
 
 var
   UseExistingSettings: Boolean;
   KeepSettingsAfterUninstall: Boolean;
+  InstallProgressPage: TOutputProgressWizardPage;
+  InstallProgressPosition: Integer;
 
 function GetFileAttributes(FileName: String): Cardinal;
   external 'GetFileAttributesW@kernel32.dll stdcall';
+
+procedure InitializeWizard;
+begin
+  InstallProgressPage := CreateOutputProgressPage(
+    'Preparing Disk Activity Monitor',
+    'Setup is securing folders and replacing the existing installation.');
+end;
+
+procedure BeginInstallPreparation;
+begin
+  InstallProgressPosition := 0;
+  if not WizardSilent then
+  begin
+    InstallProgressPage.SetText('Checking the installation target...', '');
+    InstallProgressPage.SetProgress(0, InstallPreparationStepCount);
+    InstallProgressPage.Show;
+  end;
+end;
+
+procedure SetInstallPreparationStatus(Status: String; Detail: String);
+begin
+  if not WizardSilent then
+  begin
+    InstallProgressPage.SetText(Status, Detail);
+    InstallProgressPage.SetProgress(InstallProgressPosition, InstallPreparationStepCount);
+  end;
+end;
+
+procedure CompleteInstallPreparationStep;
+begin
+  InstallProgressPosition := InstallProgressPosition + 1;
+  if not WizardSilent then
+    InstallProgressPage.SetProgress(InstallProgressPosition, InstallPreparationStepCount);
+end;
+
+procedure FinishInstallPreparation;
+begin
+  if not WizardSilent then
+    InstallProgressPage.Hide;
+end;
 
 function DataPath(): String;
 begin
@@ -106,6 +149,11 @@ end;
 function UserSettingsPath(): String;
 begin
   Result := AddBackslash(UserSettingsDirectory()) + 'user-settings.json';
+end;
+
+function AiSecretsPath(): String;
+begin
+  Result := AddBackslash(UserSettingsDirectory()) + 'ai-secrets.json';
 end;
 
 function IsReparsePoint(Path: String): Boolean;
@@ -210,6 +258,7 @@ begin
   ServicePath := AddBackslash(AppPath) + 'service';
   TrayPath := AddBackslash(AppPath) + 'tray';
 
+  SetInstallPreparationStatus('Checking application folders...', AppPath);
   if not ForceDirectories(AppPath) then
   begin
     ErrorText := 'Setup could not create the application directory:' + #13#10 + AppPath;
@@ -220,22 +269,36 @@ begin
     ErrorText := 'Setup refused to secure an application directory that is a reparse point.';
     Exit;
   end;
+  CompleteInstallPreparationStep;
+
+  SetInstallPreparationStatus('Validating the Program Files directory...', ExpandConstant('{autopf}'));
   if not RunDirectorySecurity(ExpandConstant('{autopf}'), 'Validate', ErrorText) then
     Exit;
+  CompleteInstallPreparationStep;
+
+  SetInstallPreparationStatus('Securing the application directory...', AppPath);
   if not RunDirectorySecurity(AppPath, 'Install', ErrorText) then
     Exit;
+  CompleteInstallPreparationStep;
+
+  SetInstallPreparationStatus('Securing the service directory...', ServicePath);
   if DirExists(ServicePath) and
      (not RunDirectorySecurity(ServicePath, 'Install', ErrorText)) then
     Exit;
+  CompleteInstallPreparationStep;
+
+  SetInstallPreparationStatus('Securing the tray directory...', TrayPath);
   if DirExists(TrayPath) and
      (not RunDirectorySecurity(TrayPath, 'Install', ErrorText)) then
     Exit;
+  CompleteInstallPreparationStep;
   Result := True;
 end;
 
 function SecureDataDirectory(var ErrorText: String): Boolean;
 begin
   Result := False;
+  SetInstallPreparationStatus('Checking the monitoring data directory...', DataPath());
   if IsReparsePoint(ExpandConstant('{commonappdata}')) then
   begin
     ErrorText := 'Setup refused to use ProgramData because it is a reparse point.';
@@ -260,11 +323,17 @@ begin
       DataPath();
     Exit;
   end;
+  CompleteInstallPreparationStep;
 
+  SetInstallPreparationStatus('Validating the ProgramData directory...', ExpandConstant('{commonappdata}'));
   if not RunDirectorySecurity(ExpandConstant('{commonappdata}'), 'Validate', ErrorText) then
     Exit;
+  CompleteInstallPreparationStep;
+
+  SetInstallPreparationStatus('Securing the monitoring data directory...', DataPath());
   if not RunDirectorySecurity(DataPath(), 'Data', ErrorText) then
     Exit;
+  CompleteInstallPreparationStep;
   Result := True;
 end;
 
@@ -331,6 +400,10 @@ begin
     Exit;
   if not DeleteRegularFile(UserSettingsPath() + '.tmp', ErrorText) then
     Exit;
+  if not DeleteRegularFile(AiSecretsPath(), ErrorText) then
+    Exit;
+  if not DeleteRegularFile(AiSecretsPath() + '.tmp', ErrorText) then
+    Exit;
   Result := True;
 end;
 
@@ -346,14 +419,15 @@ begin
   end;
 
   UseExistingSettings := True;
-  if FileExists(SettingsPath()) or FileExists(UserSettingsPath()) then
+  if FileExists(SettingsPath()) or FileExists(UserSettingsPath()) or FileExists(AiSecretsPath()) then
     UseExistingSettings :=
       SuppressibleMsgBox(
-        'Existing machine settings or current-account preferences were found.' + #13#10 + #13#10 +
+        'Existing machine settings, current-account preferences, or API credentials were found.' + #13#10 + #13#10 +
         'Do you want to use these settings?' + #13#10 + #13#10 +
         'Choose Yes to keep your existing values. Settings added by this version ' +
         'will use their new defaults.' + #13#10 + #13#10 +
-        'Choose No to start with default settings. Your monitoring history will not be removed.',
+        'Choose No to start with default settings and remove saved API credentials. ' +
+        'Your monitoring history will not be removed.',
         mbConfirmation, MB_YESNO, IDYES) = IDYES;
   Result := True;
 end;
@@ -363,12 +437,12 @@ var
   ErrorText: String;
 begin
   KeepSettingsAfterUninstall := True;
-  if FileExists(SettingsPath()) or FileExists(UserSettingsPath()) then
+  if FileExists(SettingsPath()) or FileExists(UserSettingsPath()) or FileExists(AiSecretsPath()) then
     KeepSettingsAfterUninstall :=
       SuppressibleMsgBox(
         'Do you want to keep your Disk Activity Monitor settings for a future reinstall?' + #13#10 + #13#10 +
-        'Choose Yes to keep them, or No to delete the machine settings and ' +
-        'preferences for this Windows account.' + #13#10 + #13#10 +
+        'Choose Yes to keep them, or No to delete the machine settings, ' +
+        'preferences, and saved API credentials for this Windows account.' + #13#10 + #13#10 +
         'Your monitoring history will remain on this computer either way.',
         mbConfirmation, MB_YESNO, IDYES) = IDYES;
   if not StopInstalledTray(ErrorText) then
@@ -385,25 +459,54 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   rc: Integer;
 begin
-  if not ValidateInstallDirectory(Result) then
-    Exit;
-  if not SecureApplicationDirectory(Result) then
-    Exit;
-  if not SecureDataDirectory(Result) then
-    Exit;
-
-  if not StopInstalledTray(Result) then
-    Exit;
-  Exec(ExpandConstant('{sys}\sc.exe'), 'stop {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, rc);
-  Sleep(1500);
-  Exec(ExpandConstant('{sys}\sc.exe'), 'delete {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, rc);
-  Sleep(1000);
-  if not UseExistingSettings then
-  begin
-    if not DeleteSelectedSettings(Result) then
-      Exit;
-  end;
   Result := '';
+  BeginInstallPreparation;
+  try
+    SetInstallPreparationStatus('Validating the installation target...', ExpandConstant('{app}'));
+    if not ValidateInstallDirectory(Result) then
+      Exit;
+    CompleteInstallPreparationStep;
+
+    if not SecureApplicationDirectory(Result) then
+      Exit;
+    if not SecureDataDirectory(Result) then
+      Exit;
+
+    SetInstallPreparationStatus('Closing the existing tray application...', '');
+    if not StopInstalledTray(Result) then
+      Exit;
+    CompleteInstallPreparationStep;
+
+    SetInstallPreparationStatus('Stopping the collector service...', '');
+    Exec(ExpandConstant('{sys}\sc.exe'), 'stop {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, rc);
+    CompleteInstallPreparationStep;
+
+    SetInstallPreparationStatus('Waiting for the collector service to stop...', '');
+    Sleep(1500);
+    CompleteInstallPreparationStep;
+
+    SetInstallPreparationStatus('Removing the previous collector service...', '');
+    Exec(ExpandConstant('{sys}\sc.exe'), 'delete {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, rc);
+    CompleteInstallPreparationStep;
+
+    SetInstallPreparationStatus('Waiting for service removal to complete...', '');
+    Sleep(1000);
+    CompleteInstallPreparationStep;
+
+    SetInstallPreparationStatus('Applying your settings choice...', '');
+    if not UseExistingSettings then
+    begin
+      if not DeleteSelectedSettings(Result) then
+        Exit;
+    end;
+    CompleteInstallPreparationStep;
+  finally
+    FinishInstallPreparation;
+  end;
+  if Result <> '' then
+  begin
+    Exit;
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

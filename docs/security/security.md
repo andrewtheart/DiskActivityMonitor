@@ -331,6 +331,19 @@ Endpoint controls:
 
 Search API keys are not sent to Foundry Local. The local model receives the drive model and already-returned search evidence required for extraction.
 
+Foundry Local dependency installation is explicit and fixed:
+
+- Installation starts only after the user selects **Install Foundry Local**.
+- The app invokes Windows Package Manager with the exact package ID `Microsoft.FoundryLocal`, the
+    explicit `winget` source, exact-match selection, accepted package/source agreements, and disabled
+    interactivity. No URL, package ID, or command argument comes from AI output or web-search evidence.
+- Windows Package Manager and App Installer remain part of the trusted computing base and may
+    request operating-system approval.
+- The app requires a successful package-manager exit and `foundry --version` verification before
+    continuing. Installation failure leaves lookup unavailable and exposes a retry action.
+- Closing the modal cancels the operation and terminates only the package-manager process tree
+    started by this app.
+
 Residual limitation: Foundry Local has no application-level authentication. Another process running locally may be able to impersonate a loopback service. Model output is therefore treated as untrusted input and validated before use.
 
 Relevant implementation: [FoundryLocalClient.cs](../../src/DiskActivityMonitor.Core/Ai/FoundryLocalClient.cs).
@@ -339,20 +352,22 @@ Relevant implementation: [FoundryLocalClient.cs](../../src/DiskActivityMonitor.C
 
 A local model cannot directly change a TBW rating.
 
+The user explicitly chooses between Foundry Local verification and degraded Serper-only parsing. In Serper-only mode the lookup does not discover, start, install, or call Foundry Local. It uses only the deterministic extraction path described below and labels results as evidence candidates rather than locally verified candidates.
+
 The lookup pipeline:
 
 1. Searches for the exact drive model and TBW.
-2. Gives the local model indexed search titles/snippets.
-3. Requires JSON-only claims tied to a source index.
+2. In Foundry mode, gives the local model indexed search titles/snippets.
+3. In Foundry mode, requires JSON-only claims tied to a source index.
 4. Rejects malformed output, invalid indexes, nonpositive values, and implausibly large values.
 5. Requires the exact claimed rating, or an equivalent PBW value, to appear in the attributed source evidence.
 6. Requires the requested drive capacity to appear in the same evidence when capacity is known.
 7. Deterministically extracts explicit snippet claims as a second path, with nearest-capacity checks for product-family tables.
 8. Deduplicates votes by source domain.
 9. Shows candidates and source agreement to the user.
-10. Changes the configured rating only when the user selects Apply.
+10. Changes the configured rating only when the user selects **Apply single** or **Apply range**.
 
-This design treats the model as a parser, not an authority, and prevents unsupported model-memory values from becoming configuration.
+When Foundry is selected, this design treats the model as a parser, not an authority. In either mode, unsupported values cannot become configuration without matching evidence and an explicit user Apply action.
 
 Relevant implementation: [TbwLookupService.cs](../../src/DiskActivityMonitor.Core/Ai/TbwLookupService.cs).
 

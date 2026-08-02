@@ -2,6 +2,12 @@ using System.Text.Json;
 
 namespace DiskActivityMonitor.Core.Configuration;
 
+public enum TbwLookupMethod
+{
+    FoundryLocal,
+    SerperOnly,
+}
+
 /// <summary>Settings that control actions taken in the current interactive user's session.</summary>
 public sealed class UserSettings
 {
@@ -10,6 +16,7 @@ public sealed class UserSettings
     public bool EnableTbwWebLookup { get; set; } = true;
     public bool SuppressTbwOnlineSetupPrompt { get; set; }
     public string WebSearchProvider { get; set; } = "serper";
+    public TbwLookupMethod TbwLookupMethod { get; set; } = TbwLookupMethod.FoundryLocal;
     public string? TbwLookupModel { get; set; }
 }
 
@@ -151,6 +158,7 @@ public sealed class UserSettingsStore
         EnableTbwWebLookup = source.EnableTbwWebLookup,
         SuppressTbwOnlineSetupPrompt = source.SuppressTbwOnlineSetupPrompt,
         WebSearchProvider = string.IsNullOrWhiteSpace(source.WebSearchProvider) ? "serper" : source.WebSearchProvider,
+        TbwLookupMethod = source.TbwLookupMethod,
         TbwLookupModel = source.TbwLookupModel,
         AutoSuspendRules = source.AutoSuspendRules?.Select(rule => new AutoSuspendRule
         {

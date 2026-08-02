@@ -425,6 +425,11 @@ caveats</a></li>
 lookup</a>
 <ul>
 <li><a href="#guided-setup" id="toc-guided-setup">Guided setup</a></li>
+<li><a href="#choose-an-analysis-method"
+id="toc-choose-an-analysis-method">Choose an analysis method</a></li>
+<li><a href="#install-foundry-local-in-app"
+id="toc-install-foundry-local-in-app">Install Foundry Local
+in-app</a></li>
 <li><a href="#privacy-and-data-flow"
 id="toc-privacy-and-data-flow">Privacy and data flow</a></li>
 <li><a href="#api-key-storage" id="toc-api-key-storage">API-key
@@ -725,13 +730,18 @@ Used</h2>
 <h3 id="rated-tbw">Rated TBW</h3>
 <p>TBW means <strong>terabytes written</strong>, the manufacturer’s
 write-endurance rating. Configure a rating for each SSD whenever
-possible; otherwise the default rating is used.</p>
+possible. When the rating is unknown, the dashboard uses and labels a
+conservative <strong>150 to 600 TBW estimate</strong>.</p>
 <p>A rating can be:</p>
 <ul>
 <li>A single value, such as <code>600 TBW</code>.</li>
 <li>A lower/upper range when the exact model or capacity is
 uncertain.</li>
 </ul>
+<p>Settings provides an explicit <strong>Single TBW</strong> /
+<strong>TBW Range</strong> choice. Range mode requires a maximum greater
+than the minimum. Dashboard ranges are always shown from low to high,
+for example <code>Drive Life Used: 3% to 10%</code>.</p>
 <h3 id="drive-life-used-precision">Drive Life Used precision</h3>
 <p>When lifetime-write telemetry and a TBW rating are both available,
 Drive Life Used is calculated as:</p>
@@ -762,8 +772,42 @@ startup.</li>
 prompt.</li>
 </ul>
 <p>You can reopen guided setup from Settings at any time.</p>
+<h3 id="choose-an-analysis-method">Choose an analysis method</h3>
+<p>Settings offers two distinct choices:</p>
+<ul>
+<li><strong>Foundry Local verification:</strong> uses an on-device model
+to extract claims, then validates every claim against the source
+evidence.</li>
+<li><strong>Serper-only evidence parsing:</strong> degraded mode that
+never installs or starts Foundry. It deterministically accepts only TBW
+values explicitly linked to the requested model capacity in Serper
+titles/snippets.</li>
+</ul>
+<p>Both modes require an explicit <strong>Apply single</strong> or
+<strong>Apply range</strong> action before changing the drive rating.
+When multiple source-backed values disagree, applying the full range
+preserves that uncertainty.</p>
+<h3 id="install-foundry-local-in-app">Install Foundry Local in-app</h3>
+<p>When the lookup modal reports that Foundry Local is missing, select
+<strong>Install Foundry Local</strong>. The app then:</p>
+<ol type="1">
+<li>Uses Windows Package Manager to install the exact official
+<code>Microsoft.FoundryLocal</code> package from the <code>winget</code>
+source.</li>
+<li>Verifies the installation with <code>foundry --version</code>.</li>
+<li>Checks for a compatible on-device model.</li>
+<li>Offers the separate model download when one is still required, then
+resumes the lookup.</li>
+</ol>
+<p>Installation begins only after you select the button. Package and
+source agreements are accepted for that requested installation, and
+Windows may request approval. If <code>winget</code> is unavailable,
+install or update <strong>App Installer</strong> from Microsoft Store
+and try again. Foundry Local’s current Microsoft prerequisites include
+Windows 11 version 24H2 or later and DirectX 12-capable GPU hardware;
+unsupported systems receive the package-manager error in the modal.</p>
 <h3 id="privacy-and-data-flow">Privacy and data flow</h3>
-<p>A lookup uses two stages:</p>
+<p>A Foundry lookup uses two stages:</p>
 <ol type="1">
 <li><strong>Serper web search:</strong> sends the drive model and search
 terms to Serper.</li>
@@ -772,6 +816,9 @@ evidence locally on the computer.</li>
 </ol>
 <p>The app rejects candidate values that are not explicitly supported by
 source text or do not match the requested drive capacity.</p>
+<p>Serper-only mode performs the same web search but replaces stage 2
+with deterministic parsing. It is clearly labeled as degraded and does
+not claim local-AI verification.</p>
 <h3 id="api-key-storage">API-key storage</h3>
 <p>Google and Serper API keys are stored per Windows user in:</p>
 <p><code>%LOCALAPPDATA%\DiskActivityMonitor\ai-secrets.json</code></p>
@@ -791,11 +838,11 @@ customers.</p>
 <h3 id="run-a-lookup">Run a lookup</h3>
 <ol type="1">
 <li>Select the SSD.</li>
-<li>Right-click the <strong>TBW rated</strong> pill.</li>
+<li>Right-click the <strong>TBW rated/estimated</strong> pill.</li>
 <li>Choose <strong>Look up rated TBW</strong>.</li>
-<li>Review the sources, confidence, and candidate values.</li>
-<li>Select <strong>Apply</strong> only for the candidate you want
-saved.</li>
+<li>Review the sources, source agreement, and candidate values.</li>
+<li>Select <strong>Apply single</strong> for one value or <strong>Apply
+range</strong> to retain conflicting supported values.</li>
 </ol>
 <p>Nothing changes until a candidate is explicitly applied.</p>
 <hr />
@@ -1042,13 +1089,13 @@ settings.</p>
 </tr>
 <tr>
 <td><code>defaultSsdTbw</code></td>
-<td style="text-align: right;"><code>750</code></td>
-<td>Fallback SSD endurance rating.</td>
+<td style="text-align: right;"><code>150</code></td>
+<td>Lower bound of the estimate used when TBW is unknown.</td>
 </tr>
 <tr>
 <td><code>defaultSsdTbwUpper</code></td>
-<td style="text-align: right;">unset</td>
-<td>Optional upper bound for the default rating.</td>
+<td style="text-align: right;"><code>600</code></td>
+<td>Upper bound of the estimate used when TBW is unknown.</td>
 </tr>
 <tr>
 <td><code>diskTbwRatings</code></td>
@@ -1115,6 +1162,12 @@ user in
 <td><code>webSearchProvider</code></td>
 <td style="text-align: right;"><code>serper</code></td>
 <td>This user’s <code>serper</code> or <code>google</code> backend.</td>
+</tr>
+<tr>
+<td><code>tbwLookupMethod</code></td>
+<td style="text-align: right;"><code>FoundryLocal</code></td>
+<td><code>FoundryLocal</code> verification or degraded
+<code>SerperOnly</code> parsing.</td>
 </tr>
 <tr>
 <td><code>tbwLookupModel</code></td>
@@ -1336,9 +1389,12 @@ user’s dashboard settings.</li>
 setups.</li>
 <li>A Serper key is saved in guided setup or <code>SERPER_API_KEY</code>
 is set.</li>
-<li>Foundry Local is installed and its CLI/service is available.</li>
-<li>A suitable local model is installed; use the lookup modal’s download
-action when offered.</li>
+<li>For <strong>Foundry Local verification</strong>, Foundry Local and a
+suitable model are installed. If Foundry is missing, use <strong>Install
+Foundry Local</strong> in the lookup modal; this requires Windows
+Package Manager (<code>winget</code>).</li>
+<li>For <strong>Serper-only evidence parsing</strong>, the backend is
+locked to Serper; Foundry and a local model are not required.</li>
 <li>Internet access permits the selected search API.</li>
 </ol>
 <p>If no verified result is found, do not assume the nearest model’s

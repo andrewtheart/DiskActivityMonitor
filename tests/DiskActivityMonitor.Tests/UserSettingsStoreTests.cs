@@ -26,6 +26,7 @@ public sealed class UserSettingsStoreTests : IDisposable
             EnableTbwWebLookup = false,
             SuppressTbwOnlineSetupPrompt = true,
             WebSearchProvider = "google",
+            TbwLookupMethod = TbwLookupMethod.SerperOnly,
             TbwLookupModel = "model-id",
             AutoSuspendRules =
             [
@@ -49,6 +50,7 @@ public sealed class UserSettingsStoreTests : IDisposable
         Assert.False(reloaded.EnableTbwWebLookup);
         Assert.True(reloaded.SuppressTbwOnlineSetupPrompt);
         Assert.Equal("google", reloaded.WebSearchProvider);
+        Assert.Equal(TbwLookupMethod.SerperOnly, reloaded.TbwLookupMethod);
         Assert.Equal("model-id", reloaded.TbwLookupModel);
     }
 

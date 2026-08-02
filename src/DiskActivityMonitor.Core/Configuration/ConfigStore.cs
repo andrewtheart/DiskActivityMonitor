@@ -106,11 +106,28 @@ public sealed class ConfigStore : IDisposable
         {
             var json = AtomicFile.ReadAllText(_path, MaximumFileSize);
             var config = JsonSerializer.Deserialize<AppConfig>(json, AppConfig.SerializerOptions);
+            if (config is not null)
+                MigrateLegacyTbwDefault(json, config);
             return config is null ? null : Clone(config);
         }
         catch
         {
             return null;
+        }
+    }
+
+    private static void MigrateLegacyTbwDefault(string json, AppConfig config)
+    {
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        if (root.TryGetProperty("defaultSsdTbw", out var lower)
+            && lower.ValueKind == JsonValueKind.Number
+            && lower.TryGetDouble(out double value)
+            && value == 750
+            && !root.TryGetProperty("defaultSsdTbwUpper", out _))
+        {
+            config.DefaultSsdTbw = 150;
+            config.DefaultSsdTbwUpper = 600;
         }
     }
 

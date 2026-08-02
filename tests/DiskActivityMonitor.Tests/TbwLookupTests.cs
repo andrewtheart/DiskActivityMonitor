@@ -219,6 +219,54 @@ public class TbwLookupTests
         Assert.Equal("Web TBW lookup is disabled in settings.", readiness.Reason);
     }
 
+    [Fact]
+    public async Task LookupAsync_SerperOnly_UsesDeterministicEvidenceWithoutFoundry()
+    {
+        var provider = new StubSearchProvider(
+        [
+            new("Drive 2TB specification", "https://vendor.example/spec", "The 2TB model is rated for 600 TBW."),
+            new("Drive 2TB review", "https://review.example/test", "Endurance for Drive 2TB: 1200 TBW."),
+            new("Drive 1TB specification", "https://wrong.example/spec", "The 1TB model is rated for 300 TBW."),
+        ]);
+        var service = new TbwLookupService(
+            new DiskActivityMonitor.Core.Configuration.UserSettings
+            {
+                EnableTbwWebLookup = true,
+                TbwLookupMethod = DiskActivityMonitor.Core.Configuration.TbwLookupMethod.SerperOnly,
+            },
+            provider);
+        var progress = new List<TbwLookupProgress>();
+
+        var result = await service.LookupAsync(
+            "Drive 2TB",
+            true,
+            new Progress<TbwLookupProgress>(progress.Add),
+            CancellationToken.None);
+
+        Assert.Equal(DiskActivityMonitor.Core.Configuration.TbwLookupMethod.SerperOnly, result.LookupMethod);
+        Assert.Equal([600d, 1200d], result.Candidates.Select(candidate => candidate.TbwTerabytes).Order().ToArray());
+        Assert.DoesNotContain(result.Candidates, candidate => candidate.TbwTerabytes == 300);
+        Assert.Equal("\"Drive 2TB\" TBW", provider.Query);
+    }
+
+    [Fact]
+    public async Task GetReadiness_SerperOnly_DoesNotRequireFoundry()
+    {
+        var service = new TbwLookupService(
+            new DiskActivityMonitor.Core.Configuration.UserSettings
+            {
+                EnableTbwWebLookup = true,
+                TbwLookupMethod = DiskActivityMonitor.Core.Configuration.TbwLookupMethod.SerperOnly,
+            },
+            new StubSearchProvider([]));
+
+        var readiness = await service.GetReadinessAsync(CancellationToken.None);
+
+        Assert.True(readiness.CanRun);
+        Assert.False(readiness.NeedsFoundryInstall);
+        Assert.False(readiness.NeedsModelDownload);
+    }
+
     [Theory]
     [InlineData("Foundry at http://127.0.0.1:5273", "http://127.0.0.1:5273")]
     [InlineData("https://localhost:9443 ready", "https://localhost:9443")]
@@ -251,6 +299,98 @@ public class TbwLookupTests
     }
 
     [Fact]
+    public void FoundryChatDiagnostics_PreserveRawResponseAndStripThinkFromParsedContent()
+    {
+        const string rawResponse =
+            "{\"id\":\"completion-1\",\"choices\":[{\"message\":{\"content\":\"<think>private returned text</think>\\n[{\\\"tbw_tb\\\":600}]\"}}]}";
+
+        var result = FoundryLocalClient.ParseChatResponse(rawResponse);
+
+        Assert.Equal(rawResponse, result.RawResponseJson);
+        Assert.Equal("[{\"tbw_tb\":600}]", result.Content);
+        Assert.Contains("<think>private returned text</think>", result.RawResponseJson);
+        Assert.DoesNotContain("<think>", result.Content);
+    }
+
+    [Fact]
+    public async Task FoundryChatDiagnostics_RetainErrorResponseBodyBeforeThrowing()
+    {
+        const string response = "{\"error\":{\"message\":\"model rejected request\"}}";
+        using var http = new HttpClient(new FixedResponseHandler(
+            System.Net.HttpStatusCode.BadRequest,
+            response));
+        var client = new FoundryLocalClient(http);
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => client.ChatWithDiagnosticsAsync(
+            "http://127.0.0.1:5273", "model", "system", "user", 10, CancellationToken.None));
+
+        Assert.Equal(response, client.LastResponseJson);
+    }
+
+    [Fact]
+    public void FoundryInstaller_UsesExactOfficialWingetPackageNonInteractively()
+    {
+        var startInfo = FoundryLocalClient.CreateInstallStartInfo("winget.exe");
+
+        Assert.Equal("winget.exe", startInfo.FileName);
+        Assert.False(startInfo.UseShellExecute);
+        Assert.True(startInfo.CreateNoWindow);
+        Assert.True(startInfo.RedirectStandardOutput);
+        Assert.True(startInfo.RedirectStandardError);
+        Assert.Equal(
+            [
+                "install",
+                "--exact",
+                "--id",
+                "Microsoft.FoundryLocal",
+                "--source",
+                "winget",
+                "--accept-package-agreements",
+                "--accept-source-agreements",
+                "--disable-interactivity",
+            ],
+            startInfo.ArgumentList);
+    }
+
+    private sealed class StubSearchProvider(IReadOnlyList<WebSearchHit> hits) : IWebSearchProvider
+    {
+        public string Name => "Serper.dev";
+        public bool IsConfigured => true;
+        public string? Query { get; private set; }
+
+        public Task<IReadOnlyList<WebSearchHit>> SearchAsync(string query, int count, CancellationToken ct)
+        {
+            Query = query;
+            return Task.FromResult(hits);
+        }
+    }
+
+    [Fact]
+    public void ResolveExecutablePath_FindsPathAndWindowsAppsAliases()
+    {
+        string root = Path.Combine(Path.GetTempPath(), $"dam_foundry_{Guid.NewGuid():N}");
+        string pathDirectory = Path.Combine(root, "path");
+        string localAppData = Path.Combine(root, "local");
+        string windowsApps = Path.Combine(localAppData, "Microsoft", "WindowsApps");
+        Directory.CreateDirectory(pathDirectory);
+        Directory.CreateDirectory(windowsApps);
+        string winget = Path.Combine(pathDirectory, "winget.exe");
+        string foundry = Path.Combine(windowsApps, "foundry.exe");
+        File.WriteAllText(winget, "test");
+        File.WriteAllText(foundry, "test");
+        try
+        {
+            Assert.Equal(winget, FoundryLocalClient.ResolveExecutablePath("winget.exe", pathDirectory, localAppData));
+            Assert.Equal(foundry, FoundryLocalClient.ResolveExecutablePath("foundry.exe", "", localAppData));
+            Assert.Null(FoundryLocalClient.ResolveExecutablePath("missing.exe", "", localAppData));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void WebSearchTransport_DisablesRedirectsAndCookies()
     {
         using var handler = WebSearchProviderFactory.CreateSecureHandler();
@@ -277,6 +417,35 @@ public class TbwLookupTests
         Assert.DoesNotContain(apiKey, handler.RequestUri!.OriginalString);
         Assert.DoesNotContain("key=", handler.RequestUri.Query, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(apiKey, handler.ApiKey);
+        Assert.Equal("{\"items\":[]}", provider.LastResponseJson);
+        Assert.DoesNotContain(apiKey, provider.LastResponseJson);
+    }
+
+    [Fact]
+    public async Task SerperLookupDiagnostics_RetainResponseBodyWithoutRequestApiKey()
+    {
+        const string apiKey = "synthetic-serper-api-key";
+        const string response =
+            "{\"organic\":[{\"title\":\"Drive 2TB specification\",\"link\":\"https://vendor.example/spec\",\"snippet\":\"The 2TB model is rated for 600 TBW.\"}]}";
+        var handler = new SerperCapturingHandler(response);
+        using var http = new HttpClient(handler);
+        var provider = new SerperSearchProvider(new AiSecrets { SerperApiKey = apiKey }, http);
+        var service = new TbwLookupService(
+            new DiskActivityMonitor.Core.Configuration.UserSettings
+            {
+                EnableTbwWebLookup = true,
+                TbwLookupMethod = DiskActivityMonitor.Core.Configuration.TbwLookupMethod.SerperOnly,
+            },
+            provider);
+
+        var result = await service.LookupAsync("Drive 2TB", true, null, CancellationToken.None);
+
+        Assert.Equal(apiKey, handler.ApiKey);
+        Assert.Equal(response, provider.LastResponseJson);
+        Assert.Equal(response, result.Diagnostics?.SearchResponseJson);
+        Assert.Equal("Serper.dev", result.Diagnostics?.SearchProvider);
+        Assert.DoesNotContain(apiKey, result.Diagnostics!.SearchResponseJson);
+        Assert.Equal(600, Assert.Single(result.Candidates).TbwTerabytes);
     }
 
     private sealed class CapturingHandler : HttpMessageHandler
@@ -293,6 +462,29 @@ public class TbwLookupTests
                 Content = new StringContent("{\"items\":[]}"),
             });
         }
+    }
+
+    private sealed class SerperCapturingHandler(string response) : HttpMessageHandler
+    {
+        public string? ApiKey { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            ApiKey = request.Headers.TryGetValues("X-API-KEY", out var values) ? values.Single() : null;
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(response),
+            });
+        }
+    }
+
+    private sealed class FixedResponseHandler(System.Net.HttpStatusCode statusCode, string response) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(statusCode)
+            {
+                Content = new StringContent(response),
+            });
     }
 
     [Fact]

@@ -1,3 +1,5 @@
+using DiskActivityMonitor.Core.Configuration;
+
 namespace DiskActivityMonitor.Core.Ai;
 
 /// <summary>Progress stages surfaced to the UI while a TBW web lookup runs.</summary>
@@ -58,6 +60,17 @@ public sealed record TbwCandidate(
     IReadOnlyList<string> Sources,
     string? SampleUrl);
 
+/// <summary>Exact provider response bodies retained for user-requested lookup diagnostics.</summary>
+public sealed record TbwLookupDiagnostics(
+    string SearchProvider,
+    string? SearchResponseJson,
+    string? ModelName = null,
+    string? ModelResponseJson = null)
+{
+    public bool HasSearchResponse => !string.IsNullOrWhiteSpace(SearchResponseJson);
+    public bool HasModelResponse => !string.IsNullOrWhiteSpace(ModelResponseJson);
+}
+
 /// <summary>The result of a TBW web lookup for one drive model.</summary>
 /// <param name="Model">The drive model that was searched.</param>
 /// <param name="Candidates">Candidate TBW values ordered by confidence (highest first).</param>
@@ -67,7 +80,9 @@ public sealed record TbwLookupResult(
     string Model,
     IReadOnlyList<TbwCandidate> Candidates,
     DateTime RetrievedUtc,
-    string? Note = null)
+    string? Note = null,
+    TbwLookupMethod LookupMethod = TbwLookupMethod.FoundryLocal,
+    TbwLookupDiagnostics? Diagnostics = null)
 {
     public bool HasCandidates => Candidates.Count > 0;
 }

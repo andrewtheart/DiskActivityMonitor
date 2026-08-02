@@ -59,16 +59,15 @@ public sealed class AppConfig
     public Dictionary<string, double> DiskTbwRatings { get; set; } = new();
 
     /// <summary>
-    /// Default TBW endurance rating (terabytes written) applied to SSDs without an explicit
-    /// per-disk override. Typical consumer NVMe drives are rated around 600-1200 TBW.
+    /// Conservative lower TBW estimate applied to SSDs without an explicit per-disk rating.
     /// </summary>
-    public double DefaultSsdTbw { get; set; } = 750;
+    public double DefaultSsdTbw { get; set; } = 150;
 
     /// <summary>
     /// Optional upper bound of the default TBW range. When set (and greater than
     /// <see cref="DefaultSsdTbw"/>), endurance figures are shown as a range. Null = single value.
     /// </summary>
-    public double? DefaultSsdTbwUpper { get; set; }
+    public double? DefaultSsdTbwUpper { get; set; } = 600;
 
     /// <summary>
     /// Optional per-disk upper bound of the TBW range, keyed by disk id. When present (and greater
@@ -97,6 +96,7 @@ public sealed class AppConfig
     {
         double lower = EffectiveTbw(diskId);
         if (DiskTbwRatingsUpper.TryGetValue(diskId, out var u) && u > lower) return u;
+        if (DiskTbwRatings.TryGetValue(diskId, out var perDisk) && perDisk > 0) return null;
         if (DefaultSsdTbwUpper is double d && d > lower) return d;
         return null;
     }

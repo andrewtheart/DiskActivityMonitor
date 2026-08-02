@@ -158,12 +158,14 @@ Exiting the tray does not stop the Windows service.
 
 ### Rated TBW
 
-TBW means **terabytes written**, the manufacturer's write-endurance rating. Configure a rating for each SSD whenever possible; otherwise the default rating is used.
+TBW means **terabytes written**, the manufacturer's write-endurance rating. Configure a rating for each SSD whenever possible. When the rating is unknown, the dashboard uses and labels a conservative **150 to 600 TBW estimate**.
 
 A rating can be:
 
 - A single value, such as `600 TBW`.
 - A lower/upper range when the exact model or capacity is uncertain.
+
+Settings provides an explicit **Single TBW** / **TBW Range** choice. Range mode requires a maximum greater than the minimum. Dashboard ranges are always shown from low to high, for example `Drive Life Used: 3% to 10%`.
 
 ### Drive Life Used precision
 
@@ -195,14 +197,42 @@ If no Serper key is configured, normal tray startup offers optional online looku
 
 You can reopen guided setup from Settings at any time.
 
+### Choose an analysis method
+
+Settings offers two distinct choices:
+
+- **Foundry Local verification:** uses an on-device model to extract claims, then validates every claim against the source evidence.
+- **Serper-only evidence parsing:** degraded mode that never installs or starts Foundry. It deterministically accepts only TBW values explicitly linked to the requested model capacity in Serper titles/snippets.
+
+Both modes require an explicit **Apply single** or **Apply range** action before changing the drive rating. When multiple source-backed values disagree, applying the full range preserves that uncertainty.
+
+### Install Foundry Local in-app
+
+When the lookup modal reports that Foundry Local is missing, select **Install Foundry Local**.
+The app then:
+
+1. Uses Windows Package Manager to install the exact official `Microsoft.FoundryLocal` package
+  from the `winget` source.
+2. Verifies the installation with `foundry --version`.
+3. Checks for a compatible on-device model.
+4. Offers the separate model download when one is still required, then resumes the lookup.
+
+Installation begins only after you select the button. Package and source agreements are accepted
+for that requested installation, and Windows may request approval. If `winget` is unavailable,
+install or update **App Installer** from Microsoft Store and try again. Foundry Local's current
+Microsoft prerequisites include Windows 11 version 24H2 or later and DirectX 12-capable GPU
+hardware; unsupported systems receive the package-manager error in the modal.
+
 ### Privacy and data flow
 
-A lookup uses two stages:
+A Foundry lookup uses two stages:
 
 1. **Serper web search:** sends the drive model and search terms to Serper.
 2. **Foundry Local verification:** analyzes returned evidence locally on the computer.
 
 The app rejects candidate values that are not explicitly supported by source text or do not match the requested drive capacity.
+
+Serper-only mode performs the same web search but replaces stage 2 with deterministic parsing. It is clearly labeled as degraded and does not claim local-AI verification.
 
 ### API-key storage
 
@@ -223,10 +253,10 @@ Serper is the default and recommended provider for new users. Google Custom Sear
 ### Run a lookup
 
 1. Select the SSD.
-2. Right-click the **TBW rated** pill.
+2. Right-click the **TBW rated/estimated** pill.
 3. Choose **Look up rated TBW**.
-4. Review the sources, confidence, and candidate values.
-5. Select **Apply** only for the candidate you want saved.
+4. Review the sources, source agreement, and candidate values.
+5. Select **Apply single** for one value or **Apply range** to retain conflicting supported values.
 
 Nothing changes until a candidate is explicitly applied.
 
@@ -382,8 +412,8 @@ Machine-wide collector settings are stored in `%ProgramData%\DiskActivityMonitor
 | `controllerErrorWindowDays` | `14` | Event 11 aggregation window. |
 | `controllerErrorWarnCount` | `3` | Controller warning count. |
 | `controllerErrorCriticalCount` | `10` | Controller critical count. |
-| `defaultSsdTbw` | `750` | Fallback SSD endurance rating. |
-| `defaultSsdTbwUpper` | unset | Optional upper bound for the default rating. |
+| `defaultSsdTbw` | `150` | Lower bound of the estimate used when TBW is unknown. |
+| `defaultSsdTbwUpper` | `600` | Upper bound of the estimate used when TBW is unknown. |
 | `diskTbwRatings` | empty | Per-disk lower/exact TBW values. |
 | `diskTbwRatingsUpper` | empty | Per-disk upper TBW values. |
 | `tbwProjectionWarnYears` | `2` | Projection warning threshold. |
@@ -400,6 +430,7 @@ Session behavior and network-use preferences are stored per Windows user in `%LO
 | `enableTbwWebLookup` | `true` | Enable rated-TBW web lookup for this user. |
 | `suppressTbwOnlineSetupPrompt` | `false` | Suppress this user's guided lookup startup prompt. |
 | `webSearchProvider` | `serper` | This user's `serper` or `google` backend. |
+| `tbwLookupMethod` | `FoundryLocal` | `FoundryLocal` verification or degraded `SerperOnly` parsing. |
 | `tbwLookupModel` | automatic | Optional per-user Foundry Local model override. |
 | `autoSuspendRules` | empty | Rules allowed to suspend processes in this user's session. |
 
@@ -572,8 +603,9 @@ Check:
 1. **Enable rated-TBW web lookup** is selected in this user's dashboard settings.
 2. The selected provider is **serper** for new setups.
 3. A Serper key is saved in guided setup or `SERPER_API_KEY` is set.
-4. Foundry Local is installed and its CLI/service is available.
-5. A suitable local model is installed; use the lookup modal's download action when offered.
+4. For **Foundry Local verification**, Foundry Local and a suitable model are installed. If Foundry
+  is missing, use **Install Foundry Local** in the lookup modal; this requires Windows Package Manager (`winget`).
+5. For **Serper-only evidence parsing**, the backend is locked to Serper; Foundry and a local model are not required.
 6. Internet access permits the selected search API.
 
 If no verified result is found, do not assume the nearest model's rating. Enter the manufacturer's rating manually when known.

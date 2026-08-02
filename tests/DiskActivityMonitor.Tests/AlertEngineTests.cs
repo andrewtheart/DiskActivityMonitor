@@ -143,6 +143,36 @@ public class AlertEngineTests : IDisposable
         Assert.Contains(alerts, a => a.RuleKey == "ssd-24h:0" && a.Severity == AlertSeverity.Critical);
     }
 
+    [Fact]
+    public void Evaluate_UnknownTbwProjection_ReportsEstimatedRange()
+    {
+        var cfg = new AppConfig
+        {
+            SsdWarnGbPerHour = 0,
+            SsdWarnGbPerDay = 0,
+            SsdCriticalGbPerDay = 0,
+            TbwProjectionWarnYears = 2,
+            TbwProjectionCriticalYears = 1,
+        };
+        var now = new DateTime(2025, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+        for (int day = 8; day >= 1; day--)
+        {
+            _repo.AddDiskSamples([new DiskSample
+            {
+                TimestampUtc = now.AddDays(-day),
+                DiskId = "0",
+                WriteBytes = 100_000_000_000_000,
+            }]);
+        }
+
+        var alerts = _engine.Evaluate([MakeSsd()], cfg, now);
+
+        var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "tbw-life:0");
+        Assert.Equal(AlertSeverity.Critical, alert.Severity);
+        Assert.Contains("150 to 600 TBW estimate", alert.Message);
+        Assert.Contains("to", alert.Message);
+    }
+
     // ────────────────────────────────────────── SMART wear percentage
 
     [Fact]

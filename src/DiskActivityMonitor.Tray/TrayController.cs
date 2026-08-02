@@ -22,6 +22,7 @@ internal sealed class TrayController : IDisposable
     private readonly ConfigStore _config;
     private readonly UserSettingsStore _userSettings;
     private readonly NotifyIcon _notifyIcon = new();
+    private DarkTrayContextMenu? _trayMenu;
     private readonly DispatcherTimer _timer;
     private readonly AutoSuspendManager _autoSuspend;
 
@@ -64,12 +65,12 @@ internal sealed class TrayController : IDisposable
         _notifyIcon.Text = "Disk Activity Monitor";
         _notifyIcon.DoubleClick += (_, _) => ShowDashboard();
 
-        var menu = new ContextMenuStrip();
-        menu.Items.Add("Open dashboard", null, (_, _) => ShowDashboard());
-        menu.Items.Add("Open data folder", null, (_, _) => OpenDataFolder());
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Exit", null, (_, _) => System.Windows.Application.Current.Shutdown());
-        _notifyIcon.ContextMenuStrip = menu;
+        _trayMenu = new DarkTrayContextMenu();
+        _trayMenu.AddCommand("Open dashboard", (_, _) => ShowDashboard());
+        _trayMenu.AddCommand("Open data folder", (_, _) => OpenDataFolder());
+        _trayMenu.AddDivider();
+        _trayMenu.AddCommand("Exit", (_, _) => System.Windows.Application.Current.Shutdown());
+        _notifyIcon.ContextMenuStrip = _trayMenu;
 
         // Suppress balloons for alerts that already existed when the app launched.
         _lastBalloonAlertId = _repo.GetRecentAlerts(1).FirstOrDefault()?.Id ?? 0;
@@ -355,6 +356,9 @@ internal sealed class TrayController : IDisposable
         _timer.Stop();
         _toastTimer.Stop();
         _notifyIcon.Visible = false;
+        _notifyIcon.ContextMenuStrip = null;
+        _trayMenu?.Dispose();
+        _trayMenu = null;
         _notifyIcon.Dispose();
         _currentIcon?.Dispose();
         _window?.ForceClose();

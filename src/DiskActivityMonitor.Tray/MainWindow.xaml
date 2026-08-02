@@ -9,6 +9,7 @@
         WindowStyle="None"
         ResizeMode="CanResize"
         Background="{StaticResource WindowBg}"
+        FontFamily="Segoe UI"
         TextOptions.TextFormattingMode="Display"
         UseLayoutRounding="True">
 
@@ -174,7 +175,7 @@
                                         </MenuItem>
                                     </ContextMenu>
                                 </Border.ContextMenu>
-                                <TextBlock x:Name="EnduranceRatedText" Text="750 TBW rated"
+                                <TextBlock x:Name="EnduranceRatedText" Text="150 to 600 TBW estimated"
                                            Foreground="{StaticResource TextSecondary}" FontSize="12" />
                             </Border>
                         </Grid>
@@ -634,11 +635,21 @@
                                 <TextBox x:Name="TxtRefresh" Style="{StaticResource DarkTextBox}" />
                             </StackPanel>
                             <StackPanel Margin="0,0,24,12">
-                                <TextBlock x:Name="TbwLabel" Style="{StaticResource FieldLabel}" Text="TBW rating for this disk (TB)" />
+                                <TextBlock x:Name="TbwLabel" Style="{StaticResource FieldLabel}" Text="TBW setting for this disk" />
+                                <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                                    <RadioButton x:Name="RadTbwSingle" GroupName="TbwRatingMode" Content="Single TBW"
+                                                 Foreground="{StaticResource TextPrimary}" Checked="TbwMode_Checked" />
+                                    <RadioButton x:Name="RadTbwRange" GroupName="TbwRatingMode" Content="TBW Range"
+                                                 Foreground="{StaticResource TextPrimary}" Margin="16,0,0,0"
+                                                 Checked="TbwMode_Checked" />
+                                </StackPanel>
+                            </StackPanel>
+                            <StackPanel x:Name="TbwLowerPanel" Margin="0,0,24,12">
+                                <TextBlock x:Name="TbwLowerLabel" Style="{StaticResource FieldLabel}" Text="TBW rating (TB)" />
                                 <TextBox x:Name="TxtTbw" Style="{StaticResource DarkTextBox}" />
                             </StackPanel>
-                            <StackPanel Margin="0,0,24,12">
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="Upper TBW (optional)" />
+                            <StackPanel x:Name="TbwUpperPanel" Margin="0,0,24,12" Visibility="Collapsed">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="Maximum TBW (TB)" />
                                 <TextBox x:Name="TxtTbwUpper" Style="{StaticResource DarkTextBox}" />
                             </StackPanel>
                             <StackPanel Margin="0,0,24,12">
@@ -651,7 +662,19 @@
                         <Border Background="#15181B" CornerRadius="8" Padding="14,11" Margin="0,6,0,4">
                             <StackPanel>
                                 <CheckBox x:Name="ChkTbwLookup" Foreground="{StaticResource TextPrimary}"
-                                          Content="Search the web for each SSD's rated TBW on startup (uses a local Foundry Local model)" />
+                                          Content="Search the web for each SSD's rated TBW on startup" />
+                                <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                    <TextBlock Style="{StaticResource FieldLabel}" Text="Evidence analysis" Margin="0,0,14,0" />
+                                    <RadioButton x:Name="RadTbwLookupFoundry" GroupName="TbwLookupMode"
+                                            Content="Foundry Local verification" Foreground="{StaticResource TextPrimary}"
+                                            Checked="TbwLookupMethod_Checked" />
+                                    <RadioButton x:Name="RadTbwLookupSerperOnly" GroupName="TbwLookupMode"
+                                                 Content="Serper-only evidence parsing" Foreground="{StaticResource TextPrimary}"
+                                            Margin="18,0,0,0" Checked="TbwLookupMethod_Checked" />
+                                </StackPanel>
+                                    <TextBlock x:Name="TbwLookupMethodHint" Style="{StaticResource Caption}"
+                                         TextWrapping="Wrap" Margin="0,5,0,0"
+                                         Text="Foundry verifies search evidence with an on-device model before candidates are shown." />
                                 <Button Content="Guided Serper setup..." Style="{StaticResource ToolButton}"
                                     HorizontalAlignment="Left" Margin="0,10,0,0"
                                     Click="TbwSetupShowFromSettings_Click" />
@@ -1028,11 +1051,33 @@
                                     </Border>
                                     <StackPanel Grid.Column="1" Margin="8,0,0,0">
                                         <TextBlock Text="Paste your API key" FontWeight="SemiBold" />
-                                        <PasswordBox x:Name="TbwSetupSerperKey" Margin="0,8,0,0" Height="34"
-                                                     AutomationProperties.Name="Serper API key"
+                                        <Grid Margin="0,8,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <PasswordBox x:Name="TbwSetupSerperKey" Grid.Column="0" Height="34"
+                                                         AutomationProperties.Name="Serper API key"
+                                                         Background="#111418" Foreground="{StaticResource TextPrimary}"
+                                                         BorderBrush="{StaticResource CardBorder}" BorderThickness="1"
+                                                         Padding="9,6" PasswordChar="&#x25CF;" />
+                                            <TextBox x:Name="TbwSetupSerperKeyReveal" Grid.Column="0" Height="34"
+                                                     AutomationProperties.Name="Visible Serper API key"
                                                      Background="#111418" Foreground="{StaticResource TextPrimary}"
                                                      BorderBrush="{StaticResource CardBorder}" BorderThickness="1"
-                                                     Padding="9,6" PasswordChar="&#x25CF;" />
+                                                     Padding="9,6" Visibility="Collapsed" />
+                                            <ToggleButton x:Name="TbwSetupSerperKeyRevealButton" Grid.Column="1"
+                                                          Width="36" Height="34" Margin="7,0,0,0" Padding="0"
+                                                          Style="{StaticResource ToggleTool}"
+                                                          AutomationProperties.Name="Show API key"
+                                                          ToolTip="Show API key"
+                                                          Checked="TbwSetupRevealKey_Checked"
+                                                          Unchecked="TbwSetupRevealKey_Unchecked">
+                                                <TextBlock x:Name="TbwSetupSerperKeyRevealGlyph" Text="&#xE890;"
+                                                           FontFamily="Segoe MDL2 Assets" FontSize="15"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                            </ToggleButton>
+                                        </Grid>
                                         <TextBlock x:Name="TbwSetupErrorText" Foreground="{StaticResource Critical}"
                                                    FontSize="11.5" TextWrapping="Wrap" Margin="0,6,0,0"
                                                    Visibility="Collapsed" />
@@ -1151,9 +1196,9 @@
                                 </Border>
                                 <Border Grid.Column="2" Background="#171A1F" CornerRadius="8" Padding="12">
                                     <StackPanel>
-                                        <TextBlock Text="LOCAL VERIFICATION" Style="{StaticResource Caption}" />
-                                        <TextBlock Text="On-device model" FontSize="14" FontWeight="SemiBold" Margin="0,4,0,0" />
-                                        <TextBlock Text="Extracts candidates; unsupported values are rejected."
+                                        <TextBlock x:Name="TbwLookupAnalysisHeading" Text="LOCAL VERIFICATION" Style="{StaticResource Caption}" />
+                                        <TextBlock x:Name="TbwLookupAnalysisTitle" Text="On-device model" FontSize="14" FontWeight="SemiBold" Margin="0,4,0,0" />
+                                        <TextBlock x:Name="TbwLookupAnalysisText" Text="Extracts candidates; unsupported values are rejected."
                                                    Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,2,0,0" />
                                     </StackPanel>
                                 </Border>
@@ -1169,15 +1214,135 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Style="{StaticResource Caption}" VerticalAlignment="Center" TextWrapping="Wrap"
-                                   Text="Nothing changes until you explicitly apply a verified candidate." />
+                        <TextBlock x:Name="TbwLookupFooterText" Style="{StaticResource Caption}"
+                                   VerticalAlignment="Center" TextWrapping="Wrap"
+                                   Text="Nothing changes until you explicitly apply a candidate." />
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="14,0,0,0">
+                            <Button x:Name="TbwLookupRawResultsButton" Content="Raw results"
+                                Style="{StaticResource ToolButton}" Visibility="Collapsed"
+                                Click="TbwLookupRawResults_Click" />
                             <Button x:Name="TbwLookupAgainButton" Content="Search again"
-                                    Style="{StaticResource ToolButton}" Visibility="Collapsed"
+                                Style="{StaticResource ToolButton}" Visibility="Collapsed" Margin="8,0,0,0"
                                     Click="TbwLookupAgain_Click" />
                             <Button Content="Close" Style="{StaticResource ToolButton}" Margin="8,0,0,0"
                                     Click="TbwLookupClose_Click" />
                         </StackPanel>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- Exact search/model API response viewer opened from Rated TBW lookup -->
+        <Grid x:Name="TbwRawResultsOverlay" Grid.RowSpan="2" Panel.ZIndex="1250"
+              Background="#E815181B" Visibility="Collapsed">
+            <Border Width="900" MaxWidth="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=Grid}}"
+                    Height="680" MaxHeight="{Binding ActualHeight, RelativeSource={RelativeSource AncestorType=Grid}}"
+                    Margin="28" VerticalAlignment="Center"
+                    Background="#1E2228" BorderBrush="#3A414A" BorderThickness="1"
+                    CornerRadius="12" Padding="0">
+                <Border.Effect>
+                    <DropShadowEffect Color="#000000" BlurRadius="30" ShadowDepth="10" Opacity="0.65" />
+                </Border.Effect>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Margin="22,18,16,14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="Lookup raw results" FontSize="19" FontWeight="SemiBold" />
+                            <TextBlock Text="Exact provider response bodies, formatted for inspection"
+                                       Style="{StaticResource Caption}" Margin="0,3,0,0" />
+                        </StackPanel>
+                        <Button Grid.Column="1" Style="{StaticResource DismissButton}" Width="30" Height="30"
+                                FontSize="14" Content="&#x2715;" ToolTip="Close raw results"
+                                Click="TbwRawResultsClose_Click" />
+                    </Grid>
+
+                    <TabControl x:Name="TbwRawResultsTabs" Grid.Row="1" Margin="22,0,22,0"
+                                Background="Transparent" BorderThickness="0">
+                        <TabControl.Resources>
+                            <Style TargetType="TabItem">
+                                <Setter Property="Foreground" Value="{StaticResource TextSecondary}" />
+                                <Setter Property="Background" Value="#171A1F" />
+                                <Setter Property="Padding" Value="14,8" />
+                                <Setter Property="Margin" Value="0,0,4,0" />
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="TabItem">
+                                            <Border x:Name="TabBorder" Background="{TemplateBinding Background}"
+                                                    CornerRadius="6,6,0,0" Padding="{TemplateBinding Padding}">
+                                                <ContentPresenter ContentSource="Header"
+                                                                  HorizontalAlignment="Center" />
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="TabBorder" Property="Background" Value="#2A2E34" />
+                                                </Trigger>
+                                                <Trigger Property="IsSelected" Value="True">
+                                                    <Setter TargetName="TabBorder" Property="Background" Value="#343A42" />
+                                                    <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </TabControl.Resources>
+
+                        <TabItem x:Name="TbwRawSearchTab" Header="Serper response">
+                            <Grid Background="#171A1F">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <TextBlock x:Name="TbwRawSearchMeta" Style="{StaticResource Caption}"
+                                           Margin="12,10,12,8" TextWrapping="Wrap" />
+                                <TextBox x:Name="TbwRawSearchText" Grid.Row="1" Margin="8,0,8,8"
+                                         IsReadOnly="True" AcceptsReturn="True" AcceptsTab="True"
+                                         FontFamily="Cascadia Mono" FontSize="12" TextWrapping="NoWrap"
+                                         HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                                         Background="#111418" Foreground="{StaticResource TextPrimary}"
+                                         BorderBrush="{StaticResource CardBorder}" BorderThickness="1"
+                                         Padding="12" />
+                            </Grid>
+                        </TabItem>
+
+                        <TabItem x:Name="TbwRawModelTab" Header="Model response">
+                            <Grid Background="#171A1F">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <TextBlock x:Name="TbwRawModelMeta" Style="{StaticResource Caption}"
+                                           Margin="12,10,12,8" TextWrapping="Wrap" />
+                                <TextBox x:Name="TbwRawModelText" Grid.Row="1" Margin="8,0,8,8"
+                                         IsReadOnly="True" AcceptsReturn="True" AcceptsTab="True"
+                                         FontFamily="Cascadia Mono" FontSize="12" TextWrapping="NoWrap"
+                                         HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                                         Background="#111418" Foreground="{StaticResource TextPrimary}"
+                                         BorderBrush="{StaticResource CardBorder}" BorderThickness="1"
+                                         Padding="12" />
+                            </Grid>
+                        </TabItem>
+                    </TabControl>
+
+                    <Grid Grid.Row="2" Margin="22,13,22,18">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Style="{StaticResource Caption}" VerticalAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   Text="API keys are never included. Model reasoning appears only when the local API returned it; hidden reasoning is not reconstructed." />
+                        <Button Grid.Column="1" Content="Close" Style="{StaticResource ToolButton}"
+                                Margin="14,0,0,0" Click="TbwRawResultsClose_Click" />
                     </Grid>
                 </Grid>
             </Border>

@@ -17,6 +17,13 @@ public interface IWebSearchProvider
     Task<IReadOnlyList<WebSearchHit>> SearchAsync(string query, int count, CancellationToken ct);
 }
 
+/// <summary>Optional response diagnostics exposed by providers that use a JSON HTTP API.</summary>
+public interface IWebSearchDiagnosticsProvider
+{
+    /// <summary>The exact most-recent HTTP response body. Request headers and API keys are excluded.</summary>
+    string? LastResponseJson { get; }
+}
+
 /// <summary>Creates the configured web search provider.</summary>
 public static class WebSearchProviderFactory
 {
@@ -44,7 +51,7 @@ public static class WebSearchProviderFactory
 }
 
 /// <summary>Google Programmable Search via the official Custom Search JSON API (100 queries/day free).</summary>
-public sealed class GoogleCseSearchProvider : IWebSearchProvider
+public sealed class GoogleCseSearchProvider : IWebSearchProvider, IWebSearchDiagnosticsProvider
 {
     private readonly AiSecrets _secrets;
     private readonly HttpClient _http;
@@ -57,11 +64,14 @@ public sealed class GoogleCseSearchProvider : IWebSearchProvider
 
     public string Name => "Google Custom Search";
 
+    public string? LastResponseJson { get; private set; }
+
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(_secrets.GoogleApiKey) && !string.IsNullOrWhiteSpace(_secrets.GoogleCseId);
 
     public async Task<IReadOnlyList<WebSearchHit>> SearchAsync(string query, int count, CancellationToken ct)
     {
+        LastResponseJson = null;
         if (!IsConfigured) throw new InvalidOperationException("Google Custom Search key/engine id not configured.");
         int num = Math.Clamp(count, 1, 10);
         string uri = "https://www.googleapis.com/customsearch/v1?cx=" + Uri.EscapeDataString(_secrets.GoogleCseId!) +
@@ -70,8 +80,9 @@ public sealed class GoogleCseSearchProvider : IWebSearchProvider
         using var req = new HttpRequestMessage(HttpMethod.Get, uri);
         req.Headers.TryAddWithoutValidation("X-Goog-Api-Key", _secrets.GoogleApiKey!.Trim());
         using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+        LastResponseJson = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         resp.EnsureSuccessStatusCode();
-        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
+        using var doc = JsonDocument.Parse(LastResponseJson);
 
         var hits = new List<WebSearchHit>();
         if (doc.RootElement.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Array)
@@ -93,7 +104,7 @@ public sealed class GoogleCseSearchProvider : IWebSearchProvider
 }
 
 /// <summary>serper.dev Google Search API (single API key).</summary>
-public sealed class SerperSearchProvider : IWebSearchProvider
+public sealed class SerperSearchProvider : IWebSearchProvider, IWebSearchDiagnosticsProvider
 {
     private readonly AiSecrets _secrets;
     private readonly HttpClient _http;
@@ -106,10 +117,13 @@ public sealed class SerperSearchProvider : IWebSearchProvider
 
     public string Name => "Serper.dev";
 
+    public string? LastResponseJson { get; private set; }
+
     public bool IsConfigured => !string.IsNullOrWhiteSpace(_secrets.SerperApiKey);
 
     public async Task<IReadOnlyList<WebSearchHit>> SearchAsync(string query, int count, CancellationToken ct)
     {
+        LastResponseJson = null;
         if (!IsConfigured) throw new InvalidOperationException("Serper.dev API key not configured.");
         int num = Math.Clamp(count, 1, 10);
 
@@ -119,8 +133,9 @@ public sealed class SerperSearchProvider : IWebSearchProvider
             JsonSerializer.Serialize(new { q = query, num }), Encoding.UTF8, "application/json");
 
         using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+        LastResponseJson = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         resp.EnsureSuccessStatusCode();
-        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
+        using var doc = JsonDocument.Parse(LastResponseJson);
 
         var hits = new List<WebSearchHit>();
         if (doc.RootElement.TryGetProperty("organic", out var organic) && organic.ValueKind == JsonValueKind.Array)

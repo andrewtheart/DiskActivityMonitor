@@ -89,19 +89,30 @@ public sealed class AlertEngine
 
                 if (avgPerDay > 0)
                 {
-                    double tbw = cfg.EffectiveTbw(disk.DiskId);
-                    double years = tbw * 1_000_000_000_000d / (avgPerDay * 365.0);
-                    AlertSeverity? severity = years <= cfg.TbwProjectionCriticalYears ? AlertSeverity.Critical
-                        : years <= cfg.TbwProjectionWarnYears ? AlertSeverity.Warning
+                    double tbwLow = cfg.EffectiveTbw(disk.DiskId);
+                    double? tbwHigh = cfg.EffectiveTbwUpper(disk.DiskId);
+                    double yearsLow = tbwLow * 1_000_000_000_000d / (avgPerDay * 365.0);
+                    double yearsHigh = (tbwHigh ?? tbwLow) * 1_000_000_000_000d / (avgPerDay * 365.0);
+                    AlertSeverity? severity = yearsLow <= cfg.TbwProjectionCriticalYears ? AlertSeverity.Critical
+                        : yearsLow <= cfg.TbwProjectionWarnYears ? AlertSeverity.Warning
                         : null;
                     if (severity is not null)
+                    {
+                        bool estimated = !cfg.DiskTbwRatings.ContainsKey(disk.DiskId);
+                        string rating = tbwHigh.HasValue
+                            ? $"{tbwLow:0.#} to {tbwHigh:0.#} TBW {(estimated ? "estimate" : "range")}"
+                            : $"{tbwLow:0.#} TBW rating";
+                        string projection = tbwHigh.HasValue
+                            ? $"{FormatYears(yearsLow)} to {FormatYears(yearsHigh)}"
+                            : FormatYears(yearsLow);
                         Emit(raised, cooldown, nowUtc,
                             ruleKey: $"tbw-life:{disk.DiskId}",
                             severity: severity.Value,
                             title: $"{disk.DisplayName} is on track to wear out",
-                            message: $"At the recent average of {ByteFormat.Humanize(avgPerDay)}/day, {disk.DisplayName} would reach its {tbw:0.#} TBW endurance rating in about {FormatYears(years)}.",
-                            value: years,
+                            message: $"At the recent average of {ByteFormat.Humanize(avgPerDay)}/day, {disk.DisplayName} would reach its {rating} in about {projection}.",
+                            value: yearsLow,
                             threshold: cfg.TbwProjectionWarnYears);
+                    }
                 }
             }
         }

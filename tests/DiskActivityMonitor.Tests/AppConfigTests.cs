@@ -23,8 +23,8 @@ public class AppConfigTests
         Assert.Equal(14, cfg.ControllerErrorWindowDays);
         Assert.Equal(3, cfg.ControllerErrorWarnCount);
         Assert.Equal(10, cfg.ControllerErrorCriticalCount);
-        Assert.Equal(750, cfg.DefaultSsdTbw);
-        Assert.Null(cfg.DefaultSsdTbwUpper);
+        Assert.Equal(150, cfg.DefaultSsdTbw);
+        Assert.Equal(600, cfg.DefaultSsdTbwUpper);
         Assert.Equal(90, cfg.SsdWearWarnPercent);
         Assert.Equal(2, cfg.TbwProjectionWarnYears);
         Assert.Equal(1, cfg.TbwProjectionCriticalYears);
@@ -113,6 +113,19 @@ public class AppConfigTests
     }
 
     [Fact]
+    public void EffectiveTbwUpper_PerDiskLowerWithoutUpper_IsExplicitSingleRating()
+    {
+        var cfg = new AppConfig
+        {
+            DefaultSsdTbw = 150,
+            DefaultSsdTbwUpper = 600,
+            DiskTbwRatings = { ["disk0"] = 300 },
+        };
+
+        Assert.Null(cfg.EffectiveTbwUpper("disk0"));
+    }
+
+    [Fact]
     public void JsonRoundTrip_PreservesValues()
     {
         var cfg = new AppConfig
@@ -160,7 +173,7 @@ public class AppConfigTests
     [Fact]
     public void JsonSerialization_OmitsNulls()
     {
-        var cfg = new AppConfig(); // DefaultSsdTbwUpper is null
+        var cfg = new AppConfig { DefaultSsdTbwUpper = null };
         var json = JsonSerializer.Serialize(cfg, AppConfig.SerializerOptions);
         Assert.DoesNotContain("defaultSsdTbwUpper", json);
     }
@@ -175,6 +188,7 @@ public class AppConfigTests
             "EnableTbwWebLookup",
             "SuppressTbwOnlineSetupPrompt",
             "WebSearchProvider",
+            "TbwLookupMethod",
             "TbwLookupModel",
         ];
 

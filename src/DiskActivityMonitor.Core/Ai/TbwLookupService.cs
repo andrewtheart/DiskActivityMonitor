@@ -5,23 +5,31 @@ using System.Text.RegularExpressions;
 namespace DiskActivityMonitor.Core.Ai;
 
 /// <summary>Whether a TBW web lookup can run on this machine right now, and what (if anything) is missing.</summary>
-/// <param name="CanRun">True when a search backend + a usable local model are ready.</param>
+/// <param name="CanRun">True when the selected search and evidence-analysis method are ready.</param>
 /// <param name="Reason">Why it cannot run (shown to the user) when <paramref name="CanRun"/> is false.</param>
 /// <param name="NeedsModelDownload">A search key + Foundry are present but no suitable model is cached.</param>
 /// <param name="DownloadAlias">The model alias that would be downloaded on consent.</param>
 /// <param name="HasUsableGpu">A discrete GPU with enough VRAM was detected.</param>
-public sealed record TbwReadiness(bool CanRun, string? Reason, bool NeedsModelDownload, string? DownloadAlias, bool HasUsableGpu);
+/// <param name="NeedsFoundryInstall">Foundry Local must be installed before local verification can run.</param>
+public sealed record TbwReadiness(
+    bool CanRun,
+    string? Reason,
+    bool NeedsModelDownload,
+    string? DownloadAlias,
+    bool HasUsableGpu,
+    bool NeedsFoundryInstall = false);
 
 /// <summary>
-/// Orchestrates the "search the web for this drive's TBW rating" feature: web search -> local model
-/// extracts TBW claims per source -> aggregate into candidates with confidence scores by source
-/// agreement. Uses Foundry Local (HTTP) for inference and Google/Serper for search.
+/// Orchestrates the "search the web for this drive's TBW rating" feature. Foundry mode combines
+/// local-model extraction with deterministic evidence validation; Serper-only mode uses only the
+/// deterministic parser. Both aggregate candidates by independent source agreement.
 /// </summary>
 public sealed class TbwLookupService
 {
     private readonly Configuration.UserSettings _settings;
     private readonly Action<string>? _log;
     private readonly FoundryLocalClient _foundry;
+    private readonly IWebSearchProvider? _searchProviderOverride;
     private readonly HardwareCapabilityDetector _detector = new();
     private AiSecrets _secrets;
 
@@ -37,10 +45,18 @@ public sealed class TbwLookupService
         _secrets = AiSecretsStore.Load();
     }
 
+    internal TbwLookupService(Configuration.UserSettings settings, IWebSearchProvider searchProvider, Action<string>? log = null)
+        : this(settings, log)
+    {
+        _searchProviderOverride = searchProvider;
+    }
+
     /// <summary>Reloads API keys from the per-user secrets store / environment.</summary>
     public void ReloadSecrets() => _secrets = AiSecretsStore.Load();
 
-    private IWebSearchProvider SearchProvider => WebSearchProviderFactory.Create(_settings.WebSearchProvider, _secrets);
+    private IWebSearchProvider SearchProvider => _searchProviderOverride ?? WebSearchProviderFactory.Create(
+        _settings.TbwLookupMethod == Configuration.TbwLookupMethod.SerperOnly ? "serper" : _settings.WebSearchProvider,
+        _secrets);
 
     /// <summary>Checks whether a lookup can run and, if not, what is missing.</summary>
     public async Task<TbwReadiness> GetReadinessAsync(CancellationToken ct)
@@ -52,8 +68,17 @@ public sealed class TbwLookupService
         if (!provider.IsConfigured)
             return new TbwReadiness(false, $"{provider.Name} is not configured. Add a search API key in Settings.", false, null, false);
 
+        if (_settings.TbwLookupMethod == Configuration.TbwLookupMethod.SerperOnly)
+            return new TbwReadiness(true, null, false, null, false);
+
         if (!FoundryLocalClient.CliAvailable)
-            return new TbwReadiness(false, "Foundry Local is not installed. Install it to enable on-device web lookup.", false, null, false);
+            return new TbwReadiness(
+                false,
+                "Foundry Local is not installed. Install the official Microsoft package through Windows Package Manager; Windows may request approval.",
+                false,
+                null,
+                false,
+                NeedsFoundryInstall: true);
 
         _endpoint = await _foundry.EnsureEndpointAsync(ct).ConfigureAwait(false);
         if (_endpoint is null)
@@ -91,18 +116,22 @@ public sealed class TbwLookupService
     {
         driveModel = (driveModel ?? "").Trim();
         if (driveModel.Length == 0)
-            return new TbwLookupResult("", Array.Empty<TbwCandidate>(), DateTime.UtcNow, "No drive model available.");
+            return new TbwLookupResult("", Array.Empty<TbwCandidate>(), DateTime.UtcNow, "No drive model available.", _settings.TbwLookupMethod);
 
-        if (!force && TbwLookupCache.TryGet(driveModel, out var cachedResult))
+        if (!force && TbwLookupCache.TryGet(driveModel, out var cachedResult)
+            && cachedResult?.LookupMethod == _settings.TbwLookupMethod)
             return cachedResult!;
 
         if (_endpoint is null || _resolvedModel is null)
         {
             var readiness = await GetReadinessAsync(ct).ConfigureAwait(false);
             if (!readiness.CanRun)
-                return new TbwLookupResult(driveModel, Array.Empty<TbwCandidate>(), DateTime.UtcNow, readiness.Reason);
+                return new TbwLookupResult(driveModel, Array.Empty<TbwCandidate>(), DateTime.UtcNow, readiness.Reason, _settings.TbwLookupMethod);
         }
 
+        IWebSearchProvider? providerUsed = null;
+        string? searchResponseJson = null;
+        string? modelResponseJson = null;
         try
         {
             // 1. Search the web.
@@ -110,40 +139,90 @@ public sealed class TbwLookupService
             // Keep the query short: exact model + TBW yields capacity/rating snippets, while
             // extra generic endurance terms tend to surface comparisons and unrelated models.
             string query = $"\"{driveModel}\" TBW";
-            var hits = await SearchProvider.SearchAsync(query, 8, ct).ConfigureAwait(false);
+            providerUsed = SearchProvider;
+            var hits = await providerUsed.SearchAsync(query, 8, ct).ConfigureAwait(false);
+            searchResponseJson = (providerUsed as IWebSearchDiagnosticsProvider)?.LastResponseJson;
             if (hits.Count == 0)
-                return Finish(driveModel, Array.Empty<TbwCandidate>(), "No web results found for this drive.");
+                return Finish(
+                    driveModel,
+                    Array.Empty<TbwCandidate>(),
+                    "No web results found for this drive.",
+                    CreateDiagnostics(providerUsed, searchResponseJson, modelResponseJson));
 
-            // 2. Have the local model extract per-source TBW claims.
-            progress?.Report(new TbwLookupProgress(TbwLookupStage.Analyzing, _resolvedModel));
-            var modelClaims = await ExtractClaimsAsync(driveModel, hits, ct).ConfigureAwait(false);
-
-            // Search snippets often contain an explicit, capacity-linked rating. Add those claims
-            // deterministically so a small local model cannot lose a valid result by omitting it.
-            // Both paths still pass the same source-evidence and exact-capacity validation.
-            var claims = modelClaims.Concat(ExtractExplicitClaims(driveModel, hits)).ToList();
+            IReadOnlyList<TbwClaim> claims;
+            if (_settings.TbwLookupMethod == Configuration.TbwLookupMethod.SerperOnly)
+            {
+                progress?.Report(new TbwLookupProgress(TbwLookupStage.Analyzing, "Deterministic evidence parser"));
+                claims = ExtractExplicitClaims(driveModel, hits);
+            }
+            else
+            {
+                // Search snippets often contain an explicit, capacity-linked rating. Add those claims
+                // deterministically so a small local model cannot lose a valid result by omitting it.
+                // Both paths still pass the same source-evidence and exact-capacity validation.
+                progress?.Report(new TbwLookupProgress(TbwLookupStage.Analyzing, _resolvedModel));
+                var extraction = await ExtractClaimsAsync(driveModel, hits, ct).ConfigureAwait(false);
+                modelResponseJson = extraction.RawResponseJson;
+                claims = extraction.Claims.Concat(ExtractExplicitClaims(driveModel, hits)).ToList();
+            }
 
             // 3. Aggregate into candidates with confidence by source agreement.
             var candidates = Aggregate(claims);
-            var note = candidates.Count == 0 ? "No TBW rating could be extracted from the search results." : null;
-            return Finish(driveModel, candidates, note);
+            var note = candidates.Count == 0
+                ? _settings.TbwLookupMethod == Configuration.TbwLookupMethod.SerperOnly
+                    ? "No explicit, capacity-matched TBW rating was present in the Serper evidence."
+                    : "No TBW rating could be extracted from the search results."
+                : null;
+            return Finish(
+                driveModel,
+                candidates,
+                note,
+                CreateDiagnostics(providerUsed, searchResponseJson, modelResponseJson));
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
+            searchResponseJson ??= (providerUsed as IWebSearchDiagnosticsProvider)?.LastResponseJson;
+            modelResponseJson ??= _foundry.LastResponseJson;
             _log?.Invoke($"TBW lookup failed: {ex.Message}");
-            return new TbwLookupResult(driveModel, Array.Empty<TbwCandidate>(), DateTime.UtcNow, $"Lookup failed: {ex.Message}");
+            return new TbwLookupResult(
+                driveModel,
+                Array.Empty<TbwCandidate>(),
+                DateTime.UtcNow,
+                $"Lookup failed: {ex.Message}",
+                _settings.TbwLookupMethod,
+                CreateDiagnostics(providerUsed, searchResponseJson, modelResponseJson));
         }
     }
 
-    private TbwLookupResult Finish(string model, IReadOnlyList<TbwCandidate> candidates, string? note)
+    private TbwLookupResult Finish(
+        string model,
+        IReadOnlyList<TbwCandidate> candidates,
+        string? note,
+        TbwLookupDiagnostics? diagnostics)
     {
-        var result = new TbwLookupResult(model, candidates, DateTime.UtcNow, note);
+        var result = new TbwLookupResult(model, candidates, DateTime.UtcNow, note, _settings.TbwLookupMethod, diagnostics);
         TbwLookupCache.Put(result);
         return result;
     }
 
-    private async Task<IReadOnlyList<TbwClaim>> ExtractClaimsAsync(string driveModel, IReadOnlyList<WebSearchHit> hits, CancellationToken ct)
+    private TbwLookupDiagnostics? CreateDiagnostics(
+        IWebSearchProvider? provider,
+        string? searchResponseJson,
+        string? modelResponseJson)
+    {
+        if (string.IsNullOrWhiteSpace(searchResponseJson) && string.IsNullOrWhiteSpace(modelResponseJson))
+            return null;
+        return new TbwLookupDiagnostics(
+            provider?.Name ?? "Search provider",
+            searchResponseJson,
+            modelResponseJson is null ? null : _resolvedModel,
+            modelResponseJson);
+    }
+
+    private sealed record ModelExtraction(IReadOnlyList<TbwClaim> Claims, string RawResponseJson);
+
+    private async Task<ModelExtraction> ExtractClaimsAsync(string driveModel, IReadOnlyList<WebSearchHit> hits, CancellationToken ct)
     {
         var sb = new StringBuilder();
         for (int i = 0; i < hits.Count; i++)
@@ -162,8 +241,9 @@ public sealed class TbwLookupService
         string noThink = (_resolvedModel ?? "").Contains("qwen3", StringComparison.OrdinalIgnoreCase) ? " /no_think" : "";
         string user = $"Drive model: {driveModel}\n\nSearch results:\n{sb}\n\nReturn the JSON array now.{noThink}";
 
-        string raw = await _foundry.ChatAsync(_endpoint!, _resolvedModel!, system, user, maxTokens: 800, ct).ConfigureAwait(false);
-        return ParseClaims(raw, hits, driveModel);
+        var chat = await _foundry.ChatWithDiagnosticsAsync(
+            _endpoint!, _resolvedModel!, system, user, maxTokens: 800, ct).ConfigureAwait(false);
+        return new ModelExtraction(ParseClaims(chat.Content, hits, driveModel), chat.RawResponseJson);
     }
 
     /// <summary>

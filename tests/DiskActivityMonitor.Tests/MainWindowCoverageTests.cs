@@ -68,6 +68,7 @@ public sealed class MainWindowCoverageTests : IDisposable
             window.DiskSelector.SelectedItem = hddChoice;
             try
             {
+                Assert.Equal("Segoe UI", window.FontFamily.Source);
                 Assert.NotNull(window.HeaderAppIcon.Source);
                 Assert.Equal(42, window.HeaderAppIcon.Width);
                 Assert.Equal(42, window.HeaderAppIcon.Height);
@@ -251,6 +252,7 @@ public sealed class MainWindowCoverageTests : IDisposable
                 window.TxtControllerCritical.Text = "2";
                 window.TxtInterval.Text = "999";
                 window.TxtRefresh.Text = "9999";
+                window.RadTbwRange.IsChecked = true;
                 window.TxtTbw.Text = "900";
                 window.TxtTbwUpper.Text = "1200";
                 window.ChkControllerErrors.IsChecked = false;
@@ -266,8 +268,16 @@ public sealed class MainWindowCoverageTests : IDisposable
                 window.TxtTbwUpper.Text = "1";
                 window.TxtControllerWarn.Text = "0";
                 window.Save_Click(window, new RoutedEventArgs());
-                Assert.False(config.Current.DiskTbwRatings.ContainsKey("2"));
+                Assert.Equal("Enter a minimum TBW greater than 0.", window.SaveStatus.Text);
+                Assert.Equal(900, config.Current.DiskTbwRatings["2"]);
+                Assert.Equal(1200, config.Current.DiskTbwRatingsUpper["2"]);
+
+                window.RadTbwSingle.IsChecked = true;
+                window.TxtTbw.Text = "900";
+                window.Save_Click(window, new RoutedEventArgs());
+                Assert.Equal(900, config.Current.DiskTbwRatings["2"]);
                 Assert.False(config.Current.DiskTbwRatingsUpper.ContainsKey("2"));
+                Assert.Equal(Visibility.Collapsed, window.TbwUpperPanel.Visibility);
 
                 await window.StartTbwLookupAsync(null);
                 await window.StartTbwLookupAsync(Disk(), userInitiated: false);
@@ -290,6 +300,18 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Assert.Contains("GPU was detected", window.TbwLookupStatus.Text);
                 Assert.False(window.HandleTbwReadiness(new TbwReadiness(false, null, true, "model-cpu", false)));
                 Assert.Contains("CPU-only", window.TbwLookupStatus.Text);
+                Assert.False(window.HandleTbwReadiness(new TbwReadiness(
+                    false,
+                    "Install the official package.",
+                    false,
+                    null,
+                    false,
+                    NeedsFoundryInstall: true)));
+                Assert.Equal("Foundry Local required", window.TbwLookupHeadline.Text);
+                Assert.Equal("Install Foundry Local", window.TbwLookupAction.Content);
+                Assert.Equal("install-foundry", window.TbwLookupAction.Tag);
+                Assert.Equal(Visibility.Visible, window.TbwLookupAction.Visibility);
+                Assert.Equal(Visibility.Collapsed, window.TbwLookupAgainButton.Visibility);
                 Assert.False(window.HandleTbwReadiness(new TbwReadiness(false, "configured reason", false, null, false)));
                 Assert.Equal("configured reason", window.TbwLookupStatus.Text);
                 Assert.False(window.HandleTbwReadiness(new TbwReadiness(false, null, false, null, false)));
@@ -317,13 +339,69 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Assert.Equal("No TBW rating was found on the web for this drive.", window.TbwLookupStatus.Text);
                 window.RenderTbwResult(knownSsd, new TbwLookupResult(knownSsd.FriendlyName, [], DateTime.UtcNow, "No verified evidence."));
                 Assert.Equal("No verified evidence.", window.TbwLookupStatus.Text);
+
+                const string searchResponse = "{\"organic\":[{\"title\":\"Drive result\"}]}";
+                const string modelResponse =
+                    "{\"choices\":[{\"message\":{\"content\":\"<think>returned reasoning</think>\\n[]\"}}]}";
+                window.RenderTbwResult(knownSsd, new TbwLookupResult(
+                    knownSsd.FriendlyName,
+                    [],
+                    DateTime.UtcNow,
+                    Diagnostics: new TbwLookupDiagnostics("Serper.dev", searchResponse, "qwen3-8b", modelResponse)));
+                Assert.Equal(Visibility.Visible, window.TbwLookupRawResultsButton.Visibility);
+                Invoke(window, "TbwLookupRawResults_Click", window.TbwLookupRawResultsButton, new RoutedEventArgs());
+                Assert.Equal(Visibility.Visible, window.TbwRawResultsOverlay.Visibility);
+                Assert.Same(window.TbwRawSearchTab, window.TbwRawResultsTabs.SelectedItem);
+                Assert.Contains(Environment.NewLine, window.TbwRawSearchText.Text);
+                Assert.Contains("Drive result", window.TbwRawSearchText.Text);
+                window.TbwRawResultsTabs.SelectedItem = window.TbwRawModelTab;
+                Assert.Contains("<think>returned reasoning</think>", window.TbwRawModelText.Text);
+                Assert.Contains("qwen3-8b", window.TbwRawModelMeta.Text);
+                Invoke(window, "TbwRawResultsClose_Click", window, new RoutedEventArgs());
+                Assert.Equal(Visibility.Collapsed, window.TbwRawResultsOverlay.Visibility);
+                Assert.Empty(window.TbwRawSearchText.Text);
+                Assert.Empty(window.TbwRawModelText.Text);
+
+                window.RenderTbwResult(knownSsd, new TbwLookupResult(
+                    knownSsd.FriendlyName,
+                    [],
+                    DateTime.UtcNow,
+                    Diagnostics: new TbwLookupDiagnostics("Serper.dev", searchResponse)));
+                Invoke(window, "TbwLookupRawResults_Click", window.TbwLookupRawResultsButton, new RoutedEventArgs());
+                Assert.Contains("Serper-only lookups do not call a model", window.TbwRawModelText.Text);
+                Invoke(window, "TbwRawResultsClose_Click", window, new RoutedEventArgs());
+
+                window.RenderTbwResult(knownSsd, new TbwLookupResult(knownSsd.FriendlyName, [], DateTime.UtcNow));
+                Assert.Equal(Visibility.Collapsed, window.TbwLookupRawResultsButton.Visibility);
                 window.RenderTbwResult(knownSsd, new TbwLookupResult(knownSsd.FriendlyName,
                     [
                         new TbwCandidate(600, .75, 4, ["a.com", "b.com", "c.com", "d.com"], "https://a.com"),
                         new TbwCandidate(1200, .25, 2, ["e.com", "f.com"], "https://e.com"),
-                    ], DateTime.UtcNow));
-                Assert.Equal("Verified candidates found", window.TbwLookupHeadline.Text);
-                Assert.Equal(2, window.TbwCandidateList.Children.Count);
+                    ], DateTime.UtcNow, LookupMethod: TbwLookupMethod.SerperOnly));
+                Assert.Equal("Evidence candidates found", window.TbwLookupHeadline.Text);
+                Assert.Equal("Serper evidence only", window.TbwLookupAnalysisTitle.Text);
+                Assert.Contains("No local AI verification", window.TbwLookupStatus.Text);
+                Assert.Equal(3, window.TbwCandidateList.Children.Count);
+
+                var rangeBorder = Assert.IsType<Border>(window.TbwCandidateList.Children[0]);
+                var rangeGrid = Assert.IsType<Grid>(rangeBorder.Child);
+                var rangeButton = Assert.IsType<Button>(rangeGrid.Children[1]);
+                Assert.Equal("Apply range", rangeButton.Content);
+                rangeButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.Equal(600, config.Current.DiskTbwRatings[knownSsd.DiskId]);
+                Assert.Equal(1200, config.Current.DiskTbwRatingsUpper[knownSsd.DiskId]);
+                Assert.StartsWith("Applied 600 to 1200 TBW", window.TbwLookupHeadline.Text);
+
+                window.RenderTbwResult(knownSsd, new TbwLookupResult(knownSsd.FriendlyName,
+                    [new TbwCandidate(600, 1, 2, ["a.com", "b.com"], "https://a.com")],
+                    DateTime.UtcNow,
+                    LookupMethod: TbwLookupMethod.SerperOnly));
+                var singleBorder = Assert.IsType<Border>(Assert.Single(window.TbwCandidateList.Children));
+                var singleGrid = Assert.IsType<Grid>(singleBorder.Child);
+                var singleButton = Assert.IsType<Button>(singleGrid.Children[1]);
+                Assert.Equal("Apply single", singleButton.Content);
+                singleButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.False(config.Current.DiskTbwRatingsUpper.ContainsKey(knownSsd.DiskId));
 
                 UpdateUserSettings(userSettings, settings => settings.WebSearchProvider = "google");
                 window.LoadSettingsFields();
@@ -361,6 +439,32 @@ public sealed class MainWindowCoverageTests : IDisposable
                 await Task.Delay(50);
                 Assert.Contains("download failed", window.TbwLookupStatus.Text);
 
+                bool foundryInstallRetried = false;
+                window.FoundryLocalInstaller = (progress, _) =>
+                {
+                    progress?.Report("Installing test package...");
+                    return Task.CompletedTask;
+                };
+                window.TbwPostInstallLookup = disk =>
+                {
+                    Assert.Same(knownSsd, disk);
+                    foundryInstallRetried = true;
+                    return Task.CompletedTask;
+                };
+                await window.InstallFoundryLocalAndRetryAsync(knownSsd);
+                Assert.True(foundryInstallRetried);
+                Assert.Equal("Foundry Local installed", window.TbwLookupHeadline.Text);
+
+                window.FoundryLocalInstaller = (_, _) =>
+                    Task.FromException(new InvalidOperationException("installer failed"));
+                foundryInstallRetried = false;
+                await window.InstallFoundryLocalAndRetryAsync(knownSsd);
+                Assert.False(foundryInstallRetried);
+                Assert.Equal("Foundry Local installation failed", window.TbwLookupHeadline.Text);
+                Assert.Contains("installer failed", window.TbwLookupStatus.Text);
+                Assert.Equal("Try install again", window.TbwLookupAction.Content);
+                Assert.Equal(Visibility.Visible, window.TbwLookupAction.Visibility);
+
                 Assert.True(MainWindow.ShouldPromptTbwOnlineSetup(new UserSettings(), new AiSecrets()));
                 Assert.False(MainWindow.ShouldPromptTbwOnlineSetup(
                     new UserSettings { SuppressTbwOnlineSetupPrompt = true }, new AiSecrets()));
@@ -372,6 +476,19 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Assert.Equal(Visibility.Visible, window.TbwSetupIntroPanel.Visibility);
                 Invoke(window, "TbwSetupConfigure_Click", window, new RoutedEventArgs());
                 Assert.Equal(Visibility.Visible, window.TbwSetupKeyPanel.Visibility);
+                window.TbwSetupSerperKey.Password = "synthetic-hidden-key";
+                window.TbwSetupSerperKeyRevealButton.IsChecked = true;
+                Assert.Equal(Visibility.Collapsed, window.TbwSetupSerperKey.Visibility);
+                Assert.Equal(Visibility.Visible, window.TbwSetupSerperKeyReveal.Visibility);
+                Assert.Equal("synthetic-hidden-key", window.TbwSetupSerperKeyReveal.Text);
+                Assert.Equal("Hide API key", window.TbwSetupSerperKeyRevealButton.ToolTip);
+                window.TbwSetupSerperKeyReveal.Text = "synthetic-edited-key";
+                window.TbwSetupSerperKeyRevealButton.IsChecked = false;
+                Assert.Equal(Visibility.Visible, window.TbwSetupSerperKey.Visibility);
+                Assert.Equal(Visibility.Collapsed, window.TbwSetupSerperKeyReveal.Visibility);
+                Assert.Empty(window.TbwSetupSerperKeyReveal.Text);
+                Assert.Equal("synthetic-edited-key", window.TbwSetupSerperKey.Password);
+                Assert.Equal("Show API key", window.TbwSetupSerperKeyRevealButton.ToolTip);
                 Invoke(window, "TbwSetupBack_Click", window, new RoutedEventArgs());
                 Assert.Equal(Visibility.Visible, window.TbwSetupIntroPanel.Visibility);
                 Invoke(window, "TbwSetupShowFromSettings_Click", window, new RoutedEventArgs());
@@ -394,11 +511,16 @@ public sealed class MainWindowCoverageTests : IDisposable
                 object ssdChoice = ((IEnumerable)window.DiskSelector.ItemsSource).Cast<object>()
                     .First(choice => ((DiskInfo)choice.GetType().GetProperty("Disk")!.GetValue(choice)!).DiskId == "8");
                 window.DiskSelector.SelectedItem = ssdChoice;
-                window.TbwSetupSerperKey.Password = onboardingKey;
+                window.TbwSetupSerperKey.Password = "stale-before-reveal";
+                window.TbwSetupSerperKeyRevealButton.IsChecked = true;
+                window.TbwSetupSerperKeyReveal.Text = onboardingKey;
                 window.TbwSetupDontShowAgain.IsChecked = true;
                 Invoke(window, "TbwSetupSave_Click", window, new RoutedEventArgs());
                 await Task.Delay(50);
                 Assert.Equal(Visibility.Collapsed, window.TbwSetupOverlay.Visibility);
+                Assert.False(window.TbwSetupSerperKeyRevealButton.IsChecked);
+                Assert.Empty(window.TbwSetupSerperKeyReveal.Text);
+                Assert.Empty(window.TbwSetupSerperKey.Password);
                 Assert.Equal("serper", userSettings.Current.WebSearchProvider);
                 Assert.True(userSettings.Current.EnableTbwWebLookup);
                 Assert.True(userSettings.Current.SuppressTbwOnlineSetupPrompt);
@@ -437,6 +559,23 @@ public sealed class MainWindowCoverageTests : IDisposable
 
                 UpdateUserSettings(userSettings, settings => settings.SuppressTbwOnlineSetupPrompt = true);
                 controller.Initialize();
+                var trayMenu = Assert.IsType<DarkTrayContextMenu>(
+                    typeof(TrayController).GetField("_trayMenu", BindingFlags.Instance | BindingFlags.NonPublic)!
+                        .GetValue(controller));
+                Assert.IsType<DarkTrayMenuRenderer>(trayMenu.Renderer);
+                Assert.Equal(System.Drawing.Color.FromArgb(20, 22, 25), trayMenu.BackColor);
+                Assert.Equal(System.Drawing.Color.FromArgb(242, 244, 247), trayMenu.ForeColor);
+                Assert.False(trayMenu.ShowImageMargin);
+                Assert.False(trayMenu.ShowCheckMargin);
+                Assert.Collection(trayMenu.Items.Cast<System.Windows.Forms.ToolStripItem>(),
+                    item => Assert.Equal("Open dashboard", item.Text),
+                    item => Assert.Equal("Open data folder", item.Text),
+                    item => Assert.IsType<System.Windows.Forms.ToolStripSeparator>(item),
+                    item => Assert.Equal("Exit", item.Text));
+                _ = trayMenu.Handle;
+                Assert.NotNull(trayMenu.Region);
+                Assert.False(trayMenu.Region.IsVisible(0, 0));
+                Assert.True(trayMenu.Region.IsVisible(trayMenu.Width / 2, trayMenu.Height / 2));
                 repo.AcknowledgeAlerts();
                 Invoke(controller, "Update");
 
@@ -501,7 +640,7 @@ public sealed class MainWindowCoverageTests : IDisposable
 
                 config.Update(settings => settings.DefaultSsdTbwUpper = 1_000);
                 Invoke(window, "UpdateEndurance", repo.GetDisks().Single(), DateTime.UtcNow, 0L);
-                Assert.Equal("~7.08%\u20139.44%", window.SmartWearValue.Text);
+                Assert.Equal("~7.08% to 9.44%", window.SmartWearValue.Text);
 
                 Invoke(window, "UpdateEndurance", new DiskInfo
                 {
@@ -516,6 +655,50 @@ public sealed class MainWindowCoverageTests : IDisposable
                     LifetimeBytesWritten = 70_800_000_000_000,
                 }, DateTime.UtcNow, 0L);
                 Assert.Contains("no SMART wear attribute", window.SmartWearText.Text);
+            }
+            finally { window.ForceClose(); }
+
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public void Settings_UnchangedUnknownTbw_RemainsEstimatedAndModesAreExplicit()
+    {
+        RunStaAsync(() =>
+        {
+            EnsureApplication();
+            var repo = new MonitorRepository(_db); repo.EnsureSchema();
+            repo.UpsertDisks([new DiskInfo
+            {
+                DiskId = "estimate", InstanceName = "estimate C:", FriendlyName = "Unknown SSD", Volumes = "C:",
+                MediaType = DiskMediaType.Ssd,
+            }]);
+            using var config = new ConfigStore(_cfg);
+            var window = new MainWindow(repo, config, new UserSettingsStore(_userSettings));
+            try
+            {
+                Assert.Equal("150 to 600 TBW estimated", window.EnduranceRatedText.Text);
+                Assert.True(window.RadTbwRange.IsChecked);
+                Assert.Equal("Minimum TBW (TB)", window.TbwLowerLabel.Text);
+                Assert.Equal(Visibility.Visible, window.TbwUpperPanel.Visibility);
+
+                window.RadTbwSingle.IsChecked = true;
+                Assert.Equal("TBW rating (TB)", window.TbwLowerLabel.Text);
+                Assert.Equal(Visibility.Collapsed, window.TbwUpperPanel.Visibility);
+                window.RadTbwRange.IsChecked = true;
+
+                window.RadTbwLookupSerperOnly.IsChecked = true;
+                Assert.False(window.TbwProviderSelector.IsEnabled);
+                Assert.Contains("not installed or started", window.TbwLookupMethodHint.Text);
+                window.RadTbwLookupFoundry.IsChecked = true;
+                Assert.True(window.TbwProviderSelector.IsEnabled);
+
+                window.Save_Click(window, new RoutedEventArgs());
+
+                Assert.False(config.Current.DiskTbwRatings.ContainsKey("estimate"));
+                Assert.False(config.Current.DiskTbwRatingsUpper.ContainsKey("estimate"));
+                Assert.Equal("150 to 600 TBW estimated", window.EnduranceRatedText.Text);
             }
             finally { window.ForceClose(); }
 
