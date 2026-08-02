@@ -24,6 +24,7 @@ namespace DiskActivityMonitor.Security
 {
     public static class DirectoryHandleSecurity
     {
+        private const uint ReadControl = 0x00020000;
         private const uint WriteDac = 0x00040000;
         private const uint WriteOwner = 0x00080000;
         private const uint FileShareRead = 0x00000001;
@@ -210,7 +211,7 @@ namespace DiskActivityMonitor.Security
                     if (ownerResult != 0)
                         throw new Win32Exception((int)ownerResult, "Could not assign trusted directory ownership");
 
-                    using (SafeFileHandle daclHandle = OpenDirectory(path, WriteDac))
+                    using (SafeFileHandle daclHandle = OpenDirectory(path, ReadControl | WriteDac))
                     {
                         ValidateDirectoryHandle(daclHandle, path);
                         ByHandleFileInformation daclIdentity = GetIdentity(daclHandle, path);
