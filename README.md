@@ -33,39 +33,60 @@ warns you when a drive or process crosses a threshold you set.
 
 ## Features
 
-- **Per-disk write/read trends** charted per **hour (24h)**, **day (30d)**, and **week (12w)**.
-- **Automatic SSD vs HDD detection** via the Windows Storage WMI provider, so endurance
-  features apply to solid-state drives.
-- **Top writing processes** over a selectable window (last minute through past year), via the
-  ETW kernel `FileIO` provider, to pinpoint culprits.
-- **Auto-suspend rules** that freeze a process when its rolling-hour writes exceed a limit -
-  either after a one-click toast confirmation (the default) or automatically.
-- **SSD endurance projection** — enter a drive's TBW rating and it estimates years-to-TBW at
-  your current write rate. When lifetime-write telemetry is available, **Drive Life Used** is
-  calculated from lifetime writes / rated TBW and displayed with up to two decimal places.
-- **On-demand rated-TBW lookup** — right-click the **“TBW rated”** pill to search the web and
-  extract candidate endurance ratings with the configured local Foundry model.
-- **Guided online-lookup setup** — on startup, the tray offers optional Serper setup until a key
-  is configured or **Don't show this again** is selected. API keys are encrypted for the current
-  Windows account using DPAPI rather than stored as plaintext.
-- **Rolling-window alerts** for high SSD writes (per hour / per day) and heavy single
-  processes, with configurable thresholds and a cooldown to avoid spam.
-- **Storage controller alerts** from Windows System log **Disk event 11**, grouped by
-  physical disk over a configurable trailing window to catch repeated cable, port, power,
-  enclosure, or controller instability even when a drive still reports Healthy/Online.
-- **Live SMART scan from controller alerts** — right-click an affected alert for an in-app,
-  read-only health report combining Windows storage health, reliability counters and direct
-  NVMe SMART telemetry where the hardware exposes it.
-- **Persistent alert dismissal and complete history** — dismiss grouped rows from the main
-  one-hour view, review every retained record under **All alerts**, and restore dismissed records.
-- **Tray icon status color** (green / amber / red) reflecting the worst non-dismissed recent alert,
-  plus optional desktop toast notifications.
-- **Tunable settings** edited live from the dashboard; the collector picks up changes
-  automatically.
-- **In-app compiled help** — the top **?** button opens a searchable, navigable HTML help modal
-  generated from `HELP.md`, with a readable Markdown fallback if WebView2 cannot initialize.
-- **Self-contained data** in `%ProgramData%\DiskActivityMonitor\` (SQLite, WAL mode) with
-  automatic pruning after a configurable retention period.
+<table>
+  <tr>
+    <td width="33%" align="center">
+      <strong>📊 Disk Trends</strong><br><br>
+      Track physical reads and writes per drive across 24 hours, 30 days, or 12 weeks.
+    </td>
+    <td width="33%" align="center">
+      <strong>🔎 Process Attribution</strong><br><br>
+      Find the applications generating write pressure with ETW-based logical file I/O tracking.
+    </td>
+    <td width="33%" align="center">
+      <strong>💾 SSD Endurance</strong><br><br>
+      Combine rated TBW, lifetime writes, SMART wear, and current activity into a lifespan projection.
+    </td>
+  </tr>
+  <tr>
+    <td width="33%" align="center">
+      <strong>🔔 Proactive Alerts</strong><br><br>
+      Detect heavy writes and repeated Windows Disk event 11 controller errors with tunable thresholds.
+    </td>
+    <td width="33%" align="center">
+      <strong>🩺 Live SMART Diagnostics</strong><br><br>
+      Run read-only health scans with Windows reliability data and direct NVMe telemetry when available.
+    </td>
+    <td width="33%" align="center">
+      <strong>⏸️ Safe Auto-Suspend</strong><br><br>
+      Confirm or automatically freeze runaway writers, then resume only the exact recorded process.
+    </td>
+  </tr>
+  <tr>
+    <td width="33%" align="center">
+      <strong>🤖 Private TBW Lookup</strong><br><br>
+      Search endurance evidence with Serper and verify candidates locally through Foundry Local.
+    </td>
+    <td width="33%" align="center">
+      <strong>🗂️ Alert History</strong><br><br>
+      Review, dismiss, restore, and snooze retained alerts while the tray icon reflects current severity.
+    </td>
+    <td width="33%" align="center">
+      <strong>🔐 Local and Self-Contained</strong><br><br>
+      Keep monitoring data on-device in SQLite and protect per-user API keys with Windows DPAPI.
+    </td>
+  </tr>
+</table>
+
+---
+
+## Screenshots
+
+<p align="center">
+  <img src="assets/dashboard-overview.png" alt="Disk Activity Monitor dashboard showing drive activity, SSD endurance, and hourly write trends" width="940">
+</p>
+
+<p align="center"><em>Live dashboard with per-drive totals, endurance telemetry, projected lifespan, and write trends.</em></p>
 
 ---
 
