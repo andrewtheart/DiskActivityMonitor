@@ -1,24 +1,12 @@
-# Disk Activity Monitor
+<h1 align="center">
+  <img src="assets/app-icon.png" alt="Disk Activity Monitor icon" width="96" align="middle">
+  &nbsp;Disk Activity Monitor
+</h1>
 
 A lightweight Windows tool that tracks how much data is **written to and read from your
 drives over time**, so you can spot processes that hammer an SSD and protect its limited
 write endurance. It focuses on **aggregate trends** (MB/GB per hour, day and week) rather
 than noisy instantaneous values.
-
-It has two parts:
-
-| Component | What it does |
-|-----------|--------------|
-| **Collector service** (`DiskActivityMonitor.Service`) | A background worker that samples Windows performance counters, aggregates them into one-minute buckets, stores them in a small SQLite database, and raises alerts. Runs as a Windows Service (or a console app). |
-| **Tray app** (`DiskActivityMonitor.Tray`) | A system-tray dashboard (WPF) that visualizes the collected trends, ranks the noisiest processes, shows alerts, and lets you tune thresholds. |
-
-Both share a database under `%ProgramData%\DiskActivityMonitor\`.
-
-> **Need usage or troubleshooting help?** See the comprehensive [HELP.md](HELP.md) guide.
-> The tray app also compiles this guide to HTML and displays it in-app from the top **?** button.
->
-> **Security architecture:** See [docs/security/security.md](docs/security/security.md) for the
-> threat model, implemented controls, validation evidence, known limitations, and roadmap.
 
 ---
 
@@ -36,43 +24,43 @@ warns you when a drive or process crosses a threshold you set.
 <table>
   <tr>
     <td width="33%" align="center">
-      <strong>📊 Disk Trends</strong><br><br>
+      <h3>📊 Disk Trends</h3>
       Track physical reads and writes per drive across 24 hours, 30 days, or 12 weeks.
     </td>
     <td width="33%" align="center">
-      <strong>🔎 Process Attribution</strong><br><br>
+      <h3>🔎 Process Attribution</h3>
       Find the applications generating write pressure with ETW-based logical file I/O tracking.
     </td>
     <td width="33%" align="center">
-      <strong>💾 SSD Endurance</strong><br><br>
+      <h3>💾 SSD Endurance</h3>
       Combine rated TBW, lifetime writes, SMART wear, and current activity into a lifespan projection.
     </td>
   </tr>
   <tr>
     <td width="33%" align="center">
-      <strong>🔔 Proactive Alerts</strong><br><br>
+      <h3>🔔 Proactive Alerts</h3>
       Detect heavy writes and repeated Windows Disk event 11 controller errors with tunable thresholds.
     </td>
     <td width="33%" align="center">
-      <strong>🩺 Live SMART Diagnostics</strong><br><br>
+      <h3>🩺 Live SMART Diagnostics</h3>
       Run read-only health scans with Windows reliability data and direct NVMe telemetry when available.
     </td>
     <td width="33%" align="center">
-      <strong>⏸️ Safe Auto-Suspend</strong><br><br>
+      <h3>⏸️ Safe Auto-Suspend</h3>
       Confirm or automatically freeze runaway writers, then resume only the exact recorded process.
     </td>
   </tr>
   <tr>
     <td width="33%" align="center">
-      <strong>🤖 Private TBW Lookup</strong><br><br>
+      <h3>🤖 Private TBW Lookup</h3>
       Search endurance evidence with Serper and verify candidates locally through Foundry Local.
     </td>
     <td width="33%" align="center">
-      <strong>🗂️ Alert History</strong><br><br>
+      <h3>🗂️ Alert History</h3>
       Review, dismiss, restore, and snooze retained alerts while the tray icon reflects current severity.
     </td>
     <td width="33%" align="center">
-      <strong>🔐 Local and Self-Contained</strong><br><br>
+      <h3>🔐 Local and Self-Contained</h3>
       Keep monitoring data on-device in SQLite and protect per-user API keys with Windows DPAPI.
     </td>
   </tr>
@@ -83,10 +71,10 @@ warns you when a drive or process crosses a threshold you set.
 ## Screenshots
 
 <p align="center">
-  <img src="assets/dashboard-overview.png" alt="Disk Activity Monitor dashboard showing drive activity, SSD endurance, and hourly write trends" width="940">
+  <img src="assets/dashboard-overview.png" alt="Full Disk Activity Monitor dashboard showing drive totals, SSD endurance, trends, process writes, and alerts" width="940">
 </p>
 
-<p align="center"><em>Live dashboard with per-drive totals, endurance telemetry, projected lifespan, and write trends.</em></p>
+<p align="center"><em>Full dashboard with per-drive totals, endurance telemetry, trends, process attribution, and active alerts.</em></p>
 
 ---
 
@@ -268,6 +256,15 @@ src\DiskActivityMonitor.Cli\bin\Debug\net10.0-windows\dam.exe status
 
 ## How it works
 
+Disk Activity Monitor has two cooperating components:
+
+| Component | What it does |
+|-----------|--------------|
+| **Collector service** (`DiskActivityMonitor.Service`) | A background worker that samples Windows performance counters, aggregates them into one-minute buckets, stores them in SQLite, and raises alerts. It runs as a Windows Service or console app. |
+| **Tray app** (`DiskActivityMonitor.Tray`) | A WPF system-tray dashboard that visualizes trends, ranks noisy processes, shows alerts, and manages thresholds. |
+
+Both share a database under `%ProgramData%\DiskActivityMonitor\`.
+
 ```mermaid
 flowchart LR
     PC["PhysicalDisk\nperf counters"] --> COL
@@ -389,6 +386,13 @@ HELP.md                          Comprehensive user, CLI, troubleshooting, and r
 run.ps1                          Build-if-needed + launch service & tray
 dam.ps1                          CLI convenience wrapper
 ```
+
+## Documentation and security
+
+- For usage and troubleshooting, see the comprehensive [HELP.md](HELP.md) guide. The tray app
+  also compiles it to HTML and displays it from the top **?** button.
+- For the threat model, implemented controls, validation evidence, known limitations, and
+  roadmap, see [docs/security/security.md](docs/security/security.md).
 
 ## Building
 
