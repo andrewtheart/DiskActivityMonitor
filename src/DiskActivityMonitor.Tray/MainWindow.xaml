@@ -433,7 +433,8 @@
                                                                    TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
                                                         <TextBlock Grid.Column="1" Text="{Binding TimeText}" VerticalAlignment="Center"
                                                                    Foreground="{StaticResource TextSecondary}" FontSize="11" />
-                                                        <Button Grid.Column="2" Style="{StaticResource DismissButton}" Content="&#x2715;"
+                                                        <Button x:Name="AlertDismissButton" Grid.Column="2"
+                                                            Style="{StaticResource AlertDismissButton}" Content="&#xE711;"
                                                                 Margin="6,-3,-4,-3" ToolTip="Dismiss from Alert center"
                                                                 AutomationProperties.Name="Dismiss alert"
                                                                 CommandParameter="{Binding}" Click="DismissAlert_Click" />

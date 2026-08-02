@@ -107,6 +107,12 @@ public sealed class MainWindowCoverageTests : IDisposable
                 window.UpdateAlerts();
                 var rows = ((IEnumerable)window.AlertList.ItemsSource).Cast<object>().ToList();
                 Assert.Equal(2, rows.Count);
+                var alertTemplateRoot = Assert.IsAssignableFrom<FrameworkElement>(window.AlertList.ItemTemplate.LoadContent());
+                var alertDismissButton = Assert.IsType<Button>(alertTemplateRoot.FindName("AlertDismissButton"));
+                Assert.Equal(28, alertDismissButton.Width);
+                Assert.Equal(28, alertDismissButton.Height);
+                Assert.Equal(new Thickness(1), alertDismissButton.BorderThickness);
+                Assert.Equal(Color.FromRgb(0x3B, 0x24, 0x28), Assert.IsType<SolidColorBrush>(alertDismissButton.Background).Color);
                 Assert.Equal(LocalTimeDisplay.ZoneLabel(), window.TrendTimeZoneText.Text);
                 Assert.All(rows, row => Assert.EndsWith($"({LocalTimeDisplay.ZoneId()})",
                     (string)row.GetType().GetProperty("TimeText")!.GetValue(row)!));
