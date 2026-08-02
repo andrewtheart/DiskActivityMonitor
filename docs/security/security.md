@@ -177,6 +177,7 @@ The production installer disables directory selection and previous-directory reu
 - `FILE_FLAG_OPEN_REPARSE_POINT`, so the final path object is opened rather than followed.
 - `FILE_FLAG_BACKUP_SEMANTICS`, required for directory handles.
 - Read/write sharing but no delete sharing, preventing the opened object from being deleted or replaced while security is applied.
+- `READ_CONTROL | WRITE_DAC` access for the DACL handle. `SetSecurityInfo` needs the existing descriptor readable when replacing its DACL and protection state; requesting only `WRITE_DAC` produced Win32 error 5 even when the caller owned the directory.
 
 The helper then:
 
@@ -186,7 +187,7 @@ The helper then:
 4. Captures volume serial number and file index as the directory identity.
 5. Attempts to enable ownership/restore privileges when the token exposes them.
 6. Applies trusted ownership through an open handle with `SetSecurityInfo`.
-7. Opens the DACL handle while the owner handle remains open.
+7. Opens the DACL handle with `READ_CONTROL | WRITE_DAC` while the owner handle remains open.
 8. Compares both handles' volume/file identities.
 9. Applies a protected DACL through the handle.
 
@@ -525,7 +526,7 @@ The 2026-08-01 hardening pass completed the following checks.
 | Validation | Result |
 |---|---|
 | Release solution build, serialized (`dotnet build DiskActivityMonitor.slnx -c Release -m:1`) | Passed, all five projects, no errors. |
-| Complete test suite (`dotnet test ... -c Release --no-build`) | Passed, 287/287. |
+| Complete test suite (`dotnet test ... -c Release`) | Passed, 296/296. |
 | ConfigStore focused tests | Passed, including deep snapshots, concurrent updates, callback isolation, and failed-write rollback. |
 | WPF/config integration tests | Passed. |
 | Native process-control tests | Passed, including exact path selection, creation-time mismatch, fail-closed legacy state, and path requirement for Auto. |
@@ -533,6 +534,7 @@ The 2026-08-01 hardening pass completed the following checks.
 | Foundry transport tests | Passed, including loopback-only endpoint parsing and redirect/proxy/cookie disablement. |
 | PowerShell parser validation | Passed in PowerShell 7 and Windows PowerShell 5.1 for six relevant scripts. |
 | Security helper on normal spaced directory | Passed in both PowerShell hosts. |
+| Protected-DACL helper integration | Passed in Windows PowerShell 5.1 on a populated disposable directory. |
 | Live junction rejection | Passed; helper rejected the reparse-point handle. |
 | Native `-File` argument quoting with spaces | Passed. |
 | Inno Setup x64 security-check compile | Passed; temporary installer removed afterward. |
@@ -553,6 +555,7 @@ Changes that touch any trust boundary must preserve these invariants.
 - Do not replace handle-based directory ACL changes with `icacls` or path-only validation.
 - Open final directory objects without following reparse points.
 - Hold a non-delete-shared handle while applying security.
+- Keep `READ_CONTROL | WRITE_DAC` on handles used to replace and protect a directory DACL.
 - Compare object identity when multiple handles are required.
 - Abort installation when security application fails.
 - Stop processes by exact executable path, not broad image name.
