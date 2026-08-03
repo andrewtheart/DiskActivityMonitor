@@ -327,6 +327,30 @@ public class AlertEngineTests : IDisposable
         Assert.Contains(alerts, a => a.RuleKey == "proc-1h:chrome");
     }
 
+    [Fact]
+    public void Evaluate_ProcessAlert_ListsPhysicalWritesByDriveInDescendingOrder()
+    {
+        var cfg = new AppConfig { ProcessWarnGbPerHour = 5 };
+        var now = new DateTime(2025, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+
+        _repo.AddProcessSamples([
+            new ProcessIoSample { TimestampUtc = now.AddMinutes(-10), ProcessName = "backup", WriteBytes = (long)(10 * ByteFormat.GiB) },
+        ]);
+        _repo.AddDiskSamples([
+            new DiskSample { TimestampUtc = now.AddMinutes(-10), DiskId = "0", WriteBytes = (long)(2 * ByteFormat.GiB) },
+            new DiskSample { TimestampUtc = now.AddMinutes(-10), DiskId = "1", WriteBytes = (long)(9 * ByteFormat.GiB) },
+        ]);
+
+        var alerts = _engine.Evaluate([MakeSsd(), MakeHdd()], cfg, now);
+
+        var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "proc-1h:backup");
+        int hddPosition = alert.Message.IndexOf("D:  (Test HDD 1): 9 GB", StringComparison.Ordinal);
+        int ssdPosition = alert.Message.IndexOf("C:  (Test SSD 0): 2 GB", StringComparison.Ordinal);
+        Assert.True(hddPosition >= 0 && ssdPosition > hddPosition, alert.Message);
+        Assert.Contains("Physical writes by drive (all processes, last hour)", alert.Message);
+        Assert.Contains("Process requests cannot be assigned to one drive exactly", alert.Message);
+    }
+
     // ────────────────────────────────────────── All-processes combined threshold
 
     [Fact]
