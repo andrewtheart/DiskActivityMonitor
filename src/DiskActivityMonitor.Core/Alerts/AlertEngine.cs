@@ -22,6 +22,7 @@ public sealed class AlertEngine
     public List<AlertRecord> Evaluate(IEnumerable<DiskInfo> disks, AppConfig cfg, DateTime nowUtc)
     {
         var raised = new List<AlertRecord>();
+        var diskList = disks.ToList();
 
         // A global "snooze all alerts" suppresses every rule until it expires.
         if (_repo.IsGlobalSnoozeActive(nowUtc))
@@ -29,7 +30,7 @@ public sealed class AlertEngine
 
         var cooldown = TimeSpan.FromMinutes(Math.Max(1, cfg.AlertCooldownMinutes));
 
-        foreach (var disk in disks.Where(d => d.IsSsd))
+        foreach (var disk in diskList.Where(d => d.IsSsd))
         {
             // SMART-reported lifetime endurance used - the most accurate "how close to the limit" signal.
             if (disk.WearPercent is int wearPct && cfg.SsdWearWarnPercent > 0 && wearPct >= cfg.SsdWearWarnPercent)
@@ -121,6 +122,8 @@ public sealed class AlertEngine
         var topProcs = _repo.GetTopProcesses(nowUtc.AddHours(-1), nowUtc, topN: 3);
         var procThreshold = cfg.ProcessWarnGbPerHour * ByteFormat.GiB;
         var snoozedProcs = _repo.GetActiveProcessSnoozes(nowUtc);
+        string? physicalDiskWrites = null;
+        string PhysicalDiskWrites() => physicalDiskWrites ??= FormatPhysicalDiskWrites(diskList, nowUtc);
         foreach (var p in topProcs)
         {
             // Skip processes the user has snoozed from a toast.
@@ -133,7 +136,7 @@ public sealed class AlertEngine
                 severity: AlertSeverity.Warning,
                 title: $"Process '{p.ProcessName}' is requesting heavy file writes",
                 buildMessage: (v, t) =>
-                    $"{p.ProcessName} logical file-write requests \u2014 {FormatBreakdown(nowUtc, (f, to) => _repo.GetProcessWrite(p.ProcessName, f, to))} (threshold {ByteFormat.Humanize(t)}/h). Physical disk writes may be lower.");
+                    $"{p.ProcessName} logical file-write requests \u2014 {FormatBreakdown(nowUtc, (f, to) => _repo.GetProcessWrite(p.ProcessName, f, to))} (threshold {ByteFormat.Humanize(t)}/h). Physical disk writes may be lower. {PhysicalDiskWrites()}");
         }
 
         // Combined: all processes together in the last hour.
@@ -145,7 +148,7 @@ public sealed class AlertEngine
             severity: AlertSeverity.Warning,
             title: "All processes combined are requesting heavy file writes",
             buildMessage: (v, t) =>
-                $"All processes combined logical file-write requests \u2014 {FormatBreakdown(nowUtc, (f, to) => _repo.GetAllProcessesWrite(f, to))} (threshold {ByteFormat.Humanize(t)}/h). Physical disk writes may be lower.");
+                $"All processes combined logical file-write requests \u2014 {FormatBreakdown(nowUtc, (f, to) => _repo.GetAllProcessesWrite(f, to))} (threshold {ByteFormat.Humanize(t)}/h). Physical disk writes may be lower. {PhysicalDiskWrites()}");
 
         return raised;
     }
@@ -207,6 +210,22 @@ public sealed class AlertEngine
     {
         ("1m", 1), ("5m", 5), ("15m", 15), ("30m", 30), ("1h", 60),
     };
+
+    private string FormatPhysicalDiskWrites(IEnumerable<DiskInfo> disks, DateTime nowUtc)
+    {
+        var end = new DateTime(nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, nowUtc.Minute, 0, DateTimeKind.Utc);
+        var writes = disks
+            .Select(d => (Disk: d, Write: _repo.GetDiskTotals(d.DiskId, end.AddHours(-1), end).Write))
+            .Where(x => x.Write > 0)
+            .OrderByDescending(x => x.Write)
+            .ToList();
+
+        if (writes.Count == 0)
+            return "No per-drive physical writes were recorded in the last completed hour.";
+
+        string summary = string.Join("; ", writes.Select(x => $"{x.Disk.DisplayName}: {ByteFormat.Humanize(x.Write)}"));
+        return $"Physical writes by drive (all processes, last hour): {summary}. Process requests cannot be assigned to one drive exactly.";
+    }
 
     /// <summary>Formats write totals across the recent rolling windows, e.g. "1m: 0.8 GB, 5m: 4.1 GB, ...".</summary>
     private static string FormatBreakdown(DateTime nowUtc, Func<DateTime, DateTime, long> windowWrite)
