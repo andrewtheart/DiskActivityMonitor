@@ -371,6 +371,18 @@ function New-ReleaseNotesFromCopilot {
     [Parameter(Mandatory)][string]$Tag
   )
 
+  if (-not [string]::IsNullOrWhiteSpace($PreviousTag)) {
+    $previousCommitRef = "$PreviousTag^{commit}"
+    & git --no-pager -C $RepoRoot rev-parse --verify --quiet $previousCommitRef *> $null
+    if ($LASTEXITCODE -ne 0) {
+      $tagRef = "refs/tags/$PreviousTag"
+      & git --no-pager -C $RepoRoot fetch --no-tags origin "${tagRef}:${tagRef}"
+      if ($LASTEXITCODE -ne 0) {
+        throw "Could not fetch previous published release tag $PreviousTag for release notes generation."
+      }
+    }
+  }
+
   $range = if ([string]::IsNullOrWhiteSpace($PreviousTag)) { $HeadSha } else { "$PreviousTag..$HeadSha" }
   $commits = @(& git --no-pager -C $RepoRoot log $range --no-merges --date=short --pretty=format:'%h %ad %s')
   if ($LASTEXITCODE -ne 0) {

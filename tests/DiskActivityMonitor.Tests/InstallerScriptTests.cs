@@ -228,6 +228,9 @@ public sealed class InstallerScriptTests
         string canonical = ReadScript("scripts", "build-all-installers.ps1");
 
         Assert.Contains("New-ReleaseNotesFromCopilot", canonical);
+        Assert.Contains("$previousCommitRef = \"$PreviousTag^{commit}\"", canonical);
+        Assert.Contains("fetch --no-tags origin \"${tagRef}:${tagRef}\"", canonical);
+        Assert.Contains("Could not fetch previous published release tag", canonical);
         Assert.Contains("## What's changed", canonical);
         Assert.Contains("## Installation", canonical);
         Assert.Contains("Set-MarkedSection", canonical);
