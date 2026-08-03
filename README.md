@@ -64,6 +64,12 @@ warns you when a drive or process crosses a threshold you set.
       Keep monitoring data on-device in SQLite and protect per-user API keys with Windows DPAPI.
     </td>
   </tr>
+  <tr>
+    <td colspan="3" align="center">
+      <h3>🔔 Notifications</h3>
+      Act on heavy-write alerts from Windows: choose a snooze duration, snooze one process or all alerts, or dismiss the notification.
+    </td>
+  </tr>
 </table>
 
 ---
@@ -75,6 +81,14 @@ warns you when a drive or process crosses a threshold you set.
 </p>
 
 <p align="center"><em>Full dashboard with per-drive totals, endurance telemetry, trends, process attribution, and active alerts.</em></p>
+
+<h3 align="center">Actionable notifications</h3>
+
+<p align="center">
+  <img src="assets/notifications-example.png" alt="Disk Activity Monitor heavy file-write notification with process snooze, global snooze, and dismiss actions" width="383">
+</p>
+
+<p align="center"><em>Choose how long to snooze a noisy process, pause all alerts, or dismiss the notification.</em></p>
 
 ---
 
