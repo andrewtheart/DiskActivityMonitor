@@ -42,6 +42,7 @@ public partial class MainWindow : Window
     private bool _loadedTbwHadOverride;
     private bool _tbwLookupForceRequested;
     private TbwLookupDiagnostics? _tbwLookupDiagnostics;
+    private DiskInfo? _tbwEditDisk;
     internal Func<IProgress<int>?, CancellationToken, Task> TbwModelDownloader = null!;
     internal Func<IProgress<string>?, CancellationToken, Task> FoundryLocalInstaller = null!;
     internal Func<DiskInfo, Task> TbwPostInstallLookup = null!;
@@ -1004,6 +1005,39 @@ public partial class MainWindow : Window
 
     private static string? NullIfBlank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
 
+    internal static bool TryParseTbwRating(
+        string lowerText,
+        string upperText,
+        bool useRange,
+        out double lower,
+        out double? upper,
+        out string error)
+    {
+        upper = null;
+        if (!double.TryParse(lowerText, NumberStyles.Float, CultureInfo.InvariantCulture, out lower)
+            || !double.IsFinite(lower)
+            || lower <= 0)
+        {
+            error = useRange ? "Enter a minimum TBW greater than 0." : "Enter a TBW rating greater than 0.";
+            return false;
+        }
+
+        if (useRange)
+        {
+            if (!double.TryParse(upperText, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsedUpper)
+                || !double.IsFinite(parsedUpper)
+                || parsedUpper <= lower)
+            {
+                error = "Maximum TBW must be greater than minimum TBW.";
+                return false;
+            }
+            upper = parsedUpper;
+        }
+
+        error = "";
+        return true;
+    }
+
     internal void Save_Click(object sender, RoutedEventArgs e)
     {
         bool enableNotifications = ChkNotify.IsChecked == true;
@@ -1023,21 +1057,19 @@ public partial class MainWindow : Window
         bool useTbwRange = RadTbwRange.IsChecked == true;
         if (disk is not null)
         {
-            if (!double.TryParse(TxtTbw.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double lower) || lower <= 0)
+            if (!TryParseTbwRating(
+                    TxtTbw.Text,
+                    TxtTbwUpper.Text,
+                    useTbwRange,
+                    out double lower,
+                    out double? upper,
+                    out string error))
             {
-                SaveStatus.Text = useTbwRange ? "Enter a minimum TBW greater than 0." : "Enter a TBW rating greater than 0.";
+                SaveStatus.Text = error;
                 return;
             }
             tbwLower = lower;
-
-            if (useTbwRange &&
-                (!double.TryParse(TxtTbwUpper.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double upper) || upper <= lower))
-            {
-                SaveStatus.Text = "Maximum TBW must be greater than minimum TBW.";
-                return;
-            }
-            if (useTbwRange)
-                tbwUpper = double.Parse(TxtTbwUpper.Text, NumberStyles.Float, CultureInfo.InvariantCulture);
+            tbwUpper = upper;
         }
 
         AiSecretsStore.Save(new AiSecrets
@@ -1385,6 +1417,138 @@ public partial class MainWindow : Window
     }
 
     private TbwLookupService TbwLookup => _tbwLookup ??= new TbwLookupService(_userSettings.Current);
+
+    private void EditRatedTbw_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedDisk is { } disk)
+            ShowTbwEditor(disk);
+    }
+
+    internal void ShowTbwEditor(DiskInfo disk)
+    {
+        var cfg = _config.Current;
+        double lower = cfg.EffectiveTbw(disk.DiskId);
+        double? upper = cfg.EffectiveTbwUpper(disk.DiskId);
+        bool savedForDrive = cfg.DiskTbwRatings.ContainsKey(disk.DiskId);
+
+        _tbwEditDisk = disk;
+        TbwEditTargetText.Text = disk.DisplayName;
+        TbwEditCurrentText.Text = upper.HasValue
+            ? $"{lower:0.#} to {upper:0.#} TBW{(savedForDrive ? " - saved for this drive" : " - default estimate")}"
+            : $"{lower:0.#} TBW{(savedForDrive ? " - saved for this drive" : " - default estimate")}";
+        TbwEditLowerText.Text = lower.ToString(CultureInfo.InvariantCulture);
+        TbwEditUpperText.Text = upper?.ToString(CultureInfo.InvariantCulture) ?? "";
+        TbwEditRange.IsChecked = upper.HasValue;
+        TbwEditSingle.IsChecked = !upper.HasValue;
+        TbwEditErrorText.Visibility = Visibility.Collapsed;
+        UpdateTbwEditMode();
+        TbwEditOverlay.Visibility = Visibility.Visible;
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            TbwEditLowerText.Focus();
+            TbwEditLowerText.SelectAll();
+        }));
+    }
+
+    private void TbwEditMode_Checked(object sender, RoutedEventArgs e) => UpdateTbwEditMode();
+
+    private void UpdateTbwEditMode()
+    {
+        if (TbwEditUpperPanel is null || TbwEditModeHint is null || TbwEditLowerLabel is null)
+            return;
+
+        bool useRange = TbwEditRange.IsChecked == true;
+        TbwEditUpperPanel.Visibility = useRange ? Visibility.Visible : Visibility.Collapsed;
+        TbwEditLowerLabel.Text = useRange ? "Minimum TBW (TB)" : "Rated TBW (TB)";
+        TbwEditModeHint.Text = useRange
+            ? "Use a range when credible sources publish different ratings. Wear and lifespan will be shown as ranges."
+            : "Use a single value when the manufacturer publishes one rating for this exact drive capacity.";
+        UpdateTbwEditPreview();
+    }
+
+    private void TbwEditValues_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+    {
+        if (TbwEditPreviewText is null || TbwEditErrorText is null)
+            return;
+        TbwEditErrorText.Visibility = Visibility.Collapsed;
+        UpdateTbwEditPreview();
+    }
+
+    private void UpdateTbwEditPreview()
+    {
+        if (TbwEditPreviewText is null || TbwEditLowerText is null || TbwEditUpperText is null)
+            return;
+
+        bool useRange = TbwEditRange.IsChecked == true;
+        if (!TryParseTbwRating(
+                TbwEditLowerText.Text,
+                TbwEditUpperText.Text,
+                useRange,
+                out double lower,
+                out double? upper,
+                out string error))
+        {
+            TbwEditPreviewText.Text = error;
+            TbwEditPreviewText.Foreground = (Brush)FindResource("TextSecondary");
+            return;
+        }
+
+        TbwEditPreviewText.Text = upper.HasValue
+            ? $"The dashboard will use {lower:0.#} to {upper:0.#} TBW and immediately recalculate wear and lifespan as ranges."
+            : $"The dashboard will use {lower:0.#} TBW and immediately recalculate wear and projected lifespan.";
+        TbwEditPreviewText.Foreground = (Brush)FindResource("TextPrimary");
+    }
+
+    private void TbwEditSave_Click(object sender, RoutedEventArgs e)
+    {
+        var disk = _tbwEditDisk;
+        if (disk is null)
+            return;
+
+        bool useRange = TbwEditRange.IsChecked == true;
+        if (!TryParseTbwRating(
+                TbwEditLowerText.Text,
+                TbwEditUpperText.Text,
+                useRange,
+                out double lower,
+                out double? upper,
+                out string error))
+        {
+            TbwEditErrorText.Text = error;
+            TbwEditErrorText.Visibility = Visibility.Visible;
+            return;
+        }
+
+        _config.Update(cfg =>
+        {
+            cfg.DiskTbwRatings[disk.DiskId] = lower;
+            if (upper.HasValue)
+                cfg.DiskTbwRatingsUpper[disk.DiskId] = upper.Value;
+            else
+                cfg.DiskTbwRatingsUpper.Remove(disk.DiskId);
+        });
+
+        CloseTbwEditor();
+        LoadTbwField();
+        RefreshAll();
+    }
+
+    private void TbwEditClose_Click(object sender, RoutedEventArgs e) => CloseTbwEditor();
+
+    private void CloseTbwEditor()
+    {
+        TbwEditOverlay.Visibility = Visibility.Collapsed;
+        _tbwEditDisk = null;
+        TbwEditErrorText.Visibility = Visibility.Collapsed;
+    }
+
+    private void TbwEditOverlay_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != System.Windows.Input.Key.Escape)
+            return;
+        CloseTbwEditor();
+        e.Handled = true;
+    }
 
     private void LookupRatedTbw_Click(object sender, RoutedEventArgs e)
     {

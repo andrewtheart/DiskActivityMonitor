@@ -154,11 +154,43 @@
                                 <TextBlock Style="{StaticResource H2}" Text="SSD endurance" />
                                 <TextBlock x:Name="EnduranceDiskText" Style="{StaticResource Caption}" Margin="0,2,0,0" Text="" />
                             </StackPanel>
-                            <Border x:Name="EnduranceRatedBadge" HorizontalAlignment="Right" VerticalAlignment="Top"
-                                    Background="#2A2E34" CornerRadius="11" Padding="11,4" Cursor="Hand"
-                                    ToolTip="Right-click to look up this drive's rated TBW">
-                                <Border.ContextMenu>
+                            <Button x:Name="EnduranceRatedBadge" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                    Background="#2A2E34" BorderThickness="0" Padding="11,4" Cursor="Hand"
+                                    ToolTip="Click to change this drive's TBW rating; right-click for lookup options"
+                                    Click="EditRatedTbw_Click">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="PillBorder" Background="{TemplateBinding Background}"
+                                                CornerRadius="11" Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="PillBorder" Property="Background" Value="#343A42" />
+                                            </Trigger>
+                                            <Trigger Property="IsPressed" Value="True">
+                                                <Setter TargetName="PillBorder" Property="Background" Value="#3D444D" />
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Button.Template>
+                                <Button.ContextMenu>
                                     <ContextMenu>
+                                        <MenuItem Click="EditRatedTbw_Click">
+                                            <MenuItem.Header>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets"
+                                                               Foreground="{StaticResource Accent}" FontSize="15"
+                                                               Margin="0,0,9,0" VerticalAlignment="Center" />
+                                                    <StackPanel>
+                                                        <TextBlock Text="Change rated TBW" FontWeight="SemiBold" />
+                                                        <TextBlock Text="Enter one value or a range"
+                                                                   Style="{StaticResource Caption}" />
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </MenuItem.Header>
+                                        </MenuItem>
+                                        <Separator />
                                         <MenuItem Click="LookupRatedTbw_Click">
                                             <MenuItem.Header>
                                                 <StackPanel Orientation="Horizontal">
@@ -174,10 +206,10 @@
                                             </MenuItem.Header>
                                         </MenuItem>
                                     </ContextMenu>
-                                </Border.ContextMenu>
+                                </Button.ContextMenu>
                                 <TextBlock x:Name="EnduranceRatedText" Text="150 to 600 TBW estimated"
                                            Foreground="{StaticResource TextSecondary}" FontSize="12" />
-                            </Border>
+                            </Button>
                         </Grid>
 
                         <!-- Two headline metrics: lifetime wear (SMART) and projected lifespan -->
@@ -933,6 +965,146 @@
                                    Style="{StaticResource Caption}" TextWrapping="Wrap" VerticalAlignment="Center" />
                         <Button Grid.Column="1" Content="Close" Style="{StaticResource ToolButton}"
                                 Margin="14,0,0,0" Click="AlertHistoryClose_Click" />
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- Per-drive rated-TBW editor opened from the endurance rating pill -->
+        <Grid x:Name="TbwEditOverlay" Grid.RowSpan="2" Panel.ZIndex="1080"
+              Background="#E815181B" Visibility="Collapsed"
+              PreviewKeyDown="TbwEditOverlay_PreviewKeyDown">
+            <Grid.Resources>
+                <Style x:Key="TbwEditModeOption" TargetType="RadioButton">
+                    <Setter Property="Foreground" Value="{StaticResource TextSecondary}" />
+                    <Setter Property="Background" Value="#171A1F" />
+                    <Setter Property="Cursor" Value="Hand" />
+                    <Setter Property="HorizontalContentAlignment" Value="Center" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="RadioButton">
+                                <Border x:Name="ModeBorder" Background="{TemplateBinding Background}"
+                                        BorderBrush="{StaticResource CardBorder}" BorderThickness="1"
+                                        CornerRadius="6" Padding="14,9">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="ModeBorder" Property="Background" Value="#2A2E34" />
+                                    </Trigger>
+                                    <Trigger Property="IsChecked" Value="True">
+                                        <Setter TargetName="ModeBorder" Property="Background" Value="#253B5D" />
+                                        <Setter TargetName="ModeBorder" Property="BorderBrush" Value="{StaticResource Accent}" />
+                                        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </Grid.Resources>
+
+            <Border Width="570" Margin="28" VerticalAlignment="Center"
+                    Background="#1E2228" BorderBrush="#3A414A" BorderThickness="1"
+                    CornerRadius="12">
+                <Border.Effect>
+                    <DropShadowEffect Color="#000000" BlurRadius="30" ShadowDepth="10" Opacity="0.65" />
+                </Border.Effect>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Margin="22,18,16,14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="Change rated TBW" FontSize="19" FontWeight="SemiBold" />
+                            <TextBlock x:Name="TbwEditTargetText" Style="{StaticResource Caption}"
+                                       Margin="0,3,0,0" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <Button Grid.Column="1" Style="{StaticResource DismissButton}" Width="30" Height="30"
+                            FontSize="14" Content="&#x2715;" ToolTip="Cancel"
+                            Click="TbwEditClose_Click" />
+                    </Grid>
+
+                    <StackPanel Grid.Row="1" Margin="22,0,22,18">
+                        <Border Background="#171A1F" CornerRadius="8" Padding="13,10" Margin="0,0,0,16">
+                            <StackPanel>
+                                <TextBlock Text="CURRENT RATING" Style="{StaticResource Caption}" />
+                                <TextBlock x:Name="TbwEditCurrentText" Margin="0,3,0,0"
+                                           FontSize="14" FontWeight="SemiBold" />
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Text="How should this drive's manufacturer endurance be represented?"
+                                   Foreground="{StaticResource TextPrimary}" TextWrapping="Wrap" />
+                        <Grid Margin="0,10,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="8" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <RadioButton x:Name="TbwEditSingle" Grid.Column="0" GroupName="TbwEditMode"
+                                         Style="{StaticResource TbwEditModeOption}" Content="Single value"
+                                         Checked="TbwEditMode_Checked" />
+                            <RadioButton x:Name="TbwEditRange" Grid.Column="2" GroupName="TbwEditMode"
+                                         Style="{StaticResource TbwEditModeOption}" Content="Value range"
+                                         Checked="TbwEditMode_Checked" />
+                        </Grid>
+                        <TextBlock x:Name="TbwEditModeHint" Style="{StaticResource Caption}"
+                                   Margin="0,0,0,15" TextWrapping="Wrap" />
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="14" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock x:Name="TbwEditLowerLabel" Style="{StaticResource FieldLabel}"
+                                           Text="Rated TBW (TB)" />
+                                <TextBox x:Name="TbwEditLowerText" Style="{StaticResource DarkTextBox}"
+                                         Width="Auto" HorizontalAlignment="Stretch"
+                                         TextChanged="TbwEditValues_TextChanged" />
+                            </StackPanel>
+                            <StackPanel x:Name="TbwEditUpperPanel" Grid.Column="2" Visibility="Collapsed">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="Maximum TBW (TB)" />
+                                <TextBox x:Name="TbwEditUpperText" Style="{StaticResource DarkTextBox}"
+                                         Width="Auto" HorizontalAlignment="Stretch"
+                                         TextChanged="TbwEditValues_TextChanged" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Border Background="#171A1F" CornerRadius="8" Padding="13,10" Margin="0,15,0,0">
+                            <StackPanel>
+                                <TextBlock Text="AFTER SAVING" Style="{StaticResource Caption}" />
+                                <TextBlock x:Name="TbwEditPreviewText" Margin="0,3,0,0"
+                                           Foreground="{StaticResource TextPrimary}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+                        <TextBlock x:Name="TbwEditErrorText" Foreground="{StaticResource Critical}"
+                                   Margin="0,10,0,0" Visibility="Collapsed" TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <Grid Grid.Row="2" Margin="22,0,22,18">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Style="{StaticResource Caption}" VerticalAlignment="Center"
+                                   Text="This changes only the selected drive." />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <Button Content="Cancel" Style="{StaticResource ToolButton}"
+                                Click="TbwEditClose_Click" />
+                            <Button x:Name="TbwEditSaveButton" Content="Save rating"
+                                Style="{StaticResource ToolButton}" Margin="8,0,0,0"
+                                IsDefault="True" Click="TbwEditSave_Click" />
+                        </StackPanel>
                     </Grid>
                 </Grid>
             </Border>

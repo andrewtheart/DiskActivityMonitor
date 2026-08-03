@@ -706,6 +706,72 @@ public sealed class MainWindowCoverageTests : IDisposable
         });
     }
 
+    [Fact]
+    public void RatedTbwPill_EditorSavesRangeAndSingleAndRefreshesCalculations()
+    {
+        RunStaAsync(() =>
+        {
+            EnsureApplication();
+            var repo = new MonitorRepository(_db); repo.EnsureSchema();
+            repo.UpsertDisks([new DiskInfo
+            {
+                DiskId = "editable", InstanceName = "editable C:", FriendlyName = "Editable SSD", Volumes = "C:",
+                MediaType = DiskMediaType.Ssd, LifetimeBytesWritten = 60_000_000_000_000,
+            }]);
+            using var config = new ConfigStore(_cfg);
+            var window = new MainWindow(repo, config, new UserSettingsStore(_userSettings));
+            try
+            {
+                Assert.Equal("150 to 600 TBW estimated", window.EnduranceRatedText.Text);
+
+                window.EnduranceRatedBadge.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.Equal(Visibility.Visible, window.TbwEditOverlay.Visibility);
+                Assert.True(window.TbwEditRange.IsChecked);
+                Assert.Contains("default estimate", window.TbwEditCurrentText.Text);
+
+                window.TbwEditLowerText.Text = "600";
+                window.TbwEditUpperText.Text = "1200";
+                Assert.Contains("600 to 1200 TBW", window.TbwEditPreviewText.Text);
+                window.TbwEditSaveButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+                Assert.Equal(Visibility.Collapsed, window.TbwEditOverlay.Visibility);
+                Assert.Equal(600, config.Current.DiskTbwRatings["editable"]);
+                Assert.Equal(1200, config.Current.DiskTbwRatingsUpper["editable"]);
+                Assert.Equal("600 to 1200 TBW rated", window.EnduranceRatedText.Text);
+                Assert.Equal("~5% to 10%", window.SmartWearValue.Text);
+                Assert.Equal("600", window.TxtTbw.Text);
+                Assert.Equal("1200", window.TxtTbwUpper.Text);
+
+                window.EnduranceRatedBadge.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.Contains("saved for this drive", window.TbwEditCurrentText.Text);
+                window.TbwEditSingle.IsChecked = true;
+                Assert.Equal(Visibility.Collapsed, window.TbwEditUpperPanel.Visibility);
+                window.TbwEditLowerText.Text = "800";
+                window.TbwEditSaveButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+                Assert.Equal(800, config.Current.DiskTbwRatings["editable"]);
+                Assert.False(config.Current.DiskTbwRatingsUpper.ContainsKey("editable"));
+                Assert.Equal("800 TBW rated", window.EnduranceRatedText.Text);
+                Assert.Equal("~7.5%", window.SmartWearValue.Text);
+                Assert.True(window.RadTbwSingle.IsChecked);
+
+                window.EnduranceRatedBadge.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                window.TbwEditRange.IsChecked = true;
+                window.TbwEditLowerText.Text = "900";
+                window.TbwEditUpperText.Text = "800";
+                window.TbwEditSaveButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.Equal(Visibility.Visible, window.TbwEditOverlay.Visibility);
+                Assert.Contains("greater than minimum", window.TbwEditErrorText.Text);
+                Assert.Equal(800, config.Current.DiskTbwRatings["editable"]);
+                Invoke(window, "TbwEditClose_Click", window, new RoutedEventArgs());
+                Assert.Equal(Visibility.Collapsed, window.TbwEditOverlay.Visibility);
+            }
+            finally { window.ForceClose(); }
+
+            return Task.CompletedTask;
+        });
+    }
+
     private static AlertRecord Alert(DateTime time, AlertSeverity severity, string rule, double value) => new()
     {
         TimestampUtc = time, Severity = severity, RuleKey = rule, Title = rule, Message = "message", Value = value, Threshold = 1,
