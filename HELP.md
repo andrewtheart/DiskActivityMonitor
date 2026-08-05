@@ -60,6 +60,28 @@ The installer is self-contained; the target computer does not need a separately 
 - The tray dashboard.
 - Start Menu and optional sign-in startup integration.
 
+### Reinstalling or upgrading
+
+Setup stops the running tray, stops and unregisters the existing service, waits until Windows has
+really removed the registration, replaces the files, and registers the service again. If the
+installation is aborted after the service was unregistered, setup restores the registration from
+whatever service binary is still on disk.
+
+You are asked two questions when previous data is present. Both offer the same two buttons:
+**Delete existing data** on the left and **Keep existing data** on the right, with keeping
+focused as the default.
+
+1. **Settings** - keep your existing thresholds, preferences, and API credentials, or start from
+   defaults.
+2. **Database** - keep your monitoring history or start a new, empty database. The prompt shows the
+   database path, its size, when collection started, and when it was last updated. If you choose to
+   delete, the existing `diskactivity.db` and its `-wal`/`-shm` journal files are renamed to
+   `diskactivity-replaced-<timestamp>.db` in the same folder, so nothing is actually erased and you
+   can remove or re-inspect the archive yourself.
+
+Both prompts are skipped when setup runs with `/SUPPRESSMSGBOXES`, in which case the defaults
+(keep settings, keep database) apply.
+
 ### Development launch
 
 From the repository root:
@@ -356,6 +378,45 @@ Selectable windows range from the last minute through the past year. `svchost` e
 
 For accurate ETW-based attribution, run the collector as the installed LocalSystem service or run development collection elevated. If ETW startup fails, the collector logs a warning and uses cumulative Win32 process I/O counters, which also include pipe/device I/O and therefore over-count disk-related activity.
 
+### Why so much is attributed to "System"
+
+`System` is the Windows kernel itself (PID 4), not an application. Its writes are issued by kernel
+components on behalf of the whole machine:
+
+- the **cache manager** flushing pages that other applications dirtied,
+- **NTFS metadata and journal** updates (`$Mft`, `$LogFile`, `$Bitmap`, `$UsnJrnl`),
+- the **memory manager** writing `pagefile.sys`,
+- kernel-mode **drivers** and filter drivers.
+
+So the process name cannot identify the work - the target file can.
+
+### Which files a process wrote
+
+Click any row in **Top application write requests** to open the per-file breakdown for that
+process. Each file shows its size share, a classification (NTFS metadata, paging file, registry
+hive, virtual disk, search index, Defender, event log, shadow copy, temporary, log, database,
+network path) and one line explaining what causes that kind of write. Opening it for `System`
+also shows the kernel explanation above.
+
+The same data is available from the CLI:
+
+```powershell
+dam files System --minutes 60 --count 15
+```
+
+Per-file attribution requires the ETW collector and is controlled in Settings:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| Record which files each process writes | on | Master switch for per-file attribution. |
+| Files kept per process / minute | 15 | Busiest files stored for each process each minute. |
+| Minimum per file (KB/min) | 256 | Files below this in a minute are not stored. |
+| File history (days) | 7 | Per-file rows are far more numerous, so they expire sooner than the process rollup. |
+| Files tracked in memory | 20000 | Upper bound on distinct files tracked between samples. |
+
+Because of the size floor, the listed files usually account for most - not all - of a process's
+logical writes; the modal states the exact share.
+
 ---
 
 ## Auto-suspend rules
@@ -374,9 +435,24 @@ Auto-suspend freezes all threads in matching processes after their rolling-hour 
     confirmation-only.
 5. Save rules.
 
+### Suspend from an alert
+
+An alert about a single heavy-writing process offers a **Suspend `<process>`** button and a
+**Suspend for** picker: 5 minutes, 15 minutes, 30 minutes, 1 hour, or until you resume it.
+The pre-selected value comes from **Suspend for (minutes)** in Settings and defaults to 30
+minutes; set it to `0` to make suspensions last until you resume them. The confirmation toast
+raised by an auto-suspend rule offers the same picker.
+
+When the chosen interval elapses, the app resumes the process automatically and posts a
+notification. Suspensions chosen as "until I resume it" are never released automatically.
+
 ### Resume a process
 
-Use the **Resume** button in the Currently suspended list or the action on the suspension toast.
+The dashboard's **Suspended processes** card lists every process this app suspended, whether an
+auto-suspend rule or you suspended it. Each row shows the origin, when it was suspended, and
+whether it resumes on a schedule or waits for you, with a **Resume** button; **Resume all**
+releases them together. The same list appears under Currently suspended in Settings, and
+suspension toasts carry a **Resume** action.
 
 ### Safety notes
 

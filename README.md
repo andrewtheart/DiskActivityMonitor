@@ -107,6 +107,12 @@ optionally creates a startup entry so the tray dashboard launches at sign-in.
 Service binaries are pinned to the expected Program Files directory. Setup rejects reparse
 points and applies protected ownership and ACLs through no-follow directory handles.
 
+When you reinstall or upgrade, setup asks whether to keep your existing settings and your existing
+monitoring database, showing the database's size, when collection started, and when it was last
+updated. Each prompt offers **Delete existing data** and **Keep existing data**, with keeping as
+the focused default. Choosing to delete renames the existing database (and its journal files) with
+a timestamp beside it rather than erasing your history.
+
 ---
 
 ## Requirements
@@ -229,8 +235,14 @@ The **Auto-suspend rules** card lets you stop a runaway writer before it wears t
 - Set a **limit** in GB written per rolling hour. When a process exceeds it, the app reacts.
 - Each rule is either **confirm** (a toast asks before suspending - the default for every new
   rule) or **Auto** (suspend immediately, then notify with a *Resume* button).
-- Suspended processes appear under **Currently suspended** with a **Resume** button, and the
-  auto-suspend toasts carry *Suspend now* / *Resume* actions. Resume validates the recorded
+- Alert toasts for a heavy-writing process carry a **Suspend `<process>`** button plus a
+  **Suspend for** picker (5 minutes / 15 minutes / 30 minutes / 1 hour / until you resume it).
+  The default is 30 minutes and is configurable as **Suspend for (minutes)** in Settings;
+  `0` means the suspension lasts until you resume it. When the interval elapses the app resumes
+  the process itself and notifies you.
+- Every suspension the app performs - by rule or from a toast - is recorded and listed on the
+  dashboard's **Suspended processes** card with its origin, when it was suspended, when it
+  resumes, and per-process **Resume** and **Resume all** buttons. Resume validates the recorded
   process ID, creation time, and executable path before acting.
 
 Name-wide rules always require confirmation; automatic suspension is available only to rules
@@ -315,6 +327,11 @@ flowchart LR
   as a heavy disk writer. The ETW session needs elevation; the collector runs as LocalSystem.
   When ETW is unavailable (e.g. run un-elevated during development) it falls back to cumulative
   `GetProcessIoCounters` deltas, which are an *upper bound* that mixes file, pipe and device I/O.
+- **Per-file** attribution records the busiest files behind each process's writes. This is what
+  explains the kernel `System` process (PID 4), which writes for the whole machine — cache-manager
+  flushes of other applications' pages, NTFS metadata and journal updates, and the paging file.
+  Click a process row in the dashboard, or run `dam files System`, to see the individual files
+  with a classification and an explanation of each kind.
 - Samples are aggregated into **one-minute buckets** and rolled up to hour/day/week for
   charting in local time.
 - Once per minute, the collector reads System log provider `disk`, event ID `11`, counts records

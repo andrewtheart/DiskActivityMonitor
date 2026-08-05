@@ -391,6 +391,8 @@ start</a>
 <li><a href="#recommended-self-contained-installer"
 id="toc-recommended-self-contained-installer">Recommended:
 self-contained installer</a></li>
+<li><a href="#reinstalling-or-upgrading"
+id="toc-reinstalling-or-upgrading">Reinstalling or upgrading</a></li>
 <li><a href="#development-launch"
 id="toc-development-launch">Development launch</a></li>
 <li><a href="#scripted-service-installation"
@@ -460,12 +462,22 @@ virtual-disk limitations</a></li>
 </ul></li>
 <li><a href="#top-application-write-requests"
 id="toc-top-application-write-requests">Top application write
-requests</a></li>
+requests</a>
+<ul>
+<li><a href="#why-so-much-is-attributed-to-system"
+id="toc-why-so-much-is-attributed-to-system">Why so much is attributed
+to “System”</a></li>
+<li><a href="#which-files-a-process-wrote"
+id="toc-which-files-a-process-wrote">Which files a process
+wrote</a></li>
+</ul></li>
 <li><a href="#auto-suspend-rules"
 id="toc-auto-suspend-rules">Auto-suspend rules</a>
 <ul>
 <li><a href="#create-a-rule" id="toc-create-a-rule">Create a
 rule</a></li>
+<li><a href="#suspend-from-an-alert"
+id="toc-suspend-from-an-alert">Suspend from an alert</a></li>
 <li><a href="#resume-a-process" id="toc-resume-a-process">Resume a
 process</a></li>
 <li><a href="#safety-notes" id="toc-safety-notes">Safety notes</a></li>
@@ -640,6 +652,31 @@ LocalSystem and starting automatically.</li>
 <li>The tray dashboard.</li>
 <li>Start Menu and optional sign-in startup integration.</li>
 </ul>
+<h3 id="reinstalling-or-upgrading">Reinstalling or upgrading</h3>
+<p>Setup stops the running tray, stops and unregisters the existing
+service, waits until Windows has really removed the registration,
+replaces the files, and registers the service again. If the installation
+is aborted after the service was unregistered, setup restores the
+registration from whatever service binary is still on disk.</p>
+<p>You are asked two questions when previous data is present. Both offer
+the same two buttons: <strong>Delete existing data</strong> on the left
+and <strong>Keep existing data</strong> on the right, with keeping
+focused as the default.</p>
+<ol type="1">
+<li><strong>Settings</strong> - keep your existing thresholds,
+preferences, and API credentials, or start from defaults.</li>
+<li><strong>Database</strong> - keep your monitoring history or start a
+new, empty database. The prompt shows the database path, its size, when
+collection started, and when it was last updated. If you choose to
+delete, the existing <code>diskactivity.db</code> and its
+<code>-wal</code>/<code>-shm</code> journal files are renamed to
+<code>diskactivity-replaced-&lt;timestamp&gt;.db</code> in the same
+folder, so nothing is actually erased and you can remove or re-inspect
+the archive yourself.</li>
+</ol>
+<p>Both prompts are skipped when setup runs with
+<code>/SUPPRESSMSGBOXES</code>, in which case the defaults (keep
+settings, keep database) apply.</p>
 <h3 id="development-launch">Development launch</h3>
 <p>From the repository root:</p>
 <div class="sourceCode" id="cb1"><pre
@@ -952,6 +989,81 @@ installed LocalSystem service or run development collection elevated. If
 ETW startup fails, the collector logs a warning and uses cumulative
 Win32 process I/O counters, which also include pipe/device I/O and
 therefore over-count disk-related activity.</p>
+<h3 id="why-so-much-is-attributed-to-system">Why so much is attributed
+to “System”</h3>
+<p><code>System</code> is the Windows kernel itself (PID 4), not an
+application. Its writes are issued by kernel components on behalf of the
+whole machine:</p>
+<ul>
+<li>the <strong>cache manager</strong> flushing pages that other
+applications dirtied,</li>
+<li><strong>NTFS metadata and journal</strong> updates
+(<code>$Mft</code>, <code>$LogFile</code>, <code>$Bitmap</code>,
+<code>$UsnJrnl</code>),</li>
+<li>the <strong>memory manager</strong> writing
+<code>pagefile.sys</code>,</li>
+<li>kernel-mode <strong>drivers</strong> and filter drivers.</li>
+</ul>
+<p>So the process name cannot identify the work - the target file
+can.</p>
+<h3 id="which-files-a-process-wrote">Which files a process wrote</h3>
+<p>Click any row in <strong>Top application write requests</strong> to
+open the per-file breakdown for that process. Each file shows its size
+share, a classification (NTFS metadata, paging file, registry hive,
+virtual disk, search index, Defender, event log, shadow copy, temporary,
+log, database, network path) and one line explaining what causes that
+kind of write. Opening it for <code>System</code> also shows the kernel
+explanation above.</p>
+<p>The same data is available from the CLI:</p>
+<div class="sourceCode" id="cb5"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>dam files System <span class="op">--</span>minutes <span class="dv">60</span> <span class="op">--</span>count <span class="dv">15</span></span></code></pre></div>
+<p>Per-file attribution requires the ETW collector and is controlled in
+Settings:</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Record which files each process writes</td>
+<td>on</td>
+<td>Master switch for per-file attribution.</td>
+</tr>
+<tr>
+<td>Files kept per process / minute</td>
+<td>15</td>
+<td>Busiest files stored for each process each minute.</td>
+</tr>
+<tr>
+<td>Minimum per file (KB/min)</td>
+<td>256</td>
+<td>Files below this in a minute are not stored.</td>
+</tr>
+<tr>
+<td>File history (days)</td>
+<td>7</td>
+<td>Per-file rows are far more numerous, so they expire sooner than the
+process rollup.</td>
+</tr>
+<tr>
+<td>Files tracked in memory</td>
+<td>20000</td>
+<td>Upper bound on distinct files tracked between samples.</td>
+</tr>
+</tbody>
+</table>
+<p>Because of the size floor, the listed files usually account for most
+- not all - of a process’s logical writes; the modal states the exact
+share.</p>
 <hr />
 <h2 id="auto-suspend-rules">Auto-suspend rules</h2>
 <p>Auto-suspend freezes all threads in matching processes after their
@@ -975,9 +1087,27 @@ notify afterward. Name-wide rules are confirmation-only.</li>
 <ol start="5" type="1">
 <li>Save rules.</li>
 </ol>
+<h3 id="suspend-from-an-alert">Suspend from an alert</h3>
+<p>An alert about a single heavy-writing process offers a
+<strong>Suspend <code>&lt;process&gt;</code></strong> button and a
+<strong>Suspend for</strong> picker: 5 minutes, 15 minutes, 30 minutes,
+1 hour, or until you resume it. The pre-selected value comes from
+<strong>Suspend for (minutes)</strong> in Settings and defaults to 30
+minutes; set it to <code>0</code> to make suspensions last until you
+resume them. The confirmation toast raised by an auto-suspend rule
+offers the same picker.</p>
+<p>When the chosen interval elapses, the app resumes the process
+automatically and posts a notification. Suspensions chosen as “until I
+resume it” are never released automatically.</p>
 <h3 id="resume-a-process">Resume a process</h3>
-<p>Use the <strong>Resume</strong> button in the Currently suspended
-list or the action on the suspension toast.</p>
+<p>The dashboard’s <strong>Suspended processes</strong> card lists every
+process this app suspended, whether an auto-suspend rule or you
+suspended it. Each row shows the origin, when it was suspended, and
+whether it resumes on a schedule or waits for you, with a
+<strong>Resume</strong> button; <strong>Resume all</strong> releases
+them together. The same list appears under Currently suspended in
+Settings, and suspension toasts carry a <strong>Resume</strong>
+action.</p>
 <h3 id="safety-notes">Safety notes</h3>
 <ul>
 <li>Rules created from the seen-process list match the executable image
@@ -1188,61 +1318,61 @@ recreate them deliberately in each user’s dashboard.</p>
 <hr />
 <h2 id="command-line-guide">Command-line guide</h2>
 <p>Use the repository helper during development:</p>
-<div class="sourceCode" id="cb5"><pre
-class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> <span class="op">&lt;</span>command<span class="op">&gt;</span> <span class="op">[</span>options<span class="op">]</span></span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> <span class="op">&lt;</span>command<span class="op">&gt;</span> <span class="op">[</span>options<span class="op">]</span></span></code></pre></div>
 <p>Installed or published builds can call <code>dam.exe</code>
 directly.</p>
 <h3 id="status-and-inventory">Status and inventory</h3>
-<div class="sourceCode" id="cb6"><pre
-class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> status</span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> disks</span>
-<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> summary <span class="op">--</span>all</span>
-<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> summary <span class="op">--</span>disk <span class="dv">0</span></span></code></pre></div>
-<h3 id="process-activity">Process activity</h3>
 <div class="sourceCode" id="cb7"><pre
-class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> top <span class="op">--</span>minutes <span class="dv">60</span> <span class="op">--</span>count <span class="dv">15</span></span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> <span class="cf">process</span> Code</span>
-<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> trends <span class="op">--</span>range hour <span class="op">--</span>count <span class="dv">24</span> <span class="op">--</span>disk <span class="dv">0</span></span></code></pre></div>
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> status</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> disks</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> summary <span class="op">--</span>all</span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> summary <span class="op">--</span>disk <span class="dv">0</span></span></code></pre></div>
+<h3 id="process-activity">Process activity</h3>
+<div class="sourceCode" id="cb8"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> top <span class="op">--</span>minutes <span class="dv">60</span> <span class="op">--</span>count <span class="dv">15</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> <span class="cf">process</span> Code</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> trends <span class="op">--</span>range hour <span class="op">--</span>count <span class="dv">24</span> <span class="op">--</span>disk <span class="dv">0</span></span></code></pre></div>
 <p>Quote process names containing spaces.</p>
 <h3 id="endurance">Endurance</h3>
-<div class="sourceCode" id="cb8"><pre
-class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> endurance <span class="op">--</span>all</span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> endurance <span class="op">--</span>disk <span class="dv">0</span></span></code></pre></div>
-<h3 id="alerts">Alerts</h3>
 <div class="sourceCode" id="cb9"><pre
-class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Outstanding/non-dismissed alerts</span></span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> alerts</span>
-<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Include acknowledged/dismissed alerts</span></span>
-<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> alerts <span class="op">--</span>all <span class="op">--</span>count <span class="dv">100</span> <span class="op">--</span>full</span>
-<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Acknowledge/dismiss selected records</span></span>
-<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> ack <span class="dv">120</span> <span class="dv">121</span></span>
-<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Acknowledge all records</span></span>
-<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> ack <span class="op">--</span>all</span></code></pre></div>
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> endurance <span class="op">--</span>all</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> endurance <span class="op">--</span>disk <span class="dv">0</span></span></code></pre></div>
+<h3 id="alerts">Alerts</h3>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Outstanding/non-dismissed alerts</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> alerts</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Include acknowledged/dismissed alerts</span></span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> alerts <span class="op">--</span>all <span class="op">--</span>count <span class="dv">100</span> <span class="op">--</span>full</span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Acknowledge/dismiss selected records</span></span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> ack <span class="dv">120</span> <span class="dv">121</span></span>
+<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Acknowledge all records</span></span>
+<span id="cb10-11"><a href="#cb10-11" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> ack <span class="op">--</span>all</span></code></pre></div>
 <p>The CLI retains the historical term <strong>acknowledge</strong> for
 the database state used by dashboard dismissal.</p>
 <h3 id="snooze">Snooze</h3>
-<div class="sourceCode" id="cb10"><pre
-class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> snooze list</span>
-<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> snooze <span class="cf">process</span> Code 1h</span>
-<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> snooze all 30m</span>
-<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> snooze <span class="fu">clear</span> Code</span>
-<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> snooze <span class="fu">clear</span> <span class="op">--</span>global</span>
-<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> snooze <span class="fu">clear</span> <span class="op">--</span>all</span></code></pre></div>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> snooze list</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> snooze <span class="cf">process</span> Code 1h</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> snooze all 30m</span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> snooze <span class="fu">clear</span> Code</span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> snooze <span class="fu">clear</span> <span class="op">--</span>global</span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> snooze <span class="fu">clear</span> <span class="op">--</span>all</span></code></pre></div>
 <p>Duration examples: <code>30m</code>, <code>1h</code>,
 <code>1d</code>, <code>1w</code>.</p>
 <h3 id="configuration">Configuration</h3>
-<div class="sourceCode" id="cb11"><pre
-class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> config get</span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> config get ssdWarnGbPerHour</span>
-<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> config <span class="fu">set</span> ssdWarnGbPerHour <span class="dv">20</span></span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> config get</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> config get ssdWarnGbPerHour</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> config <span class="fu">set</span> ssdWarnGbPerHour <span class="dv">20</span></span></code></pre></div>
 <p>Change notification, online lookup, and auto-suspend preferences in
 the dashboard; they are not machine-wide CLI settings.</p>
 <h3 id="live-terminal-dashboard">Live terminal dashboard</h3>
-<div class="sourceCode" id="cb12"><pre
-class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> watch <span class="op">--</span>interval <span class="dv">5</span></span></code></pre></div>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> watch <span class="op">--</span>interval <span class="dv">5</span></span></code></pre></div>
 <p>Press <code>Ctrl+C</code> to stop watching.</p>
 <hr />
 <h2 id="files-privacy-and-backup">Files, privacy, and backup</h2>
@@ -1343,8 +1473,8 @@ keys there instead.</p>
 are detected</h3>
 <ul>
 <li><p>Confirm the service is running:</p>
-<div class="sourceCode" id="cb13"><pre
-class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="fu">Get-Service</span> DiskActivityMonitor</span></code></pre></div></li>
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="fu">Get-Service</span> DiskActivityMonitor</span></code></pre></div></li>
 <li><p>Open <code>%ProgramData%\DiskActivityMonitor</code> and confirm
 <code>diskactivity.db</code> exists.</p></li>
 <li><p>Wait through at least one sampling interval.</p></li>
@@ -1423,12 +1553,12 @@ restart the service to allow a clean checkpoint. Do not delete only the
 WAL while processes are using the database.</p>
 <h3 id="service-diagnostics">Service diagnostics</h3>
 <p>Useful checks:</p>
-<div class="sourceCode" id="cb14"><pre
-class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="fu">Get-Service</span> DiskActivityMonitor</span>
-<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sc</span><span class="op">.</span><span class="fu">exe</span> query DiskActivityMonitor</span>
-<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> status</span>
-<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a><span class="fu">Get-WinEvent</span> <span class="op">-</span>LogName System <span class="op">-</span>MaxEvents <span class="dv">100</span> <span class="op">|</span></span>
-<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">Where-Object</span> ProviderName <span class="op">-eq</span> <span class="st">&#39;disk&#39;</span></span></code></pre></div>
+<div class="sourceCode" id="cb15"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="fu">Get-Service</span> DiskActivityMonitor</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sc</span><span class="op">.</span><span class="fu">exe</span> query DiskActivityMonitor</span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\dam<span class="op">.</span><span class="fu">ps1</span> status</span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a><span class="fu">Get-WinEvent</span> <span class="op">-</span>LogName System <span class="op">-</span>MaxEvents <span class="dv">100</span> <span class="op">|</span></span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">Where-Object</span> ProviderName <span class="op">-eq</span> <span class="st">&#39;disk&#39;</span></span></code></pre></div>
 <p>When run interactively, the collector writes structured logs to its
 console. As a Windows Service, hosting/lifecycle messages can also be
 inspected through Windows Event Viewer where available.</p>
@@ -1445,8 +1575,8 @@ are preserved, while settings introduced by the newer version receive
 their current defaults.</p>
 <h3 id="scripted-uninstall">Scripted uninstall</h3>
 <p>Run elevated:</p>
-<div class="sourceCode" id="cb15"><pre
-class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\uninstall<span class="op">.</span><span class="fu">ps1</span></span></code></pre></div>
+<div class="sourceCode" id="cb16"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\uninstall<span class="op">.</span><span class="fu">ps1</span></span></code></pre></div>
 <p>The script removes the service and Startup shortcut and stops the
 tray. It intentionally leaves monitoring history and settings.</p>
 <h3 id="remove-all-data">Remove all data</h3>
@@ -1463,23 +1593,23 @@ snoozes, configuration, and stored suspension state.</p>
 <h2 id="developer-and-release-workflows">Developer and release
 workflows</h2>
 <h3 id="build-and-test">Build and test</h3>
-<div class="sourceCode" id="cb16"><pre
-class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>dotnet build <span class="op">.</span>\DiskActivityMonitor<span class="op">.</span><span class="fu">slnx</span> <span class="op">-</span>c Release</span>
-<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>dotnet test <span class="op">.</span>\tests\DiskActivityMonitor<span class="op">.</span><span class="fu">Tests</span>\DiskActivityMonitor<span class="op">.</span><span class="fu">Tests</span><span class="op">.</span><span class="fu">csproj</span> <span class="op">-</span>c Release</span></code></pre></div>
+<div class="sourceCode" id="cb17"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>dotnet build <span class="op">.</span>\DiskActivityMonitor<span class="op">.</span><span class="fu">slnx</span> <span class="op">-</span>c Release</span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>dotnet test <span class="op">.</span>\tests\DiskActivityMonitor<span class="op">.</span><span class="fu">Tests</span>\DiskActivityMonitor<span class="op">.</span><span class="fu">Tests</span><span class="op">.</span><span class="fu">csproj</span> <span class="op">-</span>c Release</span></code></pre></div>
 <h3 id="build-installers">Build installers</h3>
 <p>Build x64 and x86 with one version and a consolidated summary:</p>
-<div class="sourceCode" id="cb17"><pre
-class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span></span></code></pre></div>
-<p>Preview without changing files:</p>
 <div class="sourceCode" id="cb18"><pre
-class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span> <span class="op">-</span>WhatIf</span></code></pre></div>
-<p>Build selected architecture:</p>
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span></span></code></pre></div>
+<p>Preview without changing files:</p>
 <div class="sourceCode" id="cb19"><pre
-class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Variant x64 <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span></span></code></pre></div>
-<h3 id="commit-push-and-release">Commit, push, and release</h3>
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span> <span class="op">-</span>WhatIf</span></code></pre></div>
+<p>Build selected architecture:</p>
 <div class="sourceCode" id="cb20"><pre
-class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span> <span class="op">-</span>Commit</span>
-<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Push</span></code></pre></div>
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Variant x64 <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span></span></code></pre></div>
+<h3 id="commit-push-and-release">Commit, push, and release</h3>
+<div class="sourceCode" id="cb21"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span> <span class="op">-</span>Commit</span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Push</span></code></pre></div>
 <p><code>-Commit</code> and <code>-Push</code> attempt focused commits
 by functional area. The script preserves any already-staged changes as
 the first commit, then groups remaining changes by whole file. It never
@@ -1498,18 +1628,18 @@ publication.</li>
 <li><strong>Published:</strong> publish officially and mark latest.</li>
 </ul>
 <p>For unattended operation:</p>
-<div class="sourceCode" id="cb21"><pre
-class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Push <span class="op">-</span>ReleaseMode Draft</span>
-<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Push <span class="op">-</span>ReleaseMode Published</span>
-<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Push <span class="op">-</span>SkipRelease</span></code></pre></div>
+<div class="sourceCode" id="cb22"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Push <span class="op">-</span>ReleaseMode Draft</span>
+<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Push <span class="op">-</span>ReleaseMode Published</span>
+<span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Push <span class="op">-</span>SkipRelease</span></code></pre></div>
 <p>The lower-level builder remains available at
 <code>installer\build-installer.ps1</code> for direct x64/x86
 packaging.</p>
 <h3 id="publish-the-authenticated-download-site">Publish the
 authenticated download site</h3>
 <p>The Azure publication workflow is separate from GitHub Releases:</p>
-<div class="sourceCode" id="cb22"><pre
-class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\publish-to-azure<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span></span></code></pre></div>
+<div class="sourceCode" id="cb23"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\publish-to-azure<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span></span></code></pre></div>
 <p>It builds x64/x86 installers, creates an x64 portable ZIP, uploads
 artifacts, and surgically updates only the Disk Activity Monitor card on
 the existing static site.</p>
