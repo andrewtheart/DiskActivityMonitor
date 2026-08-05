@@ -47,3 +47,26 @@ public sealed class ProcessRank
     public long WriteBytes { get; set; }
     public long ReadBytes { get; set; }
 }
+
+/// <summary>
+/// Logical I/O one process performed against one file during a minute bucket. This is what turns
+/// an opaque writer such as the kernel <c>System</c> process into an explanation.
+/// </summary>
+public sealed class ProcessFileIoSample
+{
+    public required DateTime TimestampUtc { get; init; }
+    public required string ProcessName { get; init; }
+    public required string Path { get; init; }
+    public required FileTargetKind Kind { get; init; }
+    public long ReadBytes { get; set; }
+    public long WriteBytes { get; set; }
+}
+
+/// <summary>A file ranked by how much one process wrote to it during a window.</summary>
+public sealed class FileTargetRank
+{
+    public required string Path { get; init; }
+    public required FileTargetKind Kind { get; init; }
+    public long WriteBytes { get; set; }
+    public long ReadBytes { get; set; }
+}

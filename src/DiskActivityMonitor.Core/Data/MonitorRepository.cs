@@ -9,7 +9,13 @@ public sealed record SuspendedProcessState(
     string Name,
     DateTime SuspendedUtc,
     string? ExecutablePath,
-    IReadOnlyList<ProcessControl.ProcessIdentity> ProcessIdentities);
+    IReadOnlyList<ProcessControl.ProcessIdentity> ProcessIdentities,
+    DateTime? ResumeAtUtc = null,
+    SuspendSource Source = SuspendSource.Manual)
+{
+    /// <summary>True when the suspension has a scheduled end that has already passed.</summary>
+    public bool IsDue(DateTime nowUtc) => ResumeAtUtc is DateTime due && due <= nowUtc;
+}
 
 /// <summary>
 /// Thin SQLite repository shared by the collector (writer) and tray app (reader).
@@ -84,6 +90,17 @@ public sealed class MonitorRepository
             );
             CREATE INDEX IF NOT EXISTS ix_proc_minute_ts ON proc_minute(ts_min);
 
+            CREATE TABLE IF NOT EXISTS proc_file_minute(
+                ts_min INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                path TEXT NOT NULL,
+                kind INTEGER NOT NULL,
+                read_bytes INTEGER NOT NULL,
+                write_bytes INTEGER NOT NULL,
+                PRIMARY KEY(ts_min, name, path)
+            );
+            CREATE INDEX IF NOT EXISTS ix_proc_file_minute_name_ts ON proc_file_minute(name, ts_min);
+
             CREATE TABLE IF NOT EXISTS alerts(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts_utc INTEGER NOT NULL,
@@ -121,6 +138,8 @@ public sealed class MonitorRepository
         EnsureColumn(conn, "disks", "life_read_bytes", "INTEGER");
         EnsureColumn(conn, "suspended_processes", "executable_path", "TEXT");
         EnsureColumn(conn, "suspended_processes", "process_identities", "TEXT");
+        EnsureColumn(conn, "suspended_processes", "resume_at_utc", "INTEGER");
+        EnsureColumn(conn, "suspended_processes", "source", "INTEGER");
     }
 
     private static void EnsureColumn(SqliteConnection conn, string table, string column, string definition)
@@ -277,8 +296,83 @@ public sealed class MonitorRepository
         tx.Commit();
     }
 
-    // ---------------------------------------------------------------- Trend queries
+    public void AddProcessFileSamples(IReadOnlyCollection<ProcessFileIoSample> samples)
+    {
+        if (samples.Count == 0) return;
+        using var conn = Open();
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO proc_file_minute(ts_min, name, path, kind, read_bytes, write_bytes)
+            VALUES($ts, $name, $path, $kind, $r, $w)
+            ON CONFLICT(ts_min, name, path) DO UPDATE SET
+                read_bytes  = read_bytes  + excluded.read_bytes,
+                write_bytes = write_bytes + excluded.write_bytes;
+            """;
+        var pTs = cmd.CreateParameter(); pTs.ParameterName = "$ts"; cmd.Parameters.Add(pTs);
+        var pName = cmd.CreateParameter(); pName.ParameterName = "$name"; cmd.Parameters.Add(pName);
+        var pPath = cmd.CreateParameter(); pPath.ParameterName = "$path"; cmd.Parameters.Add(pPath);
+        var pKind = cmd.CreateParameter(); pKind.ParameterName = "$kind"; cmd.Parameters.Add(pKind);
+        var pR = cmd.CreateParameter(); pR.ParameterName = "$r"; cmd.Parameters.Add(pR);
+        var pW = cmd.CreateParameter(); pW.ParameterName = "$w"; cmd.Parameters.Add(pW);
+        foreach (var s in samples)
+        {
+            pTs.Value = ToUnix(s.TimestampUtc);
+            pName.Value = s.ProcessName;
+            pPath.Value = s.Path;
+            pKind.Value = (int)s.Kind;
+            pR.Value = s.ReadBytes;
+            pW.Value = s.WriteBytes;
+            cmd.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
 
+    /// <summary>Files one process wrote to most during a window, ranked by write bytes.</summary>
+    public List<FileTargetRank> GetTopFileTargets(string processName, DateTime fromUtc, DateTime toUtc, int topN)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT path, MAX(kind), SUM(write_bytes) AS w, SUM(read_bytes) AS r
+            FROM proc_file_minute
+            WHERE name = $n AND ts_min >= $from AND ts_min < $to
+            GROUP BY path COLLATE NOCASE
+            ORDER BY w DESC
+            LIMIT $limit;
+            """;
+        cmd.Parameters.AddWithValue("$n", processName);
+        cmd.Parameters.AddWithValue("$from", ToUnix(fromUtc));
+        cmd.Parameters.AddWithValue("$to", ToUnix(toUtc));
+        cmd.Parameters.AddWithValue("$limit", topN);
+        var list = new List<FileTargetRank>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            list.Add(new FileTargetRank
+            {
+                Path = r.GetString(0),
+                Kind = (FileTargetKind)r.GetInt32(1),
+                WriteBytes = r.GetInt64(2),
+                ReadBytes = r.GetInt64(3),
+            });
+        }
+        return list;
+    }
+
+    /// <summary>Total per-file write bytes recorded for a process in a window (the drill-down denominator).</summary>
+    public long GetFileTargetWriteTotal(string processName, DateTime fromUtc, DateTime toUtc)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COALESCE(SUM(write_bytes), 0) FROM proc_file_minute WHERE name = $n AND ts_min >= $from AND ts_min < $to;";
+        cmd.Parameters.AddWithValue("$n", processName);
+        cmd.Parameters.AddWithValue("$from", ToUnix(fromUtc));
+        cmd.Parameters.AddWithValue("$to", ToUnix(toUtc));
+        return Convert.ToInt64(cmd.ExecuteScalar() ?? 0L);
+    }
+
+    // ---------------------------------------------------------------- Trend queries
     /// <summary>
     /// Returns hour-aligned (UTC) read/write totals for one disk between two instants.
     /// Callers roll these into day/week buckets in local time.
@@ -637,18 +731,22 @@ public sealed class MonitorRepository
         string name,
         DateTime suspendedUtc,
         string? executablePath = null,
-        IReadOnlyList<ProcessControl.ProcessIdentity>? processIdentities = null)
+        IReadOnlyList<ProcessControl.ProcessIdentity>? processIdentities = null,
+        DateTime? resumeAtUtc = null,
+        SuspendSource source = SuspendSource.Manual)
     {
         using var conn = Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             INSERT INTO suspended_processes(
-                name, suspended_utc, executable_path, process_identities)
-            VALUES($n, $u, $p, $i)
+                name, suspended_utc, executable_path, process_identities, resume_at_utc, source)
+            VALUES($n, $u, $p, $i, $r, $s)
             ON CONFLICT(name) DO UPDATE SET
                 suspended_utc = excluded.suspended_utc,
                 executable_path = excluded.executable_path,
-                process_identities = excluded.process_identities;
+                process_identities = excluded.process_identities,
+                resume_at_utc = excluded.resume_at_utc,
+                source = excluded.source;
             """;
         cmd.Parameters.AddWithValue("$n", name);
         cmd.Parameters.AddWithValue("$u", ToUnix(suspendedUtc));
@@ -658,6 +756,8 @@ public sealed class MonitorRepository
             processIdentities is { Count: > 0 }
                 ? JsonSerializer.Serialize(processIdentities)
                 : DBNull.Value);
+        cmd.Parameters.AddWithValue("$r", resumeAtUtc is DateTime due ? ToUnix(due) : DBNull.Value);
+        cmd.Parameters.AddWithValue("$s", (int)source);
         cmd.ExecuteNonQuery();
     }
 
@@ -682,7 +782,7 @@ public sealed class MonitorRepository
         using var conn = Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT name, suspended_utc, executable_path, process_identities
+            SELECT name, suspended_utc, executable_path, process_identities, resume_at_utc, source
             FROM suspended_processes
             ORDER BY suspended_utc DESC;
             """;
@@ -694,7 +794,9 @@ public sealed class MonitorRepository
                 r.GetString(0),
                 FromUnix(r.GetInt64(1)),
                 r.IsDBNull(2) ? null : r.GetString(2),
-                DeserializeProcessIdentities(r.IsDBNull(3) ? null : r.GetString(3))));
+                DeserializeProcessIdentities(r.IsDBNull(3) ? null : r.GetString(3)),
+                r.IsDBNull(4) ? null : FromUnix(r.GetInt64(4)),
+                r.IsDBNull(5) ? SuspendSource.Manual : (SuspendSource)r.GetInt32(5)));
         }
         return list;
     }
@@ -759,5 +861,18 @@ public sealed class MonitorRepository
             removed += cmd.ExecuteNonQuery();
         }
         return removed;
+    }
+
+    /// <summary>
+    /// Prunes per-file rows separately: they are far more numerous than the per-process rollup,
+    /// so they keep a shorter history.
+    /// </summary>
+    public int PruneFileTargetsOlderThan(DateTime cutoffUtc)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM proc_file_minute WHERE ts_min < $cutoff;";
+        cmd.Parameters.AddWithValue("$cutoff", ToUnix(cutoffUtc));
+        return cmd.ExecuteNonQuery();
     }
 }

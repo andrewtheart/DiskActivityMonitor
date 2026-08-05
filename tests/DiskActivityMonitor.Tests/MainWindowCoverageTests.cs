@@ -576,6 +576,19 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Assert.NotNull(trayMenu.Region);
                 Assert.False(trayMenu.Region.IsVisible(0, 0));
                 Assert.True(trayMenu.Region.IsVisible(trayMenu.Width / 2, trayMenu.Height / 2));
+
+                // Item text is inset from both edges instead of hugging the menu border.
+                Assert.Equal(System.Drawing.SystemFonts.MenuFont!.Name, trayMenu.Font.Name);
+                var textRect = DarkTrayContextMenu.GetTextRectangle(200, 30);
+                Assert.Equal(DarkTrayContextMenu.TextInsetLeft, textRect.X);
+                Assert.Equal(200 - DarkTrayContextMenu.TextInsetLeft - DarkTrayContextMenu.TextInsetRight, textRect.Width);
+                Assert.Equal(30, textRect.Height);
+                Assert.Equal(0, DarkTrayContextMenu.GetTextRectangle(4, 30).Width);
+                var command = Assert.IsType<System.Windows.Forms.ToolStripMenuItem>(trayMenu.Items[0]);
+                Assert.Equal(DarkTrayContextMenu.TextInsetLeft, command.Padding.Left);
+                Assert.Equal(DarkTrayContextMenu.TextInsetRight, command.Padding.Right);
+                Assert.True(command.Width > DarkTrayContextMenu.TextInsetLeft + DarkTrayContextMenu.TextInsetRight);
+
                 repo.AcknowledgeAlerts();
                 Invoke(controller, "Update");
 
@@ -834,6 +847,192 @@ public sealed class MainWindowCoverageTests : IDisposable
         Type type = typeof(MainWindow).GetNestedType("AlertRow", BindingFlags.NonPublic)!;
         return Activator.CreateInstance(type, "title", "message", "time", Brushes.Red,
             diskId, 2, canScan, canScan ? Visibility.Visible : Visibility.Collapsed, alertIds ?? new long[] { 1 })!;
+    }
+
+    [Fact]
+    public void SettingsHeader_StaysPinnedOutsideTheScrollingContent()
+    {
+        RunStaAsync(() =>
+        {
+            EnsureApplication();
+            var repo = new MonitorRepository(_db); repo.EnsureSchema();
+            repo.UpsertDisks([Disk()]);
+            using var config = new ConfigStore(_cfg);
+            var window = new MainWindow(repo, config, new UserSettingsStore(_userSettings));
+            try
+            {
+                Assert.Equal(Visibility.Collapsed, window.SettingsHeader.Visibility);
+
+                Invoke(window, "Gear_Click", window, new RoutedEventArgs());
+                Assert.Equal(Visibility.Visible, window.SettingsPanel.Visibility);
+                Assert.Equal(Visibility.Visible, window.SettingsHeader.Visibility);
+
+                // Scrolling the settings content must never move the back button out of view.
+                Assert.DoesNotContain(Ancestors(window.SettingsHeader), element => ReferenceEquals(element, window.BodyScroller));
+                Assert.Contains(Ancestors(window.SettingsPanel), element => ReferenceEquals(element, window.BodyScroller));
+
+                Invoke(window, "Gear_Click", window, new RoutedEventArgs());
+                Assert.Equal(Visibility.Collapsed, window.SettingsHeader.Visibility);
+                Assert.Equal(Visibility.Visible, window.DashboardPanel.Visibility);
+            }
+            finally { window.ForceClose(); }
+            return Task.CompletedTask;
+        });
+    }
+
+    private static IEnumerable<DependencyObject> Ancestors(DependencyObject element)
+    {
+        for (var parent = System.Windows.Media.VisualTreeHelper.GetParent(element)
+                 ?? System.Windows.LogicalTreeHelper.GetParent(element);
+             parent is not null;
+             parent = System.Windows.Media.VisualTreeHelper.GetParent(parent)
+                 ?? System.Windows.LogicalTreeHelper.GetParent(parent))
+        {
+            yield return parent;
+        }
+    }
+
+    [Fact]
+    public void FileTargets_ExplainAnOpaqueWriterFromTheProcessCard()
+    {
+        RunStaAsync(() =>
+        {
+            EnsureApplication();
+            var repo = new MonitorRepository(_db); repo.EnsureSchema();
+            repo.UpsertDisks([Disk()]);
+            using var config = new ConfigStore(_cfg);
+            var window = new MainWindow(repo, config, new UserSettingsStore(_userSettings));
+            try
+            {
+                window.ShowFileTargets("System");
+                Assert.Equal(Visibility.Visible, window.FileTargetsOverlay.Visibility);
+                Assert.Equal("Files written by System", window.FileTargetsTitle.Text);
+                Assert.Equal(Visibility.Visible, window.FileTargetsNoteBorder.Visibility);
+                Assert.Contains("kernel", window.FileTargetsNote.Text, StringComparison.OrdinalIgnoreCase);
+                Assert.Equal(Visibility.Visible, window.FileTargetsEmpty.Visibility);
+
+                var utcNow = DateTime.UtcNow;
+                var minute = new DateTime(utcNow.Year, utcNow.Month, utcNow.Day, utcNow.Hour, utcNow.Minute, 0, DateTimeKind.Utc)
+                    .AddMinutes(-2);
+                repo.AddProcessSamples([new ProcessIoSample { TimestampUtc = minute, ProcessName = "System", WriteBytes = 4000 }]);
+                repo.AddProcessFileSamples(
+                [
+                    new ProcessFileIoSample
+                    {
+                        TimestampUtc = minute, ProcessName = "System", Path = @"C:\$Mft",
+                        Kind = FileTargetKind.NtfsMetadata, WriteBytes = 3000,
+                    },
+                    new ProcessFileIoSample
+                    {
+                        TimestampUtc = minute, ProcessName = "System", Path = @"C:\pagefile.sys",
+                        Kind = FileTargetKind.PagingFile, WriteBytes = 1000,
+                    },
+                ]);
+
+                window.ShowFileTargets("System");
+                var rows = ((IEnumerable)window.FileTargetsList.ItemsSource).Cast<object>().ToList();
+                Assert.Equal(2, rows.Count);
+                Assert.Equal("$Mft", rows[0].GetType().GetProperty("FileName")!.GetValue(rows[0]));
+                Assert.Equal("NTFS metadata", rows[0].GetType().GetProperty("KindLabel")!.GetValue(rows[0]));
+                Assert.Equal(Visibility.Collapsed, window.FileTargetsEmpty.Visibility);
+                Assert.Contains("100%", window.FileTargetsFooter.Text);
+
+                // An ordinary application needs no kernel explanation.
+                window.ShowFileTargets("chrome");
+                Assert.Equal(Visibility.Collapsed, window.FileTargetsNoteBorder.Visibility);
+
+                window.FileTargetsClose_Click(window, new RoutedEventArgs());
+                Assert.Equal(Visibility.Collapsed, window.FileTargetsOverlay.Visibility);
+            }
+            finally { window.ForceClose(); }
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public void FileTargets_DescribeCoverageAndDisabledTracking()
+    {
+        Assert.Contains("turned off", MainWindow.FileTargetsEmptyText(trackingEnabled: false));
+        Assert.Contains("ETW collector", MainWindow.FileTargetsEmptyText(trackingEnabled: true));
+        Assert.Equal("Per-file history is kept for 7 day(s).", MainWindow.FileTargetsCoverage(0, 0, 7));
+        Assert.Contains("50%", MainWindow.FileTargetsCoverage(1000, 500, 7));
+        Assert.Contains("100%", MainWindow.FileTargetsCoverage(1000, 4000, 7));
+    }
+
+    [Fact]
+    public void SuspendedProcesses_RenderAndResumeFromTheDashboard()    {
+        RunStaAsync(() =>
+        {
+            EnsureApplication();
+            var repo = new MonitorRepository(_db); repo.EnsureSchema();
+            repo.UpsertDisks([Disk()]);
+            using var config = new ConfigStore(_cfg);
+            var userSettings = new UserSettingsStore(_userSettings);
+            var window = new MainWindow(repo, config, userSettings);
+            try
+            {
+                Invoke(window, "RefreshSuspended");
+                Assert.Equal(Visibility.Visible, window.SuspendedProcessEmpty.Visibility);
+                Assert.Equal(Visibility.Collapsed, window.ResumeAllSuspendedButton.Visibility);
+
+                var now = DateTime.UtcNow;
+                var identities = new[] { new ProcessControl.ProcessIdentity(4242, 1, @"C:\Apps\gone.exe") };
+                repo.AddSuspendedProcess("auto", now, null, identities, now.AddMinutes(30), SuspendSource.AutoRule);
+                repo.AddSuspendedProcess("manual", now, null, identities, null, SuspendSource.Manual);
+
+                Invoke(window, "RefreshSuspended");
+                Assert.Equal(Visibility.Collapsed, window.SuspendedProcessEmpty.Visibility);
+                Assert.Equal(Visibility.Visible, window.ResumeAllSuspendedButton.Visibility);
+                var rows = ((IEnumerable)window.SuspendedProcessList.ItemsSource).Cast<object>().ToList();
+                Assert.Equal(2, rows.Count);
+                Assert.Contains(rows, r => (string)r.GetType().GetProperty("SourceLabel")!.GetValue(r)! == "Auto-suspend rule");
+                Assert.Contains(rows, r => (string)r.GetType().GetProperty("SourceLabel")!.GetValue(r)! == "Suspended by you");
+                Assert.Contains(rows, r => (string)r.GetType().GetProperty("ResumeAutomationName")!.GetValue(r)! == "Resume manual");
+
+                // The tracked identities no longer exist, so resuming clears the stale records.
+                Invoke(window, "ResumeAllSuspended_Click", window, new RoutedEventArgs());
+                Assert.Equal(Visibility.Visible, window.SuspendedProcessStatus.Visibility);
+                Assert.Contains("Could not resume", window.SuspendedProcessStatus.Text);
+                Assert.Empty(((IEnumerable)window.SuspendedProcessList.ItemsSource).Cast<object>());
+                Assert.Equal(Visibility.Visible, window.SuspendedProcessEmpty.Visibility);
+
+                repo.AddSuspendedProcess("manual", now, null, identities, null, SuspendSource.Manual);
+                Invoke(window, "RefreshSuspended");
+                Invoke(window, "ResumeSuspendedProcess_Click",
+                    new Button { DataContext = ((IEnumerable)window.SuspendedProcessList.ItemsSource).Cast<object>().First() },
+                    new RoutedEventArgs());
+                Assert.Contains("no longer running", window.SuspendedProcessStatus.Text);
+                Assert.Empty(repo.GetSuspendedProcessNames());
+            }
+            finally { window.ForceClose(); }
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public void SuspendSettings_PersistTheDefaultInterval()
+    {
+        RunStaAsync(() =>
+        {
+            EnsureApplication();
+            var repo = new MonitorRepository(_db); repo.EnsureSchema();
+            repo.UpsertDisks([Disk()]);
+            using var config = new ConfigStore(_cfg);
+            var userSettings = new UserSettingsStore(_userSettings);
+            var window = new MainWindow(repo, config, userSettings);
+            try
+            {
+                Invoke(window, "LoadSuspendRules");
+                Assert.Equal("30", window.TxtSuspendMinutes.Text);
+
+                window.TxtSuspendMinutes.Text = "15";
+                Invoke(window, "SaveRules_Click", window, new RoutedEventArgs());
+                Assert.Equal(15, userSettings.Current.DefaultSuspendMinutes);
+                Assert.Equal("15", window.TxtSuspendMinutes.Text);
+            }
+            finally { window.ForceClose(); }
+            return Task.CompletedTask;
+        });
     }
 
     private static async Task ExerciseStaleScans(MainWindow window)

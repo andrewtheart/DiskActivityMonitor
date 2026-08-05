@@ -29,6 +29,7 @@ public sealed class CollectorWorker : BackgroundService
 
     private readonly Dictionary<string, (long Read, long Write)> _diskAccum = new();
     private readonly Dictionary<string, (long Read, long Write)> _procAccum = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<(string Process, string Path), (long Read, long Write)> _fileAccum = new(FileTargetKeyComparer.Instance);
 
     private DateTime _currentMinuteUtc;
     private DateTime _lastPruneUtc = DateTime.MinValue;
@@ -142,8 +143,17 @@ public sealed class CollectorWorker : BackgroundService
         foreach (var (diskId, bytes) in _diskSampler.SampleBytes(elapsedSeconds))
             Accumulate(_diskAccum, diskId, bytes.Read, bytes.Write);
 
+        _procReader.ConfigureFileTargets(cfg.TrackFileTargets, cfg.FileTargetTrackingLimit);
+
         foreach (var (name, bytes) in _procReader.SampleDeltas())
             Accumulate(_procAccum, name, bytes.Read, bytes.Write);
+
+        foreach (var delta in _procReader.SampleFileTargetDeltas())
+        {
+            var key = (delta.ProcessName, delta.Path);
+            _fileAccum.TryGetValue(key, out var cur);
+            _fileAccum[key] = (cur.Read + delta.Read, cur.Write + delta.Write);
+        }
     }
 
     private void FlushBuckets(AppConfig cfg)
@@ -171,6 +181,68 @@ public sealed class CollectorWorker : BackgroundService
             _repo.AddProcessSamples(samples);
             _procAccum.Clear();
         }
+
+        if (_fileAccum.Count > 0)
+        {
+            var fileSamples = SelectFileTargets(_fileAccum, _currentMinuteUtc, cfg);
+            if (fileSamples.Count > 0)
+                _repo.AddProcessFileSamples(fileSamples);
+            _fileAccum.Clear();
+        }
+    }
+
+    /// <summary>
+    /// Keeps the busiest files per process for the minute and folds everything else into a single
+    /// aggregate row, so the per-file table stays bounded without losing bytes.
+    /// </summary>
+    internal static List<ProcessFileIoSample> SelectFileTargets(
+        IReadOnlyDictionary<(string Process, string Path), (long Read, long Write)> accumulated,
+        DateTime minuteUtc,
+        AppConfig cfg)
+    {
+        long minBytes = (long)(Math.Max(0, cfg.FileTargetMinKbPerMinute) * 1024);
+        int perProcess = Math.Max(1, cfg.FileTargetsPerProcessPerMinute);
+        var samples = new List<ProcessFileIoSample>();
+
+        foreach (var group in accumulated.GroupBy(kv => kv.Key.Process, StringComparer.OrdinalIgnoreCase))
+        {
+            var listed = group
+                .Where(kv => kv.Value.Write >= minBytes || kv.Value.Read >= minBytes)
+                .OrderByDescending(kv => kv.Value.Write)
+                .ThenByDescending(kv => kv.Value.Read)
+                .Take(perProcess)
+                .ToList();
+
+            foreach (var kv in listed)
+            {
+                samples.Add(new ProcessFileIoSample
+                {
+                    TimestampUtc = minuteUtc,
+                    ProcessName = group.Key,
+                    Path = kv.Key.Path,
+                    Kind = FileTargetNormalizer.Classify(kv.Key.Path),
+                    ReadBytes = kv.Value.Read,
+                    WriteBytes = kv.Value.Write,
+                });
+            }
+
+            long otherWrite = group.Sum(kv => kv.Value.Write) - listed.Sum(kv => kv.Value.Write);
+            long otherRead = group.Sum(kv => kv.Value.Read) - listed.Sum(kv => kv.Value.Read);
+            if (otherWrite > 0 || otherRead > 0)
+            {
+                samples.Add(new ProcessFileIoSample
+                {
+                    TimestampUtc = minuteUtc,
+                    ProcessName = group.Key,
+                    Path = FileTargetNormalizer.OtherFilesPath,
+                    Kind = FileTargetKind.Other,
+                    ReadBytes = otherRead,
+                    WriteBytes = otherWrite,
+                });
+            }
+        }
+
+        return samples;
     }
 
     internal void RunPeriodicTasks(AppConfig cfg, DateTime nowUtc)
@@ -201,6 +273,8 @@ public sealed class CollectorWorker : BackgroundService
             try
             {
                 int removed = _repo.PruneOlderThan(nowUtc.AddDays(-Math.Max(1, cfg.RetentionDays)));
+                removed += _repo.PruneFileTargetsOlderThan(
+                    nowUtc.AddDays(-Math.Clamp(cfg.FileTargetRetentionDays, 1, Math.Max(1, cfg.RetentionDays))));
                 if (removed > 0)
                     _log.LogInformation("Pruned {Count} expired rows (retention {Days}d).", removed, cfg.RetentionDays);
             }

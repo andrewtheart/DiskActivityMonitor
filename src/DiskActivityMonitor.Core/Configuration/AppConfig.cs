@@ -22,6 +22,24 @@ public sealed class AppConfig
     /// <summary>Only attribute writes to processes that exceed this many MB/min (noise filter).</summary>
     public double ProcessMinMbPerMinute { get; set; } = 0.5;
 
+    /// <summary>
+    /// Record which individual files each process writes, so opaque writers (notably the kernel
+    /// <c>System</c> process) can be explained. Requires the ETW collector.
+    /// </summary>
+    public bool TrackFileTargets { get; set; } = true;
+
+    /// <summary>How many of the busiest files per process are stored for each minute.</summary>
+    public int FileTargetsPerProcessPerMinute { get; set; } = 15;
+
+    /// <summary>Only list a file individually when it received at least this many KB in the minute.</summary>
+    public double FileTargetMinKbPerMinute { get; set; } = 64;
+
+    /// <summary>How many days of per-file history to keep. Far more numerous than the process rollup.</summary>
+    public int FileTargetRetentionDays { get; set; } = 7;
+
+    /// <summary>Maximum number of distinct files tracked in memory between samples.</summary>
+    public int FileTargetTrackingLimit { get; set; } = 20000;
+
     /// <summary>Alert when an SSD exceeds this many GB written in a rolling 1-hour window.</summary>
     public double SsdWarnGbPerHour { get; set; } = 10;
 

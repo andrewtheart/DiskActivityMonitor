@@ -13,6 +13,13 @@ public sealed class UserSettings
 {
     public List<AutoSuspendRule> AutoSuspendRules { get; set; } = new();
     public bool EnableNotifications { get; set; } = true;
+
+    /// <summary>
+    /// How long a suspension lasts before the app resumes the process automatically. Zero means
+    /// suspensions stay in place until they are resumed manually.
+    /// </summary>
+    public int DefaultSuspendMinutes { get; set; } = 30;
+
     public bool EnableTbwWebLookup { get; set; } = true;
     public bool SuppressTbwOnlineSetupPrompt { get; set; }
     public string WebSearchProvider { get; set; } = "serper";
@@ -155,6 +162,7 @@ public sealed class UserSettingsStore
     private static UserSettings Clone(UserSettings source) => new()
     {
         EnableNotifications = source.EnableNotifications,
+        DefaultSuspendMinutes = source.DefaultSuspendMinutes < 0 ? 0 : source.DefaultSuspendMinutes,
         EnableTbwWebLookup = source.EnableTbwWebLookup,
         SuppressTbwOnlineSetupPrompt = source.SuppressTbwOnlineSetupPrompt,
         WebSearchProvider = string.IsNullOrWhiteSpace(source.WebSearchProvider) ? "serper" : source.WebSearchProvider,

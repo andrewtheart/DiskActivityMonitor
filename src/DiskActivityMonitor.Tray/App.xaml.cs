@@ -5,6 +5,7 @@ using System.Windows.Threading;
 using DiskActivityMonitor.Core.Collection;
 using DiskActivityMonitor.Core.Configuration;
 using DiskActivityMonitor.Core.Data;
+using DiskActivityMonitor.Core.Models;
 using Microsoft.Toolkit.Uwp.Notifications;
 
 namespace DiskActivityMonitor.Tray;
@@ -105,11 +106,19 @@ public partial class App : System.Windows.Application
             else if (action == "suspend" && args.TryGetValue("process", out var suspendName) && !string.IsNullOrEmpty(suspendName))
             {
                 args.TryGetValue("path", out var executablePath);
+                args.TryGetValue("source", out var origin);
                 if (_repo is not null)
+                {
+                    var now = DateTime.UtcNow;
+                    var chosen = GetSuspendDuration(e);
                     AutoSuspendManager.SuspendTracked(
                         _repo,
                         suspendName,
-                        string.IsNullOrWhiteSpace(executablePath) ? null : executablePath);
+                        string.IsNullOrWhiteSpace(executablePath) ? null : executablePath,
+                        chosen is TimeSpan span ? now + span : null,
+                        SuspendOriginArguments.ToSource(origin),
+                        now);
+                }
             }
             else if (action == "resume" && args.TryGetValue("process", out var resumeName) && !string.IsNullOrEmpty(resumeName))
             {
@@ -142,6 +151,18 @@ public partial class App : System.Windows.Application
         if (e.UserInput is not null && e.UserInput.TryGetValue("snoozeDuration", out var sel) && sel is not null)
             durationId = sel.ToString() ?? SnoozeOptions.DefaultId;
         return SnoozeOptions.ToTimeSpan(durationId);
+    }
+
+    /// <summary>
+    /// Reads the suspension interval chosen in the toast's selection box. Returns null when the
+    /// user asked to keep the process suspended until they resume it themselves.
+    /// </summary>
+    private static TimeSpan? GetSuspendDuration(ToastNotificationActivatedEventArgsCompat e)
+    {
+        var durationId = SuspendDurationOptions.DefaultId;
+        if (e.UserInput is not null && e.UserInput.TryGetValue("suspendDuration", out var sel) && sel is not null)
+            durationId = sel.ToString() ?? SuspendDurationOptions.DefaultId;
+        return SuspendDurationOptions.ToTimeSpan(durationId);
     }
 
     /// <summary>Signals the running tray instance to show and focus the dashboard window.</summary>

@@ -162,7 +162,14 @@ internal sealed class TrayController : IDisposable
         // notification toggle that governs the alert balloons above.
         try
         {
-            foreach (var ev in _autoSuspend.Evaluate(DateTime.UtcNow))
+            // One tick is one instant, so resume deadlines and rule windows cannot disagree.
+            var nowUtc = DateTime.UtcNow;
+
+            // Hand back control first: a suspension whose interval elapsed must never outlive it.
+            foreach (var expired in _autoSuspend.ResumeExpired(nowUtc))
+                ShowResumedToast(expired);
+
+            foreach (var ev in _autoSuspend.Evaluate(nowUtc))
             {
                 if (ev.Outcome == SuspendOutcome.ConfirmNeeded)
                     ShowSuspendConfirmToast(ev.Rule, ev.WrittenBytes);
@@ -185,8 +192,8 @@ internal sealed class TrayController : IDisposable
     }
 
     /// <summary>
-    /// Shows a modern Windows toast for an alert. Process alerts include a snooze-duration
-    /// selection box plus Snooze/Dismiss buttons; other alerts are informational only.
+    /// Shows a modern Windows toast for an alert. Process alerts can be snoozed or suspended -
+    /// each with its own duration picker - while other alerts are informational only.
     /// Falls back to a legacy balloon if toasts are unavailable.
     /// </summary>
     private void ShowAlertToast(AlertRecord a)
@@ -205,6 +212,20 @@ internal sealed class TrayController : IDisposable
             if (a.RuleKey.StartsWith(procPrefix, StringComparison.Ordinal))
             {
                 var process = a.RuleKey[procPrefix.Length..];
+
+                // Suspending is the strongest action offered here, so it gets its own interval
+                // picker; the app resumes the process automatically when that interval elapses.
+                builder.AddComboBox(
+                    "suspendDuration",
+                    "Suspend for",
+                    SuspendDurationOptions.DefaultIdFor(_userSettings.Current.DefaultSuspendMinutes),
+                    SuspendDurationOptions.Choices);
+
+                builder.AddButton(new ToastButton()
+                    .SetContent($"Suspend {process}")
+                    .AddArgument("action", "suspend")
+                    .AddArgument("process", process));
+
                 // Name the process so it's clear exactly what gets snoozed.
                 builder.AddButton(new ToastButton()
                     .SetContent($"Snooze {process}")
@@ -246,7 +267,8 @@ internal sealed class TrayController : IDisposable
             var suspendButton = new ToastButton()
                 .SetContent("Suspend now")
                 .AddArgument("action", "suspend")
-                .AddArgument("process", rule.ProcessName);
+                .AddArgument("process", rule.ProcessName)
+                .AddArgument("source", SuspendOriginArguments.Rule);
             if (!string.IsNullOrWhiteSpace(rule.ExecutablePath))
                 suspendButton.AddArgument("path", rule.ExecutablePath);
 
@@ -254,6 +276,11 @@ internal sealed class TrayController : IDisposable
                 .AddText($"{rule.ProcessName} is requesting heavy file writes")
                 .AddText($"{rule.ProcessName} requested {ByteFormat.Humanize(written)} of logical file writes in the last hour (limit {rule.ThresholdGbPerHour:0.#} GB/h). Physical disk writes may be lower. Suspend it?")
                 .SetToastDuration(ToastDuration.Long)
+                .AddComboBox(
+                    "suspendDuration",
+                    "Suspend for",
+                    SuspendDurationOptions.DefaultIdFor(_userSettings.Current.DefaultSuspendMinutes),
+                    SuspendDurationOptions.Choices)
                 .AddButton(suspendButton)
                 .AddButton(new ToastButton()
                     .SetContent("Ignore")
@@ -273,8 +300,12 @@ internal sealed class TrayController : IDisposable
     /// <summary>Notifies the user that an auto-suspend rule fired, offering a Resume button on success.</summary>
     private void ShowAutoSuspendedToast(AutoSuspendRule rule, long written, ProcessControl.Result result)
     {
+        int minutes = _userSettings.Current.DefaultSuspendMinutes;
+        string until = minutes > 0
+            ? $" It resumes automatically in {minutes} minute(s)."
+            : " It stays suspended until you resume it.";
         string body = result.Affected > 0
-            ? $"{rule.ProcessName} was suspended after requesting {ByteFormat.Humanize(written)} of logical file writes in the last hour (limit {rule.ThresholdGbPerHour:0.#} GB/h)."
+            ? $"{rule.ProcessName} was suspended after requesting {ByteFormat.Humanize(written)} of logical file writes in the last hour (limit {rule.ThresholdGbPerHour:0.#} GB/h).{until}"
             : result.AccessDenied
                 ? $"{rule.ProcessName} exceeded its write limit but could not be suspended (access denied - it may require elevation)."
                 : $"{rule.ProcessName} exceeded its write limit but is no longer running.";
@@ -301,6 +332,30 @@ internal sealed class TrayController : IDisposable
             LogToastError($"auto-suspend:{rule.ProcessName}", ex);
             if (!_notifyIcon.Visible) _notifyIcon.Visible = true;
             _notifyIcon.ShowBalloonTip(8000, $"{rule.ProcessName} auto-suspended", body, ToolTipIcon.Warning);
+        }
+    }
+
+    /// <summary>Tells the user a suspension interval elapsed and the process is running again.</summary>
+    private void ShowResumedToast(ExpiredSuspension expired)
+    {
+        string title = expired.Result.Affected > 0
+            ? $"{expired.ProcessName} resumed"
+            : $"{expired.ProcessName} no longer suspended";
+        string body = expired.Result.Affected > 0
+            ? $"The suspension interval elapsed, so {expired.ProcessName} was resumed automatically."
+            : $"The suspension interval for {expired.ProcessName} elapsed. It is no longer running or was already resumed, so nothing was left to restore.";
+        try
+        {
+            new ToastContentBuilder()
+                .AddText(title)
+                .AddText(body)
+                .Show();
+        }
+        catch (Exception ex)
+        {
+            LogToastError($"auto-resume:{expired.ProcessName}", ex);
+            if (!_notifyIcon.Visible) _notifyIcon.Visible = true;
+            _notifyIcon.ShowBalloonTip(8000, title, body, ToolTipIcon.Info);
         }
     }
 

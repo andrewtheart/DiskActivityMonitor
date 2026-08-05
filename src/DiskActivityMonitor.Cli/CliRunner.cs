@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
 using DiskActivityMonitor.Core;
+using DiskActivityMonitor.Core.Collection;
 using DiskActivityMonitor.Core.Configuration;
 using DiskActivityMonitor.Core.Data;
 using DiskActivityMonitor.Core.Models;
@@ -29,6 +30,7 @@ internal static class CliRunner
                 "disks" => Disks(),
                 "summary" or "today" => Summary(a),
                 "top" => Top(a),
+                "files" or "file" => FilesCmd(a),
                 "process" or "proc" => ProcessCmd(a),
                 "trends" or "trend" => TrendsCmd(a),
                 "endurance" or "ssd" => Endurance(a),
@@ -206,6 +208,47 @@ internal static class CliRunner
             p.ProcessName, ByteFormat.Humanize(p.WriteBytes), ByteFormat.Humanize(p.ReadBytes),
         }).ToList();
         Out.Table(new[] { "Process / service", "Logical writes", "Logical reads" }, rows, new[] { false, true, true });
+        return 0;
+    }
+
+    /// <summary>
+    /// Lists the individual files a process wrote to. This is what explains an opaque writer such
+    /// as the kernel <c>System</c> process, whose writes are issued for the whole machine.
+    /// </summary>
+    private static int FilesCmd(CliArgs a)
+    {
+        var name = a.Positional(0);
+        if (name is null) { Out.Error("Usage: dam files <process> [--minutes 60] [--count 15]"); return 2; }
+
+        var repo = OpenRepo();
+        int minutes = a.IntOpt(new[] { "minutes", "m" }, 60);
+        int count = a.IntOpt(new[] { "count", "n" }, 15);
+        var end = MinuteFloorUtc(DateTime.UtcNow);
+        var start = end.AddMinutes(-minutes);
+
+        var targets = repo.GetTopFileTargets(name, start, end, count);
+        long processWrite = repo.GetProcessWrite(name, start, end);
+        long attributed = repo.GetFileTargetWriteTotal(name, start, end);
+
+        Out.Header($"Files written by '{name}' - last {minutes} min");
+        var note = FileTargetNormalizer.ExplainProcess(name);
+        if (note is not null) Out.Dim(note);
+
+        if (targets.Count == 0)
+        {
+            Out.Dim("No per-file records in this window. Per-file attribution needs the ETW collector "
+                + "(the installed service) and trackFileTargets enabled in config.json.");
+            return 0;
+        }
+
+        var rows = targets.Select(t => (IReadOnlyList<string>)new[]
+        {
+            t.Path, FileTargetNormalizer.Label(t.Kind), ByteFormat.Humanize(t.WriteBytes), ByteFormat.Humanize(t.ReadBytes),
+        }).ToList();
+        Out.Table(new[] { "File", "Kind", "Logical writes", "Logical reads" }, rows, new[] { false, false, true, true });
+
+        if (processWrite > 0 && attributed > 0)
+            Out.Dim($"Listed rows cover {Math.Min(1, (double)attributed / processWrite):P0} of this process's logical writes.");
         return 0;
     }
 
@@ -539,6 +582,7 @@ Status & data
   summary [--disk ID] [--all]  Writes today / last 24h / last 7d
   top [--minutes N] [--count N]  Top processes by writes in a window (default 60m, 10)
   process <name>               Writes for a process across 1m/5m/15m/30m/1h/24h
+  files <name> [--minutes N] [--count N]  Files a process wrote to (explains ""System"")
   trends [--range hour|day|week] [--count N] [--disk ID]   Write trend with bars
   endurance [--disk ID] [--all]  SSD TBW usage, SMART wear, projection
   watch [--interval N]         Live auto-refreshing dashboard (Ctrl+C to exit)

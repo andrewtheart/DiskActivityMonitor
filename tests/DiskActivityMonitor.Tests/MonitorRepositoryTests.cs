@@ -514,6 +514,28 @@ public class MonitorRepositoryTests : IDisposable
     }
 
     [Fact]
+    public void SuspendedProcesses_PersistResumeDeadlineAndSource()
+    {
+        var repo = CreateRepo();
+        var now = new DateTime(2026, 8, 4, 10, 0, 0, DateTimeKind.Utc);
+        var identities = new[] { new ProcessControl.ProcessIdentity(7, 99, @"C:\Apps\writer.exe") };
+
+        repo.AddSuspendedProcess("writer", now, @"C:\Apps\writer.exe", identities, now.AddMinutes(30), SuspendSource.AutoRule);
+        repo.AddSuspendedProcess("editor", now, null, identities, null, SuspendSource.Manual);
+
+        var writer = Assert.IsType<SuspendedProcessState>(repo.GetSuspendedProcessState("writer"));
+        Assert.Equal(now.AddMinutes(30), writer.ResumeAtUtc);
+        Assert.Equal(SuspendSource.AutoRule, writer.Source);
+        Assert.False(writer.IsDue(now.AddMinutes(29)));
+        Assert.True(writer.IsDue(now.AddMinutes(30)));
+
+        var editor = Assert.IsType<SuspendedProcessState>(repo.GetSuspendedProcessState("editor"));
+        Assert.Null(editor.ResumeAtUtc);
+        Assert.Equal(SuspendSource.Manual, editor.Source);
+        Assert.False(editor.IsDue(now.AddYears(1)));
+    }
+
+    [Fact]
     public void AcknowledgeProcessAlerts_OnlyAffectsMatchingProcess()
     {
         var repo = CreateRepo();

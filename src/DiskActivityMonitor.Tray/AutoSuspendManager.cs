@@ -2,6 +2,7 @@ using DiskActivityMonitor.Core;
 using DiskActivityMonitor.Core.Collection;
 using DiskActivityMonitor.Core.Configuration;
 using DiskActivityMonitor.Core.Data;
+using DiskActivityMonitor.Core.Models;
 
 namespace DiskActivityMonitor.Tray;
 
@@ -10,6 +11,9 @@ internal enum SuspendOutcome { ConfirmNeeded, AutoSuspended, AutoSuspendFailed }
 
 /// <summary>A single auto-suspend decision produced by <see cref="AutoSuspendManager.Evaluate"/>.</summary>
 internal sealed record SuspendEvent(AutoSuspendRule Rule, long WrittenBytes, SuspendOutcome Outcome, ProcessControl.Result Result);
+
+/// <summary>A suspension whose interval elapsed and which the app therefore resumed.</summary>
+internal sealed record ExpiredSuspension(string ProcessName, SuspendSource Source, ProcessControl.Result Result);
 
 /// <summary>
 /// Evaluates the configured auto-suspend rules against recent per-process write volume and
@@ -23,7 +27,9 @@ internal sealed class AutoSuspendManager
     private readonly MonitorRepository _repo;
     private readonly UserSettingsStore _userSettings;
     private readonly Dictionary<string, DateTime> _lastPrompt = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _failedResumes = new(StringComparer.OrdinalIgnoreCase);
     private static readonly TimeSpan PromptCooldown = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan ResumeRetryInterval = TimeSpan.FromMinutes(5);
 
     public AutoSuspendManager(MonitorRepository repo, UserSettingsStore userSettings)
     {
@@ -59,7 +65,7 @@ internal sealed class AutoSuspendManager
 
             if (CanAutoSuspend(rule))
             {
-                var result = Suspend(rule.ProcessName, rule.ExecutablePath);
+                var result = Suspend(rule.ProcessName, rule.ExecutablePath, SuspendSource.AutoRule, nowUtc);
                 events.Add(new SuspendEvent(rule, written,
                     result.Affected > 0 ? SuspendOutcome.AutoSuspended : SuspendOutcome.AutoSuspendFailed, result));
             }
@@ -77,9 +83,20 @@ internal sealed class AutoSuspendManager
     }
 
     /// <summary>Suspends matching processes and records their exact identities.</summary>
-    public ProcessControl.Result Suspend(string name, string? executablePath = null)
+    public ProcessControl.Result Suspend(
+        string name,
+        string? executablePath = null,
+        SuspendSource source = SuspendSource.Manual,
+        DateTime? nowUtc = null)
     {
-        return SuspendTracked(_repo, name, executablePath);
+        var now = nowUtc ?? DateTime.UtcNow;
+        return SuspendTracked(
+            _repo,
+            name,
+            executablePath,
+            SuspendDurationOptions.ResumeAt(now, _userSettings.Current.DefaultSuspendMinutes),
+            source,
+            now);
     }
 
     /// <summary>Resumes only the identities previously suspended by this app.</summary>
@@ -90,14 +107,56 @@ internal sealed class AutoSuspendManager
         return result;
     }
 
+    /// <summary>
+    /// Resumes every suspension whose chosen interval has elapsed. Suspensions recorded without a
+    /// deadline ("until I resume it") are left alone.
+    /// </summary>
+    public List<ExpiredSuspension> ResumeExpired(DateTime nowUtc)
+    {
+        var resumed = new List<ExpiredSuspension>();
+        foreach (var state in _repo.GetSuspendedProcessStates().Where(s => s.IsDue(nowUtc)))
+        {
+            var result = ResumeTracked(_repo, state.Name);
+            _lastPrompt.Remove(state.Name);
+
+            var remaining = _repo.GetSuspendedProcessState(state.Name);
+            if (remaining is null || result.IdentityUnavailable)
+            {
+                // Either it is running again, or the exact identity is gone and never can be
+                // resumed - in both cases the app must stop claiming it holds the process.
+                if (remaining is not null)
+                    _repo.RemoveSuspendedProcess(state.Name);
+                _failedResumes.Remove(state.Name);
+                resumed.Add(new ExpiredSuspension(state.Name, state.Source, result));
+                continue;
+            }
+
+            // Some threads could not be released (typically access denied). Back off rather than
+            // retrying - and re-notifying - on every tick.
+            _repo.AddSuspendedProcess(
+                remaining.Name,
+                remaining.SuspendedUtc,
+                remaining.ExecutablePath,
+                remaining.ProcessIdentities,
+                nowUtc + ResumeRetryInterval,
+                remaining.Source);
+            if (_failedResumes.Add(state.Name))
+                resumed.Add(new ExpiredSuspension(state.Name, state.Source, result));
+        }
+        return resumed;
+    }
+
     internal static ProcessControl.Result SuspendTracked(
         MonitorRepository repo,
         string name,
-        string? executablePath)
+        string? executablePath,
+        DateTime? resumeAtUtc = null,
+        SuspendSource source = SuspendSource.Manual,
+        DateTime? nowUtc = null)
     {
         var result = ProcessControl.Suspend(name, executablePath);
         if (result.Affected > 0)
-            repo.AddSuspendedProcess(name, DateTime.UtcNow, executablePath, result.Processes);
+            repo.AddSuspendedProcess(name, nowUtc ?? DateTime.UtcNow, executablePath, result.Processes, resumeAtUtc, source);
         return result;
     }
 
@@ -113,7 +172,9 @@ internal sealed class AutoSuspendManager
                 state.Name,
                 state.SuspendedUtc,
                 state.ExecutablePath,
-                result.Unresolved);
+                result.Unresolved,
+                state.ResumeAtUtc,
+                state.Source);
         else
             repo.RemoveSuspendedProcess(name);
         return result;

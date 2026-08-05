@@ -54,7 +54,14 @@ public partial class MainWindow : Window
     private RangeKind _range = RangeKind.H24;
 
     private sealed record DiskChoice(DiskInfo Disk, string Display);
-    private sealed record ProcessRow(string Name, string WriteText, string ReadText, double BarWidth);
+    private sealed record ProcessRow(string Name, string WriteText, string ReadText, double BarWidth)
+    {
+        public string AutomationName => $"{Name}, {WriteText} written. Show files";
+    }
+
+    /// <summary>One file inside the per-process drill-down.</summary>
+    private sealed record FileTargetRow(
+        string Path, string FileName, string KindLabel, string WriteText, double BarWidth, string Explanation);
     private sealed record AlertRow(
         string Title,
         string Message,
@@ -129,6 +136,9 @@ public partial class MainWindow : Window
     }
 
     private sealed record SuspendedRow(string Name, string Display);
+
+    /// <summary>Dashboard row for a process this app suspended and can resume.</summary>
+    private sealed record SuspendedProcessRow(string Name, string SourceLabel, string Detail, string ResumeAutomationName);
 
     private readonly ObservableCollection<SuspendRuleVm> _suspendRules = new();
 
@@ -628,6 +638,88 @@ public partial class MainWindow : Window
         ProcessEmpty.Visibility = top.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    private void ProcessRow_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is ProcessRow row)
+            ShowFileTargets(row.Name);
+    }
+
+    /// <summary>
+    /// Opens the per-file breakdown for one process. This is what makes an opaque writer such as
+    /// the kernel System process actionable: the files identify the work, not the process name.
+    /// </summary>
+    internal void ShowFileTargets(string processName)
+    {
+        var nowUtc = DateTime.UtcNow;
+        var endUtc = new DateTime(nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, nowUtc.Minute, 0, DateTimeKind.Utc);
+        var startUtc = endUtc - _processWindow;
+
+        var targets = _repo.GetTopFileTargets(processName, startUtc, endUtc, topN: 20);
+        long processWrite = _repo.GetProcessWrite(processName, startUtc, endUtc);
+        long attributed = _repo.GetFileTargetWriteTotal(processName, startUtc, endUtc);
+
+        FileTargetsTitle.Text = $"Files written by {processName}";
+        FileTargetsSubtitle.Text = $"{ProcessRangeLabel()}  \u00b7  {ByteFormat.Humanize(processWrite)} of logical write requests";
+
+        string? note = FileTargetNormalizer.ExplainProcess(processName);
+        FileTargetsNote.Text = note ?? "";
+        FileTargetsNoteBorder.Visibility = note is null ? Visibility.Collapsed : Visibility.Visible;
+
+        const double barArea = 660;
+        double max = targets.Count > 0 ? Math.Max(1, targets.Max(t => t.WriteBytes)) : 1;
+        FileTargetsList.ItemsSource = targets
+            .Select(t => new FileTargetRow(
+                t.Path,
+                FileNameOf(t.Path),
+                FileTargetNormalizer.Label(t.Kind),
+                ByteFormat.Humanize(t.WriteBytes),
+                Math.Max(2, t.WriteBytes / max * barArea),
+                FileTargetNormalizer.ExplainTarget(t.Path, t.Kind)))
+            .ToList();
+
+        FileTargetsEmpty.Text = FileTargetsEmptyText(_config.Current.TrackFileTargets);
+        FileTargetsEmpty.Visibility = targets.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        FileTargetsFooter.Text = FileTargetsCoverage(processWrite, attributed, _config.Current.FileTargetRetentionDays);
+
+        FileTargetsOverlay.Visibility = Visibility.Visible;
+        FileTargetsOverlay.Focus();
+    }
+
+    private string ProcessRangeLabel()
+        => ProcessRangeSelector.SelectedItem is ProcRange range ? range.Label : _processWindow.ToString();
+
+    internal static string FileTargetsEmptyText(bool trackingEnabled)
+        => trackingEnabled
+            ? "No per-file records for this process in the selected window. Per-file attribution needs the ETW collector (the installed LocalSystem service) and only stores files above the configured size floor, so brief or tiny writes may not appear. Widen the window or wait a minute for new data."
+            : "Per-file attribution is turned off. Enable \"Record which files each process writes\" in Settings; new data appears within a minute.";
+
+    /// <summary>States how much of the process total the listed files account for.</summary>
+    internal static string FileTargetsCoverage(long processWriteBytes, long attributedBytes, int retentionDays)
+    {
+        string retention = $"Per-file history is kept for {retentionDays} day(s).";
+        if (processWriteBytes <= 0 || attributedBytes <= 0)
+            return retention;
+
+        double share = Math.Min(1, (double)attributedBytes / processWriteBytes);
+        return $"Listed files account for {share:P0} of this process's logical writes. {retention}";
+    }
+
+    private static string FileNameOf(string path)
+    {
+        int slash = path.LastIndexOf('\\');
+        return slash >= 0 && slash < path.Length - 1 ? path[(slash + 1)..] : path;
+    }
+
+    internal void FileTargetsClose_Click(object sender, RoutedEventArgs e)
+        => FileTargetsOverlay.Visibility = Visibility.Collapsed;
+
+    private void FileTargetsOverlay_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != System.Windows.Input.Key.Escape) return;
+        e.Handled = true;
+        FileTargetsOverlay.Visibility = Visibility.Collapsed;
+    }
+
     internal void UpdateAlerts()
     {
         // The main Alert center shows only non-dismissed alerts from the trailing window. Dismissed
@@ -928,6 +1020,12 @@ public partial class MainWindow : Window
         ChkControllerErrors.IsChecked = cfg.EnableControllerErrorAlerts;
         ChkNotify.IsChecked = userSettings.EnableNotifications;
 
+        ChkTrackFileTargets.IsChecked = cfg.TrackFileTargets;
+        TxtFileTargetsPerProcess.Text = cfg.FileTargetsPerProcessPerMinute.ToString(CultureInfo.InvariantCulture);
+        TxtFileTargetMinKb.Text = cfg.FileTargetMinKbPerMinute.ToString(CultureInfo.InvariantCulture);
+        TxtFileTargetRetention.Text = cfg.FileTargetRetentionDays.ToString(CultureInfo.InvariantCulture);
+        TxtFileTargetTrackingLimit.Text = cfg.FileTargetTrackingLimit.ToString(CultureInfo.InvariantCulture);
+
         // Web TBW lookup settings.
         ChkTbwLookup.IsChecked = userSettings.EnableTbwWebLookup;
         SelectProviderItem(userSettings.WebSearchProvider);
@@ -1098,6 +1196,12 @@ public partial class MainWindow : Window
             cfg.TbwProjectionWarnYears = ParseOr(TxtEnduranceWarnYears.Text, cfg.TbwProjectionWarnYears);
             cfg.EnableControllerErrorAlerts = ChkControllerErrors.IsChecked == true;
 
+            cfg.TrackFileTargets = ChkTrackFileTargets.IsChecked == true;
+            cfg.FileTargetsPerProcessPerMinute = (int)Math.Clamp(ParseOr(TxtFileTargetsPerProcess.Text, cfg.FileTargetsPerProcessPerMinute), 1, 200);
+            cfg.FileTargetMinKbPerMinute = ParseOr(TxtFileTargetMinKb.Text, cfg.FileTargetMinKbPerMinute);
+            cfg.FileTargetRetentionDays = (int)Math.Clamp(ParseOr(TxtFileTargetRetention.Text, cfg.FileTargetRetentionDays), 1, 365);
+            cfg.FileTargetTrackingLimit = (int)Math.Clamp(ParseOr(TxtFileTargetTrackingLimit.Text, cfg.FileTargetTrackingLimit), 100, 500000);
+
             if (disk is null)
                 return;
 
@@ -1151,16 +1255,95 @@ public partial class MainWindow : Window
                 ExecutablePath = r.ExecutablePath,
             });
         SuspendRuleEmpty.Visibility = _suspendRules.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        TxtSuspendMinutes.Text = _userSettings.Current.DefaultSuspendMinutes.ToString(CultureInfo.InvariantCulture);
         ProcessPickList.ItemsSource = _repo.GetKnownProcessNames();
     }
 
     private void RefreshSuspended()
     {
-        var rows = _repo.GetSuspendedProcessStates()
+        var states = _repo.GetSuspendedProcessStates();
+        var nowUtc = DateTime.UtcNow;
+
+        SuspendedList.ItemsSource = states
             .Select(s => new SuspendedRow(s.Name, $"{s.Name}  \u00b7  suspended {LocalTimeDisplay.FormatUtcWithZone(s.SuspendedUtc, "HH:mm")}"))
             .ToList();
-        SuspendedList.ItemsSource = rows;
-        SuspendedHeader.Visibility = rows.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        SuspendedHeader.Visibility = states.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+
+        SuspendedProcessList.ItemsSource = states
+            .Select(s => new SuspendedProcessRow(
+                s.Name,
+                SourceLabel(s.Source),
+                FormatSuspensionDetail(s, nowUtc),
+                $"Resume {s.Name}"))
+            .ToList();
+        SuspendedProcessEmpty.Visibility = states.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        ResumeAllSuspendedButton.Visibility = states.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    internal static string SourceLabel(SuspendSource source)
+        => source == SuspendSource.AutoRule ? "Auto-suspend rule" : "Suspended by you";
+
+    /// <summary>Describes when a process was suspended and when (or whether) it comes back.</summary>
+    internal static string FormatSuspensionDetail(SuspendedProcessState state, DateTime nowUtc)
+    {
+        string suspended = $"Suspended {LocalTimeDisplay.FormatUtcWithZone(state.SuspendedUtc, "HH:mm")}";
+        if (state.ResumeAtUtc is not DateTime resumeAt)
+            return $"{suspended}. Stays suspended until you resume it.";
+
+        string at = LocalTimeDisplay.FormatUtcWithZone(resumeAt, "HH:mm");
+        double minutesLeft = (resumeAt - nowUtc).TotalMinutes;
+        if (minutesLeft <= 0)
+            return $"{suspended}. Interval elapsed - resuming now.";
+
+        string remaining = minutesLeft < 1
+            ? "less than a minute"
+            : minutesLeft < 60
+                ? $"{Math.Round(minutesLeft)} min"
+                : $"{minutesLeft / 60:0.#} h";
+        return $"{suspended}. Resumes automatically at {at} (in {remaining}).";
+    }
+
+    private void ResumeSuspendedProcess_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not SuspendedProcessRow row)
+            return;
+        ReportResume(row.Name, AutoSuspendManager.ResumeTracked(_repo, row.Name));
+        RefreshSuspended();
+    }
+
+    private void ResumeAllSuspended_Click(object sender, RoutedEventArgs e)
+    {
+        var names = _repo.GetSuspendedProcessStates().Select(s => s.Name).ToList();
+        if (names.Count == 0) return;
+
+        int resumed = 0;
+        var failed = new List<string>();
+        foreach (var name in names)
+        {
+            var result = AutoSuspendManager.ResumeTracked(_repo, name);
+            if (result.Affected > 0) resumed++;
+            else failed.Add(name);
+        }
+
+        SetSuspendedStatus(failed.Count == 0
+            ? $"Resumed {resumed} process(es)."
+            : $"Resumed {resumed} process(es). Could not resume: {string.Join(", ", failed)}.");
+        RefreshSuspended();
+    }
+
+    private void ReportResume(string name, ProcessControl.Result result)
+        => SetSuspendedStatus(result.IdentityUnavailable
+            ? $"Could not safely resume '{name}' because its exact process identity is unavailable."
+            : result.AccessDenied
+                ? $"Could not resume '{name}' (access denied - it may require elevation)."
+                : result.Affected > 0
+                    ? $"Resumed '{name}'."
+                    : $"'{name}' is no longer running.");
+
+    private void SetSuspendedStatus(string message)
+    {
+        SuspendedProcessStatus.Text = message;
+        SuspendedProcessStatus.Visibility = Visibility.Visible;
     }
 
     private void AddSeenRule_Click(object sender, RoutedEventArgs e)
@@ -1227,10 +1410,20 @@ public partial class MainWindow : Window
                 ExecutablePath = vm.ExecutablePath,
             });
         }
-        _userSettings.Update(settings => settings.AutoSuspendRules = rules);
+        _userSettings.Update(settings =>
+        {
+            settings.AutoSuspendRules = rules;
+            settings.DefaultSuspendMinutes = ParseSuspendMinutes(TxtSuspendMinutes.Text, settings.DefaultSuspendMinutes);
+        });
         SuspendStatus.Text = "Saved \u2713";
         LoadSuspendRules();
     }
+
+    /// <summary>Clamped to a day so a mistyped value cannot strand a process suspended for weeks.</summary>
+    internal static int ParseSuspendMinutes(string? text, int fallback)
+        => int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var minutes) && minutes >= 0
+            ? Math.Min(minutes, 24 * 60)
+            : fallback;
 
     private void ResumeProc_Click(object sender, RoutedEventArgs e)
     {
@@ -1265,6 +1458,7 @@ public partial class MainWindow : Window
             LoadSuspendRules();
         }
         SettingsPanel.Visibility = showSettings ? Visibility.Visible : Visibility.Collapsed;
+        SettingsHeader.Visibility = showSettings ? Visibility.Visible : Visibility.Collapsed;
         DashboardPanel.Visibility = showSettings ? Visibility.Collapsed : Visibility.Visible;
         GearButton.ToolTip = showSettings ? "Back to dashboard" : "Settings";
         BodyScroller.ScrollToTop();

@@ -13,18 +13,31 @@ internal sealed class DarkTrayContextMenu : ContextMenuStrip
     internal static readonly Color MenuSeparator = Color.FromArgb(49, 54, 61);
     internal const int MenuCornerRadius = 10;
 
+    /// <summary>Horizontal insets for item text. ToolStripMenuItem lays its own text out and
+    /// ignores item padding, so the renderer positions text from these instead.</summary>
+    internal const int TextInsetLeft = 18;
+    internal const int TextInsetRight = 22;
+
+    private readonly Font _menuFont;
+
     public DarkTrayContextMenu()
     {
         AutoSize = true;
         BackColor = MenuBackground;
         ForeColor = MenuForeground;
-        Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point);
+        // The shell menu font is already scaled for the current display, unlike a fixed point size.
+        _menuFont = SystemFonts.MenuFont ?? new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point);
+        Font = _menuFont;
         MinimumSize = new Size(190, 0);
         Padding = new Padding(6);
         ShowCheckMargin = false;
         ShowImageMargin = false;
         Renderer = new DarkTrayMenuRenderer();
     }
+
+    /// <summary>Where item text is drawn, in item-relative coordinates.</summary>
+    internal static Rectangle GetTextRectangle(int itemWidth, int itemHeight)
+        => new(TextInsetLeft, 0, Math.Max(0, itemWidth - TextInsetLeft - TextInsetRight), itemHeight);
 
     internal ToolStripMenuItem AddCommand(string text, EventHandler onClick)
     {
@@ -34,7 +47,7 @@ internal sealed class DarkTrayContextMenu : ContextMenuStrip
             BackColor = Color.Transparent,
             ForeColor = MenuForeground,
             Margin = new Padding(0, 1, 0, 1),
-            Padding = new Padding(12, 7, 18, 7),
+            Padding = new Padding(TextInsetLeft, 7, TextInsetRight, 7),
         };
         item.Click += onClick;
         Items.Add(item);
@@ -53,6 +66,13 @@ internal sealed class DarkTrayContextMenu : ContextMenuStrip
     {
         base.OnHandleCreated(e);
         ApplyRoundedRegion();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+        if (disposing)
+            _menuFont.Dispose();
     }
 
     protected override void OnSizeChanged(EventArgs e)
@@ -135,6 +155,12 @@ internal sealed class DarkTrayMenuRenderer : ToolStripProfessionalRenderer
         e.TextColor = e.Item.Enabled
             ? DarkTrayContextMenu.MenuForeground
             : Color.FromArgb(132, 138, 146);
+
+        e.TextRectangle = DarkTrayContextMenu.GetTextRectangle(e.Item.Width, e.Item.Height);
+        const TextFormatFlags alignment = TextFormatFlags.HorizontalCenter | TextFormatFlags.Right
+            | TextFormatFlags.VerticalCenter | TextFormatFlags.Bottom;
+        e.TextFormat = (e.TextFormat & ~alignment) | TextFormatFlags.VerticalCenter;
+
         base.OnRenderItemText(e);
     }
 

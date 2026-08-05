@@ -32,6 +32,13 @@ public sealed class EtwProcessIoReader : IProcessIoReader
     private readonly object _gate = new();
     private Dictionary<string, (long Read, long Write)> _accum = new(StringComparer.OrdinalIgnoreCase);
 
+    private readonly object _fileGate = new();
+    private Dictionary<(string Process, string Path), (long Read, long Write)> _fileAccum = new(FileTargetKeyComparer.Instance);
+    private Dictionary<string, string> _volumeMap = FileTargetNormalizer.BuildVolumeMap();
+    private DateTime _volumeMapRefreshedUtc = DateTime.UtcNow;
+    private volatile bool _trackFileTargets;
+    private volatile int _fileTrackingLimit = 20000;
+
     public string Description => "ETW logical file-I/O requests (per process/service; excludes pipe/device I/O)";
 
     private EtwProcessIoReader(TraceEventSession session)
@@ -86,7 +93,8 @@ public sealed class EtwProcessIoReader : IProcessIoReader
             string name = data.ProcessName;
             if (string.IsNullOrEmpty(name)) return;
 
-            if (!IsRealFileTarget(data.FileName)) return;
+            string? fileName = data.FileName;
+            if (!IsRealFileTarget(fileName)) return;
 
             name = _serviceNames.Resolve(name, data.ProcessID);
 
@@ -97,10 +105,60 @@ public sealed class EtwProcessIoReader : IProcessIoReader
                     ? (cur.Read, cur.Write + size)
                     : (cur.Read + size, cur.Write);
             }
+
+            if (_trackFileTargets)
+                RecordFileTarget(name, fileName!, size, isWrite);
         }
         catch
         {
             // A single malformed event must never tear down the pump thread.
+        }
+    }
+
+    private void RecordFileTarget(string processName, string fileName, long size, bool isWrite)
+    {
+        lock (_fileGate)
+        {
+            // Volumes can be mounted at any time; refresh occasionally so their paths resolve.
+            if (DateTime.UtcNow - _volumeMapRefreshedUtc > TimeSpan.FromMinutes(5))
+            {
+                _volumeMap = FileTargetNormalizer.BuildVolumeMap();
+                _volumeMapRefreshedUtc = DateTime.UtcNow;
+            }
+
+            string path = FileTargetNormalizer.Normalize(fileName, _volumeMap);
+            if (path.Length == 0) return;
+
+            var key = (processName, path);
+            if (!_fileAccum.TryGetValue(key, out var cur) && _fileAccum.Count >= _fileTrackingLimit)
+                return; // Bounded: keep accumulating known files rather than growing without limit.
+
+            _fileAccum[key] = isWrite
+                ? (cur.Read, cur.Write + size)
+                : (cur.Read + size, cur.Write);
+        }
+    }
+
+    public void ConfigureFileTargets(bool enabled, int trackingLimit)
+    {
+        _fileTrackingLimit = Math.Max(1, trackingLimit);
+        if (_trackFileTargets == enabled) return;
+
+        _trackFileTargets = enabled;
+        if (!enabled)
+            lock (_fileGate) _fileAccum.Clear();
+    }
+
+    public IReadOnlyCollection<FileTargetDelta> SampleFileTargetDeltas()
+    {
+        lock (_fileGate)
+        {
+            if (_fileAccum.Count == 0) return [];
+            var snapshot = _fileAccum;
+            _fileAccum = new Dictionary<(string, string), (long Read, long Write)>(FileTargetKeyComparer.Instance);
+            return snapshot
+                .Select(kv => new FileTargetDelta(kv.Key.Process, kv.Key.Path, kv.Value.Read, kv.Value.Write))
+                .ToList();
         }
     }
 
