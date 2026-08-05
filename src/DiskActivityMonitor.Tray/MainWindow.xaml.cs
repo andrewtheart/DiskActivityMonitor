@@ -640,6 +640,14 @@ public partial class MainWindow : Window
 
     private void ProcessRow_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
+        ShowFileTargetsFromElement(sender);
+    }
+
+    private void ProcessBar_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
+        => ShowFileTargetsFromElement(sender);
+
+    private void ShowFileTargetsFromElement(object sender)
+    {
         if ((sender as FrameworkElement)?.DataContext is ProcessRow row)
             ShowFileTargets(row.Name);
     }

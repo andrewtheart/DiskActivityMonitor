@@ -396,7 +396,7 @@
                                           SelectionChanged="ProcessRange_SelectionChanged" />
                             </Grid>
                             <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
-                                       Text="Logical file-write bytes requested by each process - useful for finding culprits, but not physical disk writes or SSD wear. svchost shows its hosted service when known. Click a row to see which files it wrote."
+                                       Text="Logical file-write bytes requested by each process - useful for finding culprits, but not physical disk writes or SSD wear. svchost shows its hosted service when known. Hover over a bar or click a row to see which files it wrote."
                                        Margin="0,2,0,10" />
                             <ItemsControl x:Name="ProcessList">
                                 <ItemsControl.ItemTemplate>
@@ -413,7 +413,9 @@
                                             <TextBlock Text="{Binding Name}" ToolTip="{Binding Name}"
                                                        TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
                                             <Border Grid.Column="1" Height="14" CornerRadius="3" HorizontalAlignment="Left"
-                                                    Width="{Binding BarWidth}" VerticalAlignment="Center">
+                                                    Width="{Binding BarWidth}" VerticalAlignment="Center"
+                                                    MouseEnter="ProcessBar_MouseEnter"
+                                                    ToolTip="Hover to see which files this process wrote">
                                                 <Border.Background>
                                                     <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
                                                         <GradientStop Color="#4FC3F7" Offset="0" />

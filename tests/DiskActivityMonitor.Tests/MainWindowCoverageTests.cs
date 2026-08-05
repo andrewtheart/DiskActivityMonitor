@@ -950,6 +950,50 @@ public sealed class MainWindowCoverageTests : IDisposable
     }
 
     [Fact]
+    public void ProcessBar_HoverOpensTheSameFileTargetDetailsAsClick()
+    {
+        RunStaAsync(() =>
+        {
+            EnsureApplication();
+            var repo = new MonitorRepository(_db); repo.EnsureSchema();
+            repo.UpsertDisks([Disk()]);
+            var utcNow = DateTime.UtcNow;
+            var minute = new DateTime(utcNow.Year, utcNow.Month, utcNow.Day, utcNow.Hour, utcNow.Minute, 0, DateTimeKind.Utc)
+                .AddMinutes(-2);
+            repo.AddProcessSamples(
+            [
+                new ProcessIoSample
+                {
+                    TimestampUtc = minute,
+                    ProcessName = "writer",
+                    WriteBytes = 4096,
+                },
+            ]);
+            using var config = new ConfigStore(_cfg);
+            var window = new MainWindow(repo, config, new UserSettingsStore(_userSettings));
+            try
+            {
+                object row = Assert.Single(((IEnumerable)window.ProcessList.ItemsSource).Cast<object>());
+                var templateRoot = Assert.IsType<Grid>(window.ProcessList.ItemTemplate.LoadContent());
+                templateRoot.DataContext = row;
+                var processBar = Assert.IsType<Border>(templateRoot.Children[1]);
+
+                processBar.RaiseEvent(new System.Windows.Input.MouseEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice,
+                    0)
+                {
+                    RoutedEvent = System.Windows.Input.Mouse.MouseEnterEvent,
+                });
+
+                Assert.Equal(Visibility.Visible, window.FileTargetsOverlay.Visibility);
+                Assert.Equal("Files written by writer", window.FileTargetsTitle.Text);
+            }
+            finally { window.ForceClose(); }
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
     public void FileTargets_DescribeCoverageAndDisabledTracking()
     {
         Assert.Contains("turned off", MainWindow.FileTargetsEmptyText(trackingEnabled: false));
