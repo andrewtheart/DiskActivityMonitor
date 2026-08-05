@@ -1007,13 +1007,13 @@ applications dirtied,</li>
 <p>So the process name cannot identify the work - the target file
 can.</p>
 <h3 id="which-files-a-process-wrote">Which files a process wrote</h3>
-<p>Click any row in <strong>Top application write requests</strong> to
-open the per-file breakdown for that process. Each file shows its size
-share, a classification (NTFS metadata, paging file, registry hive,
-virtual disk, search index, Defender, event log, shadow copy, temporary,
-log, database, network path) and one line explaining what causes that
-kind of write. Opening it for <code>System</code> also shows the kernel
-explanation above.</p>
+<p>Hover over any bar or click any row in <strong>Top application write
+requests</strong> to open the per-file breakdown for that process. Each
+file shows its size share, a classification (NTFS metadata, paging file,
+registry hive, virtual disk, search index, Defender, event log, shadow
+copy, temporary, log, database, network path) and one line explaining
+what causes that kind of write. Opening it for <code>System</code> also
+shows the kernel explanation above.</p>
 <p>The same data is available from the CLI:</p>
 <div class="sourceCode" id="cb5"><pre
 class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>dam files System <span class="op">--</span>minutes <span class="dv">60</span> <span class="op">--</span>count <span class="dv">15</span></span></code></pre></div>
@@ -1088,6 +1088,9 @@ notify afterward. Name-wide rules are confirmation-only.</li>
 <li>Save rules.</li>
 </ol>
 <h3 id="suspend-from-an-alert">Suspend from an alert</h3>
+<p>Process-heavy-write notifications include the top two attributed
+files and how much was written to each when per-file ETW data is
+available.</p>
 <p>An alert about a single heavy-writing process offers a
 <strong>Suspend <code>&lt;process&gt;</code></strong> button and a
 <strong>Suspend for</strong> picker: 5 minutes, 15 minutes, 30 minutes,

@@ -392,8 +392,8 @@ So the process name cannot identify the work - the target file can.
 
 ### Which files a process wrote
 
-Click any row in **Top application write requests** to open the per-file breakdown for that
-process. Each file shows its size share, a classification (NTFS metadata, paging file, registry
+Hover over any bar or click any row in **Top application write requests** to open the per-file
+breakdown for that process. Each file shows its size share, a classification (NTFS metadata, paging file, registry
 hive, virtual disk, search index, Defender, event log, shadow copy, temporary, log, database,
 network path) and one line explaining what causes that kind of write. Opening it for `System`
 also shows the kernel explanation above.
@@ -436,6 +436,9 @@ Auto-suspend freezes all threads in matching processes after their rolling-hour 
 5. Save rules.
 
 ### Suspend from an alert
+
+Process-heavy-write notifications include the top two attributed files and how much was written
+to each when per-file ETW data is available.
 
 An alert about a single heavy-writing process offers a **Suspend `<process>`** button and a
 **Suspend for** picker: 5 minutes, 15 minutes, 30 minutes, 1 hour, or until you resume it.
