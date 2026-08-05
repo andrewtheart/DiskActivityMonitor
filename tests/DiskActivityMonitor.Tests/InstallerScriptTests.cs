@@ -297,8 +297,77 @@ public sealed class InstallerScriptTests
     }
 
     [Fact]
-    public void PrepareToInstall_ShowsProgressAndAccountsForEveryStep()
+    public void RetentionPrompts_LabelButtonsWithKeepOnTheRight()
     {
+        string script = ReadInstallerScript();
+
+        // Task dialogs render custom labels as stacked command links, so a custom form is used
+        // to get ordinary push buttons side by side.
+        Assert.DoesNotContain("SuppressibleTaskDialogMsgBox(", script);
+        Assert.Contains("function AskKeepExistingData(const Instruction, Body: String): Boolean;", script);
+        Assert.Contains("CreateCustomForm(FormWidth,", script);
+
+        Assert.Contains("DeleteButton.Caption := '&Delete existing data';", script);
+        Assert.Contains("KeepPanel.Caption := 'Keep existing data';", script);
+
+        // A themed push button ignores Color/Font.Color, so keep is drawn as an accent panel.
+        Assert.Contains("KeepButtonColor = $D47800;", script);
+        Assert.Contains("RetentionKeepPanel.ParentBackground := False;", script);
+        Assert.Contains("RetentionKeepPanel.Color := KeepButtonColor;", script);
+        Assert.Contains("RetentionKeepPanel.Font.Color := clWhite;", script);
+        Assert.Contains("RetentionKeepPanel.OnClick := @RetentionKeepClick;", script);
+
+        // Same row, with delete placed to the left of keep, so keep is the rightmost button.
+        Assert.Contains("RetentionKeepPanel.Left := RetentionForm.ClientWidth - ContentLeft - ButtonWidth;", script);
+        Assert.Contains("RetentionDeleteButton.Left := RetentionKeepPanel.Left - ScaleX(8) - ButtonWidth;", script);
+        Assert.Contains("RetentionDeleteButton.Top := RetentionKeepPanel.Top;", script);
+
+        // Only delete returns mrNo, so Esc, Enter and the title-bar X all keep.
+        Assert.Contains("RetentionDeleteButton.ModalResult := mrNo;", script);
+        Assert.Contains("RetentionForm.OnKeyDown := @RetentionKeyDown;", script);
+        Assert.Contains("Result := RetentionForm.ShowModal() <> mrNo;", script);
+
+        // Suppressed unattended installs must keep rather than block on a modal form.
+        Assert.Contains("WizardSilent and CommandLineHasSwitch('/SUPPRESSMSGBOXES')", script);
+
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(
+            script, @"      AskKeepExistingData\(").Count);
+        Assert.Contains("UseExistingSettings :=", script);
+        Assert.Contains("KeepExistingDatabase :=", script);
+    }
+
+    [Fact]
+    public void ExistingDatabase_PromptsWithDetailsAndDefaultsToKeeping()
+    {
+        string script = ReadInstallerScript();
+
+        Assert.Contains("function DatabasePath(): String;", script);
+        Assert.Contains("'diskactivity.db'", script);
+        Assert.Contains("A monitoring database from a previous installation was found", script);
+        Assert.Contains("DescribeExistingDatabase()", script);
+
+        // The prompt must state size and both dates, and default to keeping the history.
+        Assert.Contains("'Size: '", script);
+        Assert.Contains("'Collecting since: '", script);
+        Assert.Contains("'Last updated: '", script);
+        Assert.Contains("KeepExistingDatabase :=", script);
+
+        // Replacing history archives the old database instead of deleting it, journals included.
+        Assert.Contains("function ArchiveExistingDatabase(var ErrorText: String): Boolean;", script);
+        Assert.Contains("'diskactivity-replaced-'", script);
+        Assert.Contains("RenameFile(DatabasePath(), ArchiveBase + '.db')", script);
+        Assert.Contains("DatabasePath() + '-wal'", script);
+        Assert.Contains("DatabasePath() + '-shm'", script);
+        Assert.DoesNotContain("DeleteFile(DatabasePath())", script);
+
+        // The choice is applied only after the collector and tray have been stopped.
+        int stopService = script.IndexOf("'stop {#ServiceName}'", StringComparison.Ordinal);
+        int archive = script.IndexOf("if not ArchiveExistingDatabase(Result) then", StringComparison.Ordinal);
+        Assert.True(stopService > 0 && archive > stopService);
+    }
+
+    [Fact]
+    public void PrepareToInstall_ShowsProgressAndAccountsForEveryStep()    {
         string script = ReadInstallerScript();
 
         Assert.Contains("CreateOutputProgressPage(", script);
