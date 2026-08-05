@@ -200,19 +200,23 @@ internal sealed class TrayController : IDisposable
     {
         try
         {
+            const string procPrefix = "proc-1h:";
+            string? process = a.RuleKey.StartsWith(procPrefix, StringComparison.Ordinal)
+                ? a.RuleKey[procPrefix.Length..]
+                : null;
+            string? topFiles = process is null ? null : GetTopWrittenFilesText(process, a.TimestampUtc);
             var builder = new ToastContentBuilder()
                 .AddText(a.Title)
                 .AddText(a.Message)
                 .SetToastDuration(ToastDuration.Long);
+            if (topFiles is not null)
+                builder.AddText(topFiles);
 
             // Labelled duration picker shared by the snooze buttons below.
             builder.AddComboBox("snoozeDuration", "Snooze for", SnoozeOptions.DefaultId, SnoozeOptions.Choices);
 
-            const string procPrefix = "proc-1h:";
-            if (a.RuleKey.StartsWith(procPrefix, StringComparison.Ordinal))
+            if (process is not null)
             {
-                var process = a.RuleKey[procPrefix.Length..];
-
                 // Suspending is the strongest action offered here, so it gets its own interval
                 // picker; the app resumes the process automatically when that interval elapses.
                 builder.AddComboBox(
@@ -255,13 +259,18 @@ internal sealed class TrayController : IDisposable
 
             var icon = a.Severity == AlertSeverity.Critical ? ToolTipIcon.Error : ToolTipIcon.Warning;
             if (!_notifyIcon.Visible) _notifyIcon.Visible = true;
-            _notifyIcon.ShowBalloonTip(8000, a.Title, a.Message, icon);
+            string? process = a.RuleKey.StartsWith("proc-1h:", StringComparison.Ordinal)
+                ? a.RuleKey["proc-1h:".Length..]
+                : null;
+            string? topFiles = process is null ? null : GetTopWrittenFilesText(process, a.TimestampUtc);
+            _notifyIcon.ShowBalloonTip(8000, a.Title, AppendTopFiles(a.Message, topFiles), icon);
         }
     }
 
     /// <summary>Asks the user (via a toast with a Suspend button) to confirm suspending a heavy writer.</summary>
     private void ShowSuspendConfirmToast(AutoSuspendRule rule, long written)
     {
+        string? topFiles = GetTopWrittenFilesText(rule.ProcessName, DateTime.UtcNow);
         try
         {
             var suspendButton = new ToastButton()
@@ -272,10 +281,13 @@ internal sealed class TrayController : IDisposable
             if (!string.IsNullOrWhiteSpace(rule.ExecutablePath))
                 suspendButton.AddArgument("path", rule.ExecutablePath);
 
-            new ToastContentBuilder()
+            var builder = new ToastContentBuilder()
                 .AddText($"{rule.ProcessName} is requesting heavy file writes")
                 .AddText($"{rule.ProcessName} requested {ByteFormat.Humanize(written)} of logical file writes in the last hour (limit {rule.ThresholdGbPerHour:0.#} GB/h). Physical disk writes may be lower. Suspend it?")
-                .SetToastDuration(ToastDuration.Long)
+                .SetToastDuration(ToastDuration.Long);
+            if (topFiles is not null)
+                builder.AddText(topFiles);
+            builder
                 .AddComboBox(
                     "suspendDuration",
                     "Suspend for",
@@ -293,13 +305,14 @@ internal sealed class TrayController : IDisposable
             LogToastError($"suspend-confirm:{rule.ProcessName}", ex);
             if (!_notifyIcon.Visible) _notifyIcon.Visible = true;
             _notifyIcon.ShowBalloonTip(8000, $"{rule.ProcessName} requesting heavy file writes",
-                $"Requested {ByteFormat.Humanize(written)} of logical file writes in the last hour. Open the dashboard to suspend it.", ToolTipIcon.Warning);
+                AppendTopFiles($"Requested {ByteFormat.Humanize(written)} of logical file writes in the last hour. Open the dashboard to suspend it.", topFiles), ToolTipIcon.Warning);
         }
     }
 
     /// <summary>Notifies the user that an auto-suspend rule fired, offering a Resume button on success.</summary>
     private void ShowAutoSuspendedToast(AutoSuspendRule rule, long written, ProcessControl.Result result)
     {
+        string? topFiles = GetTopWrittenFilesText(rule.ProcessName, DateTime.UtcNow);
         int minutes = _userSettings.Current.DefaultSuspendMinutes;
         string until = minutes > 0
             ? $" It resumes automatically in {minutes} minute(s)."
@@ -315,6 +328,8 @@ internal sealed class TrayController : IDisposable
                 .AddText(result.Affected > 0 ? $"{rule.ProcessName} auto-suspended" : $"{rule.ProcessName} not suspended")
                 .AddText(body)
                 .SetToastDuration(ToastDuration.Long);
+            if (topFiles is not null)
+                b.AddText(topFiles);
             if (result.Affected > 0)
             {
                 var resumeButton = new ToastButton()
@@ -331,9 +346,38 @@ internal sealed class TrayController : IDisposable
         {
             LogToastError($"auto-suspend:{rule.ProcessName}", ex);
             if (!_notifyIcon.Visible) _notifyIcon.Visible = true;
-            _notifyIcon.ShowBalloonTip(8000, $"{rule.ProcessName} auto-suspended", body, ToolTipIcon.Warning);
+            _notifyIcon.ShowBalloonTip(8000, $"{rule.ProcessName} auto-suspended", AppendTopFiles(body, topFiles), ToolTipIcon.Warning);
         }
     }
+
+    private string? GetTopWrittenFilesText(string processName, DateTime endUtc)
+    {
+        try
+        {
+            return FormatTopWrittenFiles(
+                _repo.GetTopFileTargets(processName, endUtc.AddHours(-1), endUtc, topN: 3));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    internal static string? FormatTopWrittenFiles(IEnumerable<FileTargetRank> targets)
+    {
+        var files = targets
+            .Where(target => !string.Equals(
+                target.Path,
+                FileTargetNormalizer.OtherFilesPath,
+                StringComparison.Ordinal))
+            .Take(2)
+            .Select(target => $"{target.Path} ({ByteFormat.Humanize(target.WriteBytes)})")
+            .ToArray();
+        return files.Length == 0 ? null : $"Top written files: {string.Join("; ", files)}";
+    }
+
+    private static string AppendTopFiles(string message, string? topFiles)
+        => topFiles is null ? message : $"{message}{Environment.NewLine}{topFiles}";
 
     /// <summary>Tells the user a suspension interval elapsed and the process is running again.</summary>
     private void ShowResumedToast(ExpiredSuspension expired)
