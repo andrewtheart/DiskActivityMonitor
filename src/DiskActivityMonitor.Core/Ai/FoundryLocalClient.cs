@@ -313,13 +313,15 @@ public sealed partial class FoundryLocalClient
 
     private static async Task<int> RunProcessAsync(ProcessStartInfo startInfo, Action<string>? onLine, CancellationToken ct)
     {
+        Action<string?> reportLine = SerializeLineCallback(onLine);
+
         using var proc = new Process
         {
             StartInfo = startInfo,
             EnableRaisingEvents = true,
         };
-        proc.OutputDataReceived += (_, e) => { if (e.Data is not null) onLine?.Invoke(e.Data); };
-        proc.ErrorDataReceived += (_, e) => { if (e.Data is not null) onLine?.Invoke(e.Data); };
+        proc.OutputDataReceived += (_, e) => reportLine(e.Data);
+        proc.ErrorDataReceived += (_, e) => reportLine(e.Data);
         proc.Start();
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
@@ -334,5 +336,16 @@ public sealed partial class FoundryLocalClient
             throw;
         }
         return proc.ExitCode;
+    }
+
+    internal static Action<string?> SerializeLineCallback(Action<string>? onLine)
+    {
+        object callbackGate = new();
+        return line =>
+        {
+            if (line is null || onLine is null) return;
+            lock (callbackGate)
+                onLine(line);
+        };
     }
 }

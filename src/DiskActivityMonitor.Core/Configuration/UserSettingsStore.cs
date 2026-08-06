@@ -1,4 +1,5 @@
 using System.Text.Json;
+using DiskActivityMonitor.Core.Updates;
 
 namespace DiskActivityMonitor.Core.Configuration;
 
@@ -25,6 +26,10 @@ public sealed class UserSettings
     public string WebSearchProvider { get; set; } = "serper";
     public TbwLookupMethod TbwLookupMethod { get; set; } = TbwLookupMethod.FoundryLocal;
     public string? TbwLookupModel { get; set; }
+    public AppUpdateCheckMode AppUpdateCheckMode { get; set; } = AppUpdateCheckMode.Prompt;
+    public DateTimeOffset? LastAppUpdateCheckUtc { get; set; }
+    public string? LastAppUpdateAlertedVersion { get; set; }
+    public int MaxInstallerSizeMb { get; set; } = AppUpdateDownloader.DefaultMaxInstallerSizeMb;
 }
 
 /// <summary>Persists action-bearing settings beneath the current user's LocalAppData directory.</summary>
@@ -168,6 +173,12 @@ public sealed class UserSettingsStore
         WebSearchProvider = string.IsNullOrWhiteSpace(source.WebSearchProvider) ? "serper" : source.WebSearchProvider,
         TbwLookupMethod = source.TbwLookupMethod,
         TbwLookupModel = source.TbwLookupModel,
+        AppUpdateCheckMode = source.AppUpdateCheckMode,
+        LastAppUpdateCheckUtc = source.LastAppUpdateCheckUtc,
+        LastAppUpdateAlertedVersion = source.LastAppUpdateAlertedVersion,
+        MaxInstallerSizeMb = source.MaxInstallerSizeMb > 0
+            ? source.MaxInstallerSizeMb
+            : AppUpdateDownloader.DefaultMaxInstallerSizeMb,
         AutoSuspendRules = source.AutoSuspendRules?.Select(rule => new AutoSuspendRule
         {
             ProcessName = rule.ProcessName,

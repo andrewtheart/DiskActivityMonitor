@@ -16,6 +16,16 @@ public sealed class DiskSample
     public long WriteBytes { get; set; }
 }
 
+/// <summary>One granular physical-disk sample used only by the rolling live graph.</summary>
+public sealed class LiveDiskSample
+{
+    public required DateTime TimestampUtc { get; init; }
+    public required string DiskId { get; init; }
+    public required int ElapsedMilliseconds { get; init; }
+    public long ReadBytes { get; init; }
+    public long WriteBytes { get; init; }
+}
+
 /// <summary>
 /// Per-process logical I/O byte totals over one minute bucket. Used to identify software that
 /// generates file-write pressure. These are application-requested bytes above the cache/storage

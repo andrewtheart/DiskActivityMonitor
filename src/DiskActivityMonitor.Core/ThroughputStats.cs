@@ -1,9 +1,8 @@
 namespace DiskActivityMonitor.Core;
 
 /// <summary>
-/// Average, median and peak disk throughput (decimal MB/s) computed from per-minute I/O totals over
-/// a period. Minutes with no recorded activity are treated as zero-activity minutes so the figures
-/// reflect the whole period, not just the busy minutes.
+/// Average, median and peak disk throughput (decimal MB/s) computed over minutes when the collector
+/// was monitoring. Heartbeat minutes with no disk row are treated as zero activity.
 /// </summary>
 public readonly record struct ThroughputStats(double AverageMbps, double MedianMbps, double PeakMbps)
 {
@@ -11,12 +10,12 @@ public readonly record struct ThroughputStats(double AverageMbps, double MedianM
 
     /// <summary>
     /// Computes throughput statistics from the recorded minutes' total byte counts.
-    /// <paramref name="totalMinutes"/> is the number of minutes in the whole period; any minutes not
-    /// present in <paramref name="perMinuteBytes"/> are counted as zero-activity minutes.
+    /// <paramref name="monitoredMinutes"/> is the number of collector heartbeat minutes; monitored
+    /// minutes not present in <paramref name="perMinuteBytes"/> are counted as zero activity.
     /// </summary>
-    public static ThroughputStats Compute(IReadOnlyList<long> perMinuteBytes, int totalMinutes)
+    public static ThroughputStats Compute(IReadOnlyList<long> perMinuteBytes, int monitoredMinutes)
     {
-        int minutes = Math.Max(totalMinutes, perMinuteBytes.Count);
+        int minutes = Math.Max(monitoredMinutes, perMinuteBytes.Count);
         if (minutes <= 0) return default;
 
         double sum = 0;

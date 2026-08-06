@@ -135,8 +135,21 @@ public sealed class ConfigStore : IDisposable
     {
         SampleIntervalSeconds = source.SampleIntervalSeconds,
         DashboardRefreshSeconds = source.DashboardRefreshSeconds,
+        LiveGraphRetentionMinutes = Math.Clamp(source.LiveGraphRetentionMinutes, 1, 120),
         RetentionDays = source.RetentionDays,
         ProcessMinMbPerMinute = source.ProcessMinMbPerMinute,
+        TrackFileTargets = source.TrackFileTargets,
+        FileTargetsPerProcessPerMinute = source.FileTargetsPerProcessPerMinute,
+        FileTargetMinKbPerMinute = source.FileTargetMinKbPerMinute,
+        FileTargetRetentionDays = source.FileTargetRetentionDays,
+        FileTargetTrackingLimit = source.FileTargetTrackingLimit,
+        DatabaseSizeWarnGb = source.DatabaseSizeWarnGb,
+        DatabaseSizeAlertCooldownHours = source.DatabaseSizeAlertCooldownHours,
+        BinaryExtensions = source.BinaryExtensions,
+        TailInitialLines = source.TailInitialLines,
+        TailMaxLines = source.TailMaxLines,
+        TailMaxReadKb = Math.Clamp(source.TailMaxReadKb, 64, 16384),
+        TailMaxBufferKb = Math.Clamp(source.TailMaxBufferKb, 128, 32768),
         SsdWarnGbPerHour = source.SsdWarnGbPerHour,
         SsdWarnGbPerDay = source.SsdWarnGbPerDay,
         SsdCriticalGbPerDay = source.SsdCriticalGbPerDay,
@@ -153,6 +166,9 @@ public sealed class ConfigStore : IDisposable
         DiskTbwRatingsUpper = source.DiskTbwRatingsUpper is null ? new() : new(source.DiskTbwRatingsUpper),
         TbwProjectionWarnYears = source.TbwProjectionWarnYears,
         TbwProjectionCriticalYears = source.TbwProjectionCriticalYears,
+        HighCoveragePercent = double.IsFinite(source.HighCoveragePercent)
+            ? Math.Clamp(source.HighCoveragePercent, 1, 100)
+            : 90,
         SsdWearWarnPercent = source.SsdWearWarnPercent,
     };
 

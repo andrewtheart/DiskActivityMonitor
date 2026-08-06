@@ -16,6 +16,9 @@ public sealed class AppConfig
     /// <summary>How often the tray dashboard re-reads the database and redraws tables, graphs and stats, in seconds.</summary>
     public int DashboardRefreshSeconds { get; set; } = 15;
 
+    /// <summary>How many minutes of granular disk samples the live graph retains.</summary>
+    public int LiveGraphRetentionMinutes { get; set; } = 15;
+
     /// <summary>How many days of minute-level history to keep before pruning.</summary>
     public int RetentionDays { get; set; } = 365;
 
@@ -35,10 +38,49 @@ public sealed class AppConfig
     public double FileTargetMinKbPerMinute { get; set; } = 64;
 
     /// <summary>How many days of per-file history to keep. Far more numerous than the process rollup.</summary>
-    public int FileTargetRetentionDays { get; set; } = 7;
+    public int FileTargetRetentionDays { get; set; } = 30;
 
     /// <summary>Maximum number of distinct files tracked in memory between samples.</summary>
     public int FileTargetTrackingLimit { get; set; } = 20000;
+
+    /// <summary>Warn when the monitoring database grows past this many gigabytes.</summary>
+    public double DatabaseSizeWarnGb { get; set; } = 1;
+
+    /// <summary>Raise the database-size warning at most once per this many hours.</summary>
+    public int DatabaseSizeAlertCooldownHours { get; set; } = 12;
+
+    /// <summary>
+    /// Extensions (without a leading dot) whose files are never opened for live tailing, because
+    /// their contents are not text. Seeded from Yagu's binary, skip and archive extension defaults.
+    /// </summary>
+    public string BinaryExtensions { get; set; } = DefaultBinaryExtensions;
+
+    /// <summary>How many trailing lines the live file tail shows when it first opens.</summary>
+    public int TailInitialLines { get; set; } = 200;
+
+    /// <summary>Maximum number of lines the live file tail keeps in memory.</summary>
+    public int TailMaxLines { get; set; } = 5000;
+
+    /// <summary>Maximum KiB decoded by one initial or incremental live-tail read.</summary>
+    public int TailMaxReadKb { get; set; } = 512;
+
+    /// <summary>Approximate maximum KiB of decoded UTF-16 text retained by the live-tail viewer.</summary>
+    public int TailMaxBufferKb { get; set; } = 1024;
+
+    /// <summary>
+    /// Default non-text extensions, merged from Yagu's <c>DefaultBinaryExtensions</c>,
+    /// <c>DefaultSkipExtensions</c> and <c>DefaultArchiveExtensions</c> lists so that executables,
+    /// media, databases and archives are all excluded from live tailing.
+    /// </summary>
+    public const string DefaultBinaryExtensions =
+        "exe;dll;pdb;obj;lib;so;dylib;com;scr;sys;drv;ocx;cpl;mui;winmd;pri;cat;res;resources;" +
+        "o;a;lo;la;ilk;iobj;ipdb;exp;pyc;pyo;class;dex;wasm;" +
+        "png;jpg;jpeg;gif;bmp;ico;tif;tiff;webp;svg;mp3;mp4;avi;mov;wmv;flv;mkv;wav;ogg;flac;" +
+        "m4a;webm;heic;heif;avif;woff;woff2;ttf;eot;otf;pdf;doc;xls;ppt;" +
+        "bin;dat;db;db3;sqlite;sqlite3;edb;mdb;accdb;ldb;sdf;cache;tmp;bak;etl;evtx;dmp;mdmp;" +
+        "hdmp;hprof;vhd;vhdx;vmdk;pak;usm;bundle;assets;" +
+        "zip;jar;war;ear;nupkg;vsix;apk;aab;aar;appx;msix;appxbundle;msixbundle;docx;xlsx;pptx;" +
+        "odt;ods;odp;epub;whl;gz;tar;7z;rar;bz2;xz;iso;cab;msi;tgz;tbz2;txz;zst;zstd;br;lz4;lzma";
 
     /// <summary>Alert when an SSD exceeds this many GB written in a rolling 1-hour window.</summary>
     public double SsdWarnGbPerHour { get; set; } = 10;
@@ -98,6 +140,9 @@ public sealed class AppConfig
 
     /// <summary>Raise a critical alert when projected time to TBW drops below this many years.</summary>
     public double TbwProjectionCriticalYears { get; set; } = 1;
+
+    /// <summary>Minimum recent monitoring coverage required for calendar-rate and endurance projections.</summary>
+    public double HighCoveragePercent { get; set; } = 90;
 
     /// <summary>Warn when a drive's SMART-reported endurance used (percentage) reaches this level.</summary>
     public double SsdWearWarnPercent { get; set; } = 90;

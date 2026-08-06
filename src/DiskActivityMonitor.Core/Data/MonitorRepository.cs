@@ -17,6 +17,15 @@ public sealed record SuspendedProcessState(
     public bool IsDue(DateTime nowUtc) => ResumeAtUtc is DateTime due && due <= nowUtc;
 }
 
+public readonly record struct MonitoringCoverage(int MonitoredMinutes, int RequestedMinutes)
+{
+    public double Fraction => RequestedMinutes <= 0
+        ? 0
+        : Math.Clamp((double)MonitoredMinutes / RequestedMinutes, 0, 1);
+
+    public double Percent => Fraction * 100;
+}
+
 /// <summary>
 /// Thin SQLite repository shared by the collector (writer) and tray app (reader).
 /// Uses WAL mode so a single writer and multiple readers coexist without blocking.
@@ -81,6 +90,16 @@ public sealed class MonitorRepository
             );
             CREATE INDEX IF NOT EXISTS ix_disk_minute_disk_ts ON disk_minute(disk_id, ts_min);
 
+            CREATE TABLE IF NOT EXISTS disk_live(
+                ts_utc_ms INTEGER NOT NULL,
+                disk_id TEXT NOT NULL,
+                elapsed_ms INTEGER NOT NULL,
+                read_bytes INTEGER NOT NULL,
+                write_bytes INTEGER NOT NULL,
+                PRIMARY KEY(ts_utc_ms, disk_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_disk_live_disk_ts ON disk_live(disk_id, ts_utc_ms);
+
             CREATE TABLE IF NOT EXISTS proc_minute(
                 ts_min INTEGER NOT NULL,
                 name TEXT NOT NULL,
@@ -100,6 +119,10 @@ public sealed class MonitorRepository
                 PRIMARY KEY(ts_min, name, path)
             );
             CREATE INDEX IF NOT EXISTS ix_proc_file_minute_name_ts ON proc_file_minute(name, ts_min);
+
+            CREATE TABLE IF NOT EXISTS collector_minute(
+                ts_min INTEGER PRIMARY KEY
+            );
 
             CREATE TABLE IF NOT EXISTS alerts(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -240,6 +263,38 @@ public sealed class MonitorRepository
 
     // ---------------------------------------------------------------- Samples
 
+    public void AddCollectorHeartbeat(DateTime minuteUtc)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "INSERT OR IGNORE INTO collector_minute(ts_min) VALUES($ts);";
+        cmd.Parameters.AddWithValue("$ts", ToUnix(minuteUtc));
+        cmd.ExecuteNonQuery();
+    }
+
+    public MonitoringCoverage GetMonitoringCoverage(DateTime fromUtc, DateTime toUtc)
+    {
+        int requestedMinutes = Math.Max(0, (int)Math.Ceiling((toUtc - fromUtc).TotalMinutes));
+        if (requestedMinutes == 0)
+            return default;
+
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT COUNT(*) FROM (
+                SELECT ts_min FROM collector_minute
+                WHERE ts_min >= $from AND ts_min < $to
+                UNION
+                SELECT ts_min FROM disk_minute
+                WHERE ts_min >= $from AND ts_min < $to
+            );
+            """;
+        cmd.Parameters.AddWithValue("$from", ToUnix(fromUtc));
+        cmd.Parameters.AddWithValue("$to", ToUnix(toUtc));
+        int monitoredMinutes = Convert.ToInt32(cmd.ExecuteScalar());
+        return new MonitoringCoverage(Math.Min(monitoredMinutes, requestedMinutes), requestedMinutes);
+    }
+
     public void AddDiskSamples(IReadOnlyCollection<DiskSample> samples)
     {
         if (samples.Count == 0) return;
@@ -264,6 +319,47 @@ public sealed class MonitorRepository
             pR.Value = s.ReadBytes;
             pW.Value = s.WriteBytes;
             cmd.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
+
+    /// <summary>Adds granular disk points and removes points older than the live graph window.</summary>
+    public void AddLiveDiskSamples(IReadOnlyCollection<LiveDiskSample> samples, DateTime cutoffUtc)
+    {
+        if (samples.Count == 0) return;
+        using var conn = Open();
+        using var tx = conn.BeginTransaction();
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                INSERT INTO disk_live(ts_utc_ms, disk_id, elapsed_ms, read_bytes, write_bytes)
+                VALUES($ts, $id, $elapsed, $read, $write)
+                ON CONFLICT(ts_utc_ms, disk_id) DO UPDATE SET
+                    elapsed_ms = excluded.elapsed_ms,
+                    read_bytes = excluded.read_bytes,
+                    write_bytes = excluded.write_bytes;
+                """;
+            var timestamp = cmd.CreateParameter(); timestamp.ParameterName = "$ts"; cmd.Parameters.Add(timestamp);
+            var diskId = cmd.CreateParameter(); diskId.ParameterName = "$id"; cmd.Parameters.Add(diskId);
+            var elapsed = cmd.CreateParameter(); elapsed.ParameterName = "$elapsed"; cmd.Parameters.Add(elapsed);
+            var read = cmd.CreateParameter(); read.ParameterName = "$read"; cmd.Parameters.Add(read);
+            var write = cmd.CreateParameter(); write.ParameterName = "$write"; cmd.Parameters.Add(write);
+            foreach (LiveDiskSample sample in samples)
+            {
+                timestamp.Value = new DateTimeOffset(DateTime.SpecifyKind(sample.TimestampUtc, DateTimeKind.Utc)).ToUnixTimeMilliseconds();
+                diskId.Value = sample.DiskId;
+                elapsed.Value = sample.ElapsedMilliseconds;
+                read.Value = sample.ReadBytes;
+                write.Value = sample.WriteBytes;
+                cmd.ExecuteNonQuery();
+            }
+        }
+
+        using (var prune = conn.CreateCommand())
+        {
+            prune.CommandText = "DELETE FROM disk_live WHERE ts_utc_ms < $cutoff;";
+            prune.Parameters.AddWithValue("$cutoff", new DateTimeOffset(DateTime.SpecifyKind(cutoffUtc, DateTimeKind.Utc)).ToUnixTimeMilliseconds());
+            prune.ExecuteNonQuery();
         }
         tx.Commit();
     }
@@ -437,6 +533,35 @@ public sealed class MonitorRepository
         return list;
     }
 
+    /// <summary>Returns granular samples for the selected disk in chronological order.</summary>
+    public List<LiveDiskSample> GetLiveDiskSamples(string diskId, DateTime fromUtc)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT ts_utc_ms, elapsed_ms, read_bytes, write_bytes
+            FROM disk_live
+            WHERE disk_id = $id AND ts_utc_ms >= $from
+            ORDER BY ts_utc_ms;
+            """;
+        cmd.Parameters.AddWithValue("$id", diskId);
+        cmd.Parameters.AddWithValue("$from", new DateTimeOffset(DateTime.SpecifyKind(fromUtc, DateTimeKind.Utc)).ToUnixTimeMilliseconds());
+        var samples = new List<LiveDiskSample>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            samples.Add(new LiveDiskSample
+            {
+                TimestampUtc = DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(0)).UtcDateTime,
+                DiskId = diskId,
+                ElapsedMilliseconds = reader.GetInt32(1),
+                ReadBytes = reader.GetInt64(2),
+                WriteBytes = reader.GetInt64(3),
+            });
+        }
+        return samples;
+    }
+
     /// <summary>Earliest minute recorded for a disk (used to scope "since monitoring began").</summary>
     public DateTime? GetEarliestSample(string diskId)
     {
@@ -447,6 +572,27 @@ public sealed class MonitorRepository
         var val = cmd.ExecuteScalar();
         if (val is null || val is DBNull) return null;
         return FromUnix(Convert.ToInt64(val));
+    }
+
+    public MonitoringRateStats GetRecentDiskWriteRate(
+        string diskId,
+        DateTime nowUtc,
+        double highCoveragePercent)
+    {
+        DateTime? earliest = GetEarliestSample(diskId);
+        if (earliest is null)
+            return default;
+
+        DateTime fromUtc = nowUtc - earliest.Value >= TimeSpan.FromDays(7)
+            ? nowUtc.AddDays(-7)
+            : earliest.Value;
+        long writeBytes = GetDiskTotals(diskId, fromUtc, nowUtc).Write;
+        MonitoringCoverage coverage = GetMonitoringCoverage(fromUtc, nowUtc);
+        return MonitoringRateStats.Compute(
+            writeBytes,
+            coverage.MonitoredMinutes,
+            coverage.RequestedMinutes,
+            highCoveragePercent);
     }
 
     public List<ProcessRank> GetTopProcesses(DateTime fromUtc, DateTime toUtc, int topN)
@@ -481,6 +627,32 @@ public sealed class MonitorRepository
         cmd.Parameters.AddWithValue("$from", ToUnix(fromUtc));
         cmd.Parameters.AddWithValue("$to", ToUnix(toUtc));
         return Convert.ToInt64(cmd.ExecuteScalar() ?? 0L);
+    }
+
+    /// <summary>
+    /// Per-minute write bytes for one process, ordered oldest first, as (minute, bytes) pairs.
+    /// Minutes with no recorded activity are absent; callers plotting a continuous series treat
+    /// the gaps as zero.
+    /// </summary>
+    public List<(DateTime MinuteUtc, long WriteBytes)> GetProcessMinuteWrites(string name, DateTime fromUtc, DateTime toUtc)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT ts_min, SUM(write_bytes)
+            FROM proc_minute
+            WHERE name = $n AND ts_min >= $from AND ts_min < $to
+            GROUP BY ts_min
+            ORDER BY ts_min;
+            """;
+        cmd.Parameters.AddWithValue("$n", name);
+        cmd.Parameters.AddWithValue("$from", ToUnix(fromUtc));
+        cmd.Parameters.AddWithValue("$to", ToUnix(toUtc));
+
+        var list = new List<(DateTime, long)>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) list.Add((FromUnix(r.GetInt64(0)), r.GetInt64(1)));
+        return list;
     }
 
     /// <summary>Total write bytes across ALL processes within [fromUtc, toUtc).</summary>
@@ -853,7 +1025,7 @@ public sealed class MonitorRepository
         using var conn = Open();
         var cutoff = ToUnix(cutoffUtc);
         int removed = 0;
-        foreach (var (table, col) in new[] { ("disk_minute", "ts_min"), ("proc_minute", "ts_min"), ("alerts", "ts_utc") })
+        foreach (var (table, col) in new[] { ("disk_minute", "ts_min"), ("proc_minute", "ts_min"), ("collector_minute", "ts_min"), ("alerts", "ts_utc") })
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = $"DELETE FROM {table} WHERE {col} < $cutoff;";
@@ -874,5 +1046,38 @@ public sealed class MonitorRepository
         cmd.CommandText = "DELETE FROM proc_file_minute WHERE ts_min < $cutoff;";
         cmd.Parameters.AddWithValue("$cutoff", ToUnix(cutoffUtc));
         return cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Rebuilds the database file, returning pages freed by pruning to the file system.
+    /// </summary>
+    /// <remarks>
+    /// Deleting rows only marks pages reusable, so a database that has pruned a lot of history
+    /// stays large on disk until it is rebuilt. The WAL is folded back into the main file first
+    /// because VACUUM cannot reclaim space that is still only recorded in the log.
+    /// </remarks>
+    public void Vacuum()
+    {
+        using var conn = Open();
+
+        using (var before = conn.CreateCommand())
+        {
+            before.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+            before.ExecuteNonQuery();
+        }
+
+        using (var vacuum = conn.CreateCommand())
+        {
+            vacuum.CommandText = "VACUUM;";
+            // A rebuild rewrites the whole file, so it can far exceed the default command timeout.
+            vacuum.CommandTimeout = 0;
+            vacuum.ExecuteNonQuery();
+        }
+
+        // VACUUM writes the rebuilt pages through the log, so without a second checkpoint the
+        // reclaimed space stays parked in the -wal file and the database appears to have grown.
+        using var after = conn.CreateCommand();
+        after.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+        after.ExecuteNonQuery();
     }
 }

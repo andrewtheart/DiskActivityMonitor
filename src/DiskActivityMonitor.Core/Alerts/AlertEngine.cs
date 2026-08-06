@@ -19,7 +19,11 @@ public sealed class AlertEngine
     /// raised (already persisted). Returns an empty list when nothing tripped or everything
     /// is still in cooldown.
     /// </summary>
-    public List<AlertRecord> Evaluate(IEnumerable<DiskInfo> disks, AppConfig cfg, DateTime nowUtc)
+    public List<AlertRecord> Evaluate(
+        IEnumerable<DiskInfo> disks,
+        AppConfig cfg,
+        DateTime nowUtc,
+        double highCoveragePercent = 90)
     {
         var raised = new List<AlertRecord>();
         var diskList = disks.ToList();
@@ -84,11 +88,13 @@ public sealed class AlertEngine
             var earliest = _repo.GetEarliestSample(disk.DiskId);
             if (earliest is not null && nowUtc - earliest.Value >= TimeSpan.FromHours(24))
             {
-                double avgPerDay = nowUtc - earliest.Value >= TimeSpan.FromDays(7)
-                    ? _repo.GetDiskTotals(disk.DiskId, nowUtc.AddDays(-7), nowUtc).Write / 7.0
-                    : _repo.GetDiskTotals(disk.DiskId, earliest.Value, nowUtc).Write / Math.Max(1.0 / 24, (nowUtc - earliest.Value).TotalDays);
+                MonitoringRateStats recentRate = _repo.GetRecentDiskWriteRate(
+                    disk.DiskId,
+                    nowUtc,
+                    highCoveragePercent);
+                double avgPerDay = recentRate.MonitoredBytesPerHour * 24.0;
 
-                if (avgPerDay > 0)
+                if (recentRate.HasHighCoverage && avgPerDay > 0)
                 {
                     double tbwLow = cfg.EffectiveTbw(disk.DiskId);
                     double? tbwHigh = cfg.EffectiveTbwUpper(disk.DiskId);
