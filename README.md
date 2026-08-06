@@ -77,10 +77,10 @@ warns you when a drive or process crosses a threshold you set.
 ## Screenshots
 
 <p align="center">
-  <img src="assets/dashboard-overview.png" alt="Full Disk Activity Monitor dashboard showing drive totals, SSD endurance, trends, process writes, and alerts" width="940">
+  <img src="assets/dashboard-overview.png" alt="Full Disk Activity Monitor dashboard showing drive totals, SSD endurance, live disk activity, trends, process writes, alerts, and suspended processes" width="940">
 </p>
 
-<p align="center"><em>Full dashboard with per-drive totals, endurance telemetry, trends, process attribution, and active alerts.</em></p>
+<p align="center"><em>Full dashboard with per-drive totals, endurance telemetry, live read/write activity, trends, process attribution, active alerts, and suspension state.</em></p>
 
 <h3 align="center">Actionable notifications</h3>
 
