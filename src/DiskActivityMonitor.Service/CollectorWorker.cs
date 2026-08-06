@@ -111,7 +111,7 @@ public sealed class CollectorWorker : BackgroundService
         }
 
         // Flush whatever is pending so we do not lose the final partial minute.
-        try { FlushBuckets(_configStore.Current); }
+        try { FlushBuckets(_configStore.Current, _currentMinuteUtc); }
         catch (Exception ex) { _log.LogWarning(ex, "Error flushing buckets on shutdown."); }
 
         // Final checkpoint so the database is left fully consolidated on disk.
@@ -123,7 +123,7 @@ public sealed class CollectorWorker : BackgroundService
         _log.LogInformation("Disk Activity Monitor collector stopped.");
     }
 
-    private void SampleOnce(double elapsedSeconds, AppConfig cfg)
+    internal void SampleOnce(double elapsedSeconds, AppConfig cfg)
     {
         var nowUtc = DateTime.UtcNow;
         var minuteUtc = new DateTime(nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, nowUtc.Minute, 0, DateTimeKind.Utc);
@@ -134,14 +134,14 @@ public sealed class CollectorWorker : BackgroundService
         // Minute rolled over -> persist the completed bucket and run periodic maintenance.
         if (minuteUtc != _currentMinuteUtc)
         {
-            FlushBuckets(cfg);
+            FlushBuckets(cfg, _currentMinuteUtc);
             _currentMinuteUtc = minuteUtc;
             RunPeriodicTasks(cfg, nowUtc);
         }
 
         // Accumulate this interval's bytes.
-        foreach (var (diskId, bytes) in _diskSampler.SampleBytes(elapsedSeconds))
-            Accumulate(_diskAccum, diskId, bytes.Read, bytes.Write);
+        var diskDeltas = _diskSampler.SampleBytes(elapsedSeconds);
+        ProcessDiskDeltas(nowUtc, elapsedSeconds, diskDeltas, cfg);
 
         _procReader.ConfigureFileTargets(cfg.TrackFileTargets, cfg.FileTargetTrackingLimit);
 
@@ -156,15 +156,28 @@ public sealed class CollectorWorker : BackgroundService
         }
     }
 
-    private void FlushBuckets(AppConfig cfg)
+    internal void ProcessDiskDeltas(
+        DateTime timestampUtc,
+        double elapsedSeconds,
+        IReadOnlyDictionary<string, (long Read, long Write)> diskDeltas,
+        AppConfig cfg)
     {
-        if (_currentMinuteUtc == default)
+        foreach (var (diskId, bytes) in diskDeltas)
+            Accumulate(_diskAccum, diskId, bytes.Read, bytes.Write);
+        RecordLiveDiskSamples(timestampUtc, elapsedSeconds, diskDeltas, cfg);
+    }
+
+    internal void FlushBuckets(AppConfig cfg, DateTime minuteUtc)
+    {
+        if (minuteUtc == default)
             return;
+
+        RecordCollectorHeartbeat(minuteUtc);
 
         if (_diskAccum.Count > 0)
         {
             var samples = _diskAccum
-                .Select(kv => new DiskSample { TimestampUtc = _currentMinuteUtc, DiskId = kv.Key, ReadBytes = kv.Value.Read, WriteBytes = kv.Value.Write })
+                .Select(kv => new DiskSample { TimestampUtc = minuteUtc, DiskId = kv.Key, ReadBytes = kv.Value.Read, WriteBytes = kv.Value.Write })
                 .ToList();
             _repo.AddDiskSamples(samples);
             _diskAccum.Clear();
@@ -176,7 +189,7 @@ public sealed class CollectorWorker : BackgroundService
             long minBytes = (long)(Math.Max(0, cfg.ProcessMinMbPerMinute) * ByteFormat.MiB);
             var samples = _procAccum
                 .Where(kv => kv.Value.Write >= minBytes || kv.Value.Read >= minBytes)
-                .Select(kv => new ProcessIoSample { TimestampUtc = _currentMinuteUtc, ProcessName = kv.Key, ReadBytes = kv.Value.Read, WriteBytes = kv.Value.Write })
+                .Select(kv => new ProcessIoSample { TimestampUtc = minuteUtc, ProcessName = kv.Key, ReadBytes = kv.Value.Read, WriteBytes = kv.Value.Write })
                 .ToList();
             _repo.AddProcessSamples(samples);
             _procAccum.Clear();
@@ -184,7 +197,7 @@ public sealed class CollectorWorker : BackgroundService
 
         if (_fileAccum.Count > 0)
         {
-            var fileSamples = SelectFileTargets(_fileAccum, _currentMinuteUtc, cfg);
+            var fileSamples = SelectFileTargets(_fileAccum, minuteUtc, cfg);
             if (fileSamples.Count > 0)
                 _repo.AddProcessFileSamples(fileSamples);
             _fileAccum.Clear();
@@ -245,6 +258,30 @@ public sealed class CollectorWorker : BackgroundService
         return samples;
     }
 
+    internal void RecordCollectorHeartbeat(DateTime minuteUtc)
+        => _repo.AddCollectorHeartbeat(minuteUtc);
+
+    internal void RecordLiveDiskSamples(
+        DateTime timestampUtc,
+        double elapsedSeconds,
+        IReadOnlyDictionary<string, (long Read, long Write)> deltas,
+        AppConfig cfg)
+    {
+        if (deltas.Count == 0 || !double.IsFinite(elapsedSeconds) || elapsedSeconds <= 0) return;
+
+        int elapsedMilliseconds = (int)Math.Clamp(Math.Round(elapsedSeconds * 1000), 1, int.MaxValue);
+        var samples = deltas.Select(delta => new LiveDiskSample
+        {
+            TimestampUtc = timestampUtc,
+            DiskId = delta.Key,
+            ElapsedMilliseconds = elapsedMilliseconds,
+            ReadBytes = Math.Max(0, delta.Value.Read),
+            WriteBytes = Math.Max(0, delta.Value.Write),
+        }).ToList();
+        DateTime cutoffUtc = timestampUtc.AddMinutes(-Math.Clamp(cfg.LiveGraphRetentionMinutes, 1, 120));
+        _repo.AddLiveDiskSamples(samples, cutoffUtc);
+    }
+
     internal void RunPeriodicTasks(AppConfig cfg, DateTime nowUtc)
     {
         // Re-scan disks every five minutes (handles removable media / new drives).
@@ -254,7 +291,11 @@ public sealed class CollectorWorker : BackgroundService
         // Evaluate alert rules each minute.
         try
         {
-            foreach (var alert in _alertEngine.Evaluate(_disks, cfg, nowUtc))
+            foreach (var alert in _alertEngine.Evaluate(
+                _disks,
+                cfg,
+                nowUtc,
+                cfg.HighCoveragePercent))
                 _log.LogWarning("ALERT [{Severity}] {Title} - {Message}", alert.Severity, alert.Title, alert.Message);
         }
         catch (Exception ex)
