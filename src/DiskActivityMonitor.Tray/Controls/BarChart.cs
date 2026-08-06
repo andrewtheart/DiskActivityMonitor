@@ -68,6 +68,7 @@ public sealed class BarChart : FrameworkElement
         double slot = plotW / n;
         double barW = Math.Max(2, slot * 0.62);
         int labelEvery = Math.Max(1, (int)Math.Ceiling(n / (plotW / 42.0)));
+        double lastLabelRight = double.NegativeInfinity;
 
         for (int i = 0; i < n; i++)
         {
@@ -88,7 +89,14 @@ public sealed class BarChart : FrameworkElement
                 var ft = MakeText(bar.Label, typeface, 9.5, TextBrush, dpi);
                 double tx = x + barW / 2 - ft.Width / 2;
                 tx = Math.Clamp(tx, 0, w - ft.Width);
-                dc.DrawText(ft, new Point(tx, baseY + 3));
+
+                // The final label is forced, so it can land on top of the previous one; drop it
+                // rather than overprinting.
+                if (tx > lastLabelRight + 4)
+                {
+                    dc.DrawText(ft, new Point(tx, baseY + 3));
+                    lastLabelRight = tx + ft.Width;
+                }
             }
         }
     }
