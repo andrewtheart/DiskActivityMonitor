@@ -13,6 +13,9 @@ namespace DiskActivityMonitor.Cli;
 /// <summary>Dispatches CLI commands and implements them against the shared repository/config.</summary>
 internal static class CliRunner
 {
+    internal static Func<MonitorRepository> RepositoryFactory { get; set; } = () => new MonitorRepository();
+    internal static Func<AppConfig> ConfigFactory { get; set; } = () => new ConfigStore().Current;
+
     public static int Run(string[] args)
     {
         try
@@ -60,7 +63,7 @@ internal static class CliRunner
 
     private static MonitorRepository OpenRepo()
     {
-        var repo = new MonitorRepository();
+        var repo = RepositoryFactory();
         repo.EnsureSchema();
         return repo;
     }
@@ -304,7 +307,7 @@ internal static class CliRunner
     private static int Endurance(CliArgs a)
     {
         var repo = OpenRepo();
-        var cfg = new ConfigStore().Current;
+        var cfg = ConfigFactory();
         var disks = a.Flag("all") ? repo.GetDisks().Where(d => d.IsSsd).ToList()
                                   : (ResolveDisk(repo, a) is { } d ? new List<DiskInfo> { d } : new());
         if (disks.Count == 0) { Out.Dim("No SSD recorded yet."); return 0; }
@@ -347,15 +350,25 @@ internal static class CliRunner
 
             if (earliest is not null)
             {
-                double observedDays = (nowUtc - earliest.Value).TotalDays;
-                double avgPerDay = observedDays >= 7
-                    ? repo.GetDiskTotals(disk.DiskId, nowUtc.AddDays(-7), nowUtc).Write / 7.0
-                    : writtenObserved / Math.Max(1.0 / 24, observedDays);
+                MonitoringRateStats recentRate = repo.GetRecentDiskWriteRate(
+                    disk.DiskId,
+                    nowUtc,
+                    cfg.HighCoveragePercent);
+                double avgPerDay = recentRate.MonitoredBytesPerHour * 24.0;
                 double yearsLow = avgPerDay > 0 ? Math.Max(tbwLowBytes - (disk.LifetimeBytesWritten ?? 0), tbwLowBytes * 0.001) / (avgPerDay * 365.0) : double.PositiveInfinity;
                 double yearsHigh = avgPerDay > 0 ? Math.Max(tbwHighBytes - (disk.LifetimeBytesWritten ?? 0), tbwHighBytes * 0.001) / (avgPerDay * 365.0) : double.PositiveInfinity;
                 string projText = ranged ? $"{FormatYears(yearsLow)} to {FormatYears(yearsHigh)}" : FormatYears(yearsLow);
-                Console.WriteLine($"  Recent average    : {ByteFormat.Humanize(avgPerDay)}/day");
-                Console.WriteLine($"  Projected to TBW  : ~{projText} at the recent rate");
+                Console.WriteLine($"  Monitored average : {ByteFormat.Humanize(avgPerDay)}/day");
+                Console.WriteLine($"  Coverage          : {recentRate.CoveragePercent:0.#}% ({recentRate.MonitoredMinutes:N0}/{recentRate.RequestedMinutes:N0} min)");
+                if (recentRate.HasHighCoverage)
+                {
+                    Console.WriteLine($"  Calendar average  : {ByteFormat.Humanize(recentRate.CalendarBytesPerHour * 24.0)}/day");
+                    Console.WriteLine($"  Projected to TBW  : ~{projText} at the monitored rate");
+                }
+                else
+                {
+                    Console.WriteLine($"  Projected to TBW  : withheld below {cfg.HighCoveragePercent:0.#}% coverage");
+                }
             }
             Console.WriteLine();
         }

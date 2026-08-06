@@ -14,4 +14,8 @@
     <ProjectReference Include="..\DiskActivityMonitor.Core\DiskActivityMonitor.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="DiskActivityMonitor.Tests" />
+  </ItemGroup>
+
 </Project>
