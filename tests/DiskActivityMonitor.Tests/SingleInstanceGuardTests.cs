@@ -49,13 +49,13 @@ public sealed class SingleInstanceGuardTests
 
         var ownerReady = new ManualResetEventSlim(false);
         var releaseOwner = new ManualResetEventSlim(false);
+        Mutex? abandonedHandle = null;
         var owner = new Thread(() =>
         {
-            var held = new Mutex(initiallyOwned: true, name);
+            abandonedHandle = new Mutex(initiallyOwned: true, name);
             ownerReady.Set();
             releaseOwner.Wait();
             // Intentionally exit thread without releasing to abandon the mutex.
-            GC.KeepAlive(held);
         });
         owner.Start();
         ownerReady.Wait();
@@ -64,5 +64,6 @@ public sealed class SingleInstanceGuardTests
 
         Assert.True(SingleInstanceGuard.TryAcquire(name, out var guard));
         guard!.Dispose();
+        abandonedHandle!.Dispose();
     }
 }
