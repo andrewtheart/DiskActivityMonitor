@@ -45,6 +45,9 @@ Run from the repository root:
 .\installer\build-installer.ps1 -All -Version 1.2.0 -Push  # build, commit + push, publish a GitHub release as latest
 ```
 
+Every non-`WhatIf` canonical run builds the full solution first and runs the full test suite
+second. A failure stops the workflow before commits, publishing, or installer compilation.
+
 Build output lands in `installer/Output/`, which is git-ignored. Requires
 [Inno Setup 6](https://jrsoftware.org/isinfo.php) and the .NET SDK; `-Push` also requires the
 authenticated GitHub CLI (`gh`). After pushing, the root build-all script asks whether the release

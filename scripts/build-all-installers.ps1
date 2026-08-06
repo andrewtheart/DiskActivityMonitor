@@ -93,9 +93,17 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $buildInstaller = Join-Path $repoRoot 'installer\build-installer.ps1'
 $installerOutput = Join-Path $repoRoot 'installer\Output'
 $gitHelperPath = Join-Path $repoRoot 'scripts\installer-git-commits.ps1'
+$solutionPath = Join-Path $repoRoot 'DiskActivityMonitor.slnx'
+$testProject = Join-Path $repoRoot 'tests\DiskActivityMonitor.Tests\DiskActivityMonitor.Tests.csproj'
 
 if (-not (Test-Path -LiteralPath $buildInstaller)) {
   throw "Installer build script not found: $buildInstaller"
+}
+if (-not (Test-Path -LiteralPath $solutionPath)) {
+  throw "Solution not found: $solutionPath"
+}
+if (-not (Test-Path -LiteralPath $testProject)) {
+  throw "Test project not found: $testProject"
 }
 if (($Commit -or $Push) -and -not (Test-Path -LiteralPath $gitHelperPath)) {
   throw "Installer Git helper script not found: $gitHelperPath"
@@ -119,6 +127,20 @@ function Resolve-ReleaseMode {
       { $_ -in @('p', 'publish', 'published') } { return 'Published' }
       default { Write-Warning "Invalid choice '$choice'. Enter D or P." }
     }
+  }
+}
+
+function Invoke-BuildAndTestPreflight {
+  Write-Host 'Building the complete solution before installer work...' -ForegroundColor Cyan
+  & dotnet build $solutionPath -c $Configuration --nologo
+  if ($LASTEXITCODE -ne 0) {
+    throw "Solution build failed (exit $LASTEXITCODE). Installer work was not started."
+  }
+
+  Write-Host 'Running the complete test suite before installer work...' -ForegroundColor Cyan
+  & dotnet test $testProject -c $Configuration --no-build --nologo
+  if ($LASTEXITCODE -ne 0) {
+    throw "Full test suite failed (exit $LASTEXITCODE). Installer work was not started."
   }
 }
 
@@ -517,11 +539,13 @@ if ($requested.Count -eq 0) {
   throw 'No installer variants selected. Choose x64, x86, or all.'
 }
 
-$previewVersion = Get-ResolvedVersion -RepoRoot $repoRoot -InputVersion $Version -ForPush:$Push -GitHubCli $null -RepoArgs @()
 if ($WhatIfPreference) {
+  $previewVersion = Get-ResolvedVersion -RepoRoot $repoRoot -InputVersion $Version -ForPush:$Push -GitHubCli $null -RepoArgs @()
   Write-Host 'WhatIf: canonical installer plan' -ForegroundColor Yellow
   Write-Host "  version: $previewVersion" -ForegroundColor Yellow
   Write-Host "  variants: $($requested -join ', ')" -ForegroundColor Yellow
+  Write-Host "  preflight 1: dotnet build DiskActivityMonitor.slnx -c $Configuration --nologo" -ForegroundColor Yellow
+  Write-Host "  preflight 2: dotnet test tests\DiskActivityMonitor.Tests\DiskActivityMonitor.Tests.csproj -c $Configuration --no-build --nologo (full suite)" -ForegroundColor Yellow
   Write-Host '  pre-build commit strategy: strict git preflight + reviewed whole-file atomic Copilot plan (exact path coverage, temp-index preflight, explicit approval)' -ForegroundColor Yellow
   foreach ($name in $requested) {
     $runtime = $variantSpecs[$name].Runtime
@@ -542,6 +566,8 @@ if ($WhatIfPreference) {
   }
   return
 }
+
+Invoke-BuildAndTestPreflight
 
 $gh = $null
 $repoSlug = $null

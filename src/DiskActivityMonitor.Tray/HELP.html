@@ -1925,6 +1925,9 @@ class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb17
 <p>Build x64 and x86 with one version and a consolidated summary:</p>
 <div class="sourceCode" id="cb18"><pre
 class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span></span></code></pre></div>
+<p>Every non-preview run first builds the complete solution and then
+runs the complete test suite. The workflow stops before Git planning,
+publishing, or installer compilation if either step fails.</p>
 <p>Preview without changing files:</p>
 <div class="sourceCode" id="cb19"><pre
 class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\scripts\build-all-installers<span class="op">.</span><span class="fu">ps1</span> <span class="op">-</span>Version <span class="dv">1.5</span><span class="op">.</span><span class="dv">0</span> <span class="op">-</span>WhatIf</span></code></pre></div>

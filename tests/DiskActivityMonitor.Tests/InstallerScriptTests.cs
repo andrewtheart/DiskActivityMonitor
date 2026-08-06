@@ -34,6 +34,26 @@ public sealed class InstallerScriptTests
     }
 
     [Fact]
+    public void CanonicalScript_BuildsSolutionThenRunsFullSuiteBeforeInstallerOrGitWork()
+    {
+        string canonical = ReadScript("scripts", "build-all-installers.ps1");
+
+        Assert.Contains("& dotnet build $solutionPath -c $Configuration --nologo", canonical);
+        Assert.Contains("& dotnet test $testProject -c $Configuration --no-build --nologo", canonical);
+        Assert.DoesNotContain("--filter", canonical);
+        Assert.Contains("Full test suite failed", canonical);
+
+        int preflight = canonical.IndexOf("Invoke-BuildAndTestPreflight", StringComparison.Ordinal);
+        int executionSetup = canonical.IndexOf("$gh = $null", preflight, StringComparison.Ordinal);
+        int commitPlanning = canonical.IndexOf("Invoke-DamFocusedPendingCommits -RepoRoot $repoRoot", StringComparison.Ordinal);
+        int installerBuild = canonical.IndexOf("& $buildInstaller -Runtime", StringComparison.Ordinal);
+        Assert.True(preflight >= 0, "The build/test preflight invocation was not found before execution setup.");
+        Assert.True(preflight < executionSetup, "Build/test preflight must run before release execution setup.");
+        Assert.True(preflight < commitPlanning, "Build/test preflight must run before commit planning.");
+        Assert.True(preflight < installerBuild, "Build/test preflight must run before installer compilation.");
+    }
+
+    [Fact]
     public void InstallerScript_PushDelegatesToCanonicalWorkflow()
     {
         string installer = ReadScript("installer", "build-installer.ps1");
@@ -97,6 +117,9 @@ public sealed class InstallerScriptTests
         string canonical = ReadScript("scripts", "build-all-installers.ps1");
 
         Assert.Contains("WhatIf: canonical installer plan", canonical);
+        Assert.Contains("preflight 1: dotnet build DiskActivityMonitor.slnx", canonical);
+        Assert.Contains(@"preflight 2: dotnet test tests\DiskActivityMonitor.Tests\DiskActivityMonitor.Tests.csproj", canonical);
+        Assert.Contains("(full suite)", canonical);
         Assert.Contains("pre-build commit strategy", canonical);
         Assert.Contains("whole-file atomic Copilot plan", canonical);
         Assert.DoesNotContain("reviewed interactive hunk commits", canonical);

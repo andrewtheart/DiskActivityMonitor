@@ -896,6 +896,9 @@ Build x64 and x86 with one version and a consolidated summary:
 .\scripts\build-all-installers.ps1 -Version 1.5.0
 ```
 
+Every non-preview run first builds the complete solution and then runs the complete test suite.
+The workflow stops before Git planning, publishing, or installer compilation if either step fails.
+
 Preview without changing files:
 
 ```powershell
