@@ -34,6 +34,75 @@
         <Style x:Key="FieldLabel" TargetType="TextBlock" BasedOn="{StaticResource Caption}">
             <Setter Property="Margin" Value="0,0,0,3" />
         </Style>
+
+        <!-- Compact square icon button used for the per-file row actions (tail, trace, delete).
+             The glyph is supplied as an explicit TextBlock by each button, so the symbol font is
+             applied directly rather than relying on ContentPresenter font inheritance. -->
+        <Style x:Key="RowActionButton" TargetType="Button">
+            <Setter Property="Width" Value="26" />
+            <Setter Property="Height" Value="26" />
+            <Setter Property="Margin" Value="4,0,0,0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Chrome" CornerRadius="5" Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#2C333C" />
+                                <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.35" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Destructive variant: red only on hover so the row stays calm at rest. -->
+        <Style x:Key="RowDeleteButton" TargetType="Button" BasedOn="{StaticResource RowActionButton}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Chrome" CornerRadius="5" Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#4A2226" />
+                                <Setter Property="Foreground" Value="#FF8A80" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.35" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Monospaced surface shared by the handle trace and live tail viewers. -->
+        <Style x:Key="ConsoleText" TargetType="TextBox">
+            <Setter Property="Background" Value="#101316" />
+            <Setter Property="Foreground" Value="#D6DCE3" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, Courier New" />
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="IsReadOnly" Value="True" />
+            <Setter Property="Padding" Value="10" />
+            <Setter Property="TextWrapping" Value="NoWrap" />
+            <Setter Property="VerticalScrollBarVisibility" Value="Auto" />
+            <Setter Property="HorizontalScrollBarVisibility" Value="Auto" />
+        </Style>
     </Window.Resources>
 
     <Grid>
@@ -282,7 +351,7 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="Avg written" VerticalAlignment="Center" Margin="0,0,18,0"
+                                <TextBlock Grid.Column="0" Text="Avg while monitored" VerticalAlignment="Center" Margin="0,0,18,0"
                                            Foreground="{StaticResource TextSecondary}" />
                                 <StackPanel Grid.Column="1">
                                     <TextBlock x:Name="EnduranceAvgHour" Style="{StaticResource H2}" Text="-" />
@@ -302,6 +371,37 @@
                         <TextBlock x:Name="EnduranceConsumedText" Style="{StaticResource Caption}" TextWrapping="Wrap"
                                    Opacity="0.75" Margin="0,12,0,0" Text="-" />
 
+                    </StackPanel>
+                </Border>
+
+                <!-- Live physical-disk activity from the collector's granular sample stream -->
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="Live disk activity" />
+                                <TextBlock x:Name="LiveDiskCaption" Style="{StaticResource Caption}"
+                                           Margin="0,2,0,0" Text="Physical read/write throughput from granular collector samples" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Border Width="10" Height="3" Background="#4FC3F7" Margin="0,0,6,0" />
+                                <TextBlock Text="Read" Style="{StaticResource Caption}" Margin="0,0,14,0" />
+                                <Border Width="10" Height="3" Background="#FFA726" Margin="0,0,6,0" />
+                                <TextBlock Text="Write" Style="{StaticResource Caption}" />
+                            </StackPanel>
+                        </Grid>
+                        <Grid Margin="0,12,0,0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="170" />
+                            </Grid.RowDefinitions>
+                            <TextBlock x:Name="LiveDiskCurrent" Style="{StaticResource Caption}" />
+                            <ctl:LiveDiskChart x:Name="LiveDiskActivityChart" Grid.Row="1" Margin="0,6,0,0" />
+                        </Grid>
                     </StackPanel>
                 </Border>
 
@@ -373,6 +473,8 @@
                         </Grid>
 
                         <ctl:BarChart x:Name="ThroughputChart" Height="150" Margin="0,16,0,0" />
+                        <TextBlock x:Name="ThroughputCoverageText" Style="{StaticResource Caption}"
+                                   TextWrapping="Wrap" Margin="0,8,0,0" />
                     </StackPanel>
                 </Border>
 
@@ -415,6 +517,7 @@
                                             <Border Grid.Column="1" Height="14" CornerRadius="3" HorizontalAlignment="Left"
                                                     Width="{Binding BarWidth}" VerticalAlignment="Center"
                                                     MouseEnter="ProcessBar_MouseEnter"
+                                                    MouseLeave="ProcessBar_MouseLeave"
                                                     ToolTip="Hover to see which files this process wrote">
                                                 <Border.Background>
                                                     <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
@@ -737,6 +840,10 @@
                                 <TextBox x:Name="TxtRefresh" Style="{StaticResource DarkTextBox}" />
                             </StackPanel>
                             <StackPanel Margin="0,0,24,12">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="Live graph history (min)" />
+                                <TextBox x:Name="TxtLiveGraphRetention" Style="{StaticResource DarkTextBox}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,24,12">
                                 <TextBlock x:Name="TbwLabel" Style="{StaticResource FieldLabel}" Text="TBW setting for this disk" />
                                 <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
                                     <RadioButton x:Name="RadTbwSingle" GroupName="TbwRatingMode" Content="Single TBW"
@@ -757,6 +864,11 @@
                             <StackPanel Margin="0,0,24,12">
                                 <TextBlock Style="{StaticResource FieldLabel}" Text="Endurance warn (years left)" />
                                 <TextBox x:Name="TxtEnduranceWarnYears" Style="{StaticResource DarkTextBox}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,24,12">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="High monitoring coverage (%)" />
+                                <TextBox x:Name="TxtHighCoveragePercent" Width="150" Style="{StaticResource DarkTextBox}"
+                                         ToolTip="Calendar-rate and endurance projections are shown only when recent monitoring coverage reaches this percentage." />
                             </StackPanel>
                         </WrapPanel>
 
@@ -783,6 +895,72 @@
                                     <StackPanel Margin="0,0,24,10">
                                         <TextBlock Style="{StaticResource FieldLabel}" Text="Files tracked in memory" />
                                         <TextBox x:Name="TxtFileTargetTrackingLimit" Width="150" Style="{StaticResource DarkTextBox}" />
+                                    </StackPanel>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Database growth: warn before the monitoring history fills the disk -->
+                        <Border Background="#15181B" CornerRadius="8" Padding="14,11" Margin="0,6,0,4">
+                            <StackPanel>
+                                <TextBlock Text="Database size" FontWeight="SemiBold" />
+                                <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,5,0,0"
+                                           Text="Disk Activity Monitor warns you when its own database grows past this size and offers to compact it. Compaction rebuilds the file and returns space freed by expired history without losing data. When the window is minimised or in the tray, the warning arrives as a Windows notification." />
+                                <WrapPanel Margin="0,10,0,0">
+                                    <StackPanel Margin="0,0,24,10">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="Warn above (GB)" />
+                                        <TextBox x:Name="TxtDatabaseSizeWarnGb" Width="120" Style="{StaticResource DarkTextBox}"
+                                                 ToolTip="Set to 0 to disable the database size warning entirely." />
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,24,10">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="Repeat warning after (hours)" />
+                                        <TextBox x:Name="TxtDatabaseSizeCooldown" Width="150" Style="{StaticResource DarkTextBox}" />
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,24,10" VerticalAlignment="Bottom">
+                                        <TextBlock x:Name="TxtDatabaseSizeCurrent" Style="{StaticResource Caption}"
+                                                   Margin="0,0,0,6" />
+                                        <Button Content="Compact database now" Style="{StaticResource ToolButton}"
+                                                AutomationProperties.Name="Compact the monitoring database now"
+                                                Click="DatabaseCompactFromSettings_Click" />
+                                    </StackPanel>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Live tail: which files the eye icon will open as text -->
+                        <Border Background="#15181B" CornerRadius="8" Padding="14,11" Margin="0,6,0,4">
+                            <StackPanel>
+                                <TextBlock Text="Live file tail" FontWeight="SemiBold" />
+                                <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,5,0,0"
+                                           Text="The eye icon in a per-file breakdown streams a file's new lines as they are written. Files whose extension appears below are treated as binary and are never opened as text. Separate entries with semicolons." />
+                                <TextBox x:Name="TxtBinaryExtensions" Style="{StaticResource DarkTextBox}"
+                                         Margin="0,10,0,0" Width="Auto" HorizontalAlignment="Stretch"
+                                         AcceptsReturn="True" TextWrapping="Wrap" MinHeight="64" MaxHeight="120"
+                                         VerticalScrollBarVisibility="Auto"
+                                         AutomationProperties.Name="Binary file extensions excluded from live tail" />
+                                <WrapPanel Margin="0,10,0,0">
+                                    <StackPanel Margin="0,0,24,10">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="Lines shown on open" />
+                                        <TextBox x:Name="TxtTailInitialLines" Width="130" Style="{StaticResource DarkTextBox}" />
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,24,10">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="Maximum lines buffered" />
+                                        <TextBox x:Name="TxtTailMaxLines" Width="150" Style="{StaticResource DarkTextBox}" />
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,24,10">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="Maximum decoded per poll (KiB)" />
+                                        <TextBox x:Name="TxtTailMaxReadKb" Width="180" Style="{StaticResource DarkTextBox}"
+                                                 ToolTip="Bounds memory and UI work per read. Total file size does not need to be limited because tailing seeks to the end." />
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,24,10">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="Maximum displayed text (KiB)" />
+                                        <TextBox x:Name="TxtTailMaxBufferKb" Width="180" Style="{StaticResource DarkTextBox}"
+                                                 ToolTip="Bounds retained decoded text even when a file contains extremely long minified lines." />
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,24,10" VerticalAlignment="Bottom">
+                                        <Button Content="Restore default extensions" Style="{StaticResource ToolButton}"
+                                                AutomationProperties.Name="Restore the default binary extension list"
+                                                Click="RestoreBinaryExtensions_Click" />
                                     </StackPanel>
                                 </WrapPanel>
                             </StackPanel>
@@ -834,6 +1012,38 @@
                                 </WrapPanel>
                                 <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,2,0,0"
                                            Text="Keys are stored per-user, not in the shared config. Google Custom Search JSON API now accepts existing customers only; new setups should use a Serper key from serper.dev." />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Application updates -->
+                        <Border Background="#15181B" CornerRadius="8" Padding="14,11" Margin="0,6,0,4">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="Updates" />
+                                <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,3,0,10"
+                                           Text="Checks the official GitHub release and accepts only the installer for this Windows architecture with matching size and SHA-256 metadata." />
+                                <WrapPanel>
+                                    <StackPanel Margin="0,0,24,10">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="Check for updates" />
+                                        <ComboBox x:Name="AppUpdateModeSelector" Width="210">
+                                            <ComboBoxItem Content="Ask me on startup" Tag="Prompt" />
+                                            <ComboBoxItem Content="Automatic" Tag="Automatic" />
+                                            <ComboBoxItem Content="Only when I ask" Tag="Manual" />
+                                            <ComboBoxItem Content="Off" Tag="Off" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,24,10">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="Maximum installer size (MB)" />
+                                        <TextBox x:Name="TxtMaxInstallerSizeMb" Width="150"
+                                                 Style="{StaticResource DarkTextBox}"
+                                                 AutomationProperties.Name="Maximum update installer size in megabytes" />
+                                    </StackPanel>
+                                    <Button Content="Check now" Style="{StaticResource ToolButton}"
+                                            Margin="0,20,0,10" VerticalAlignment="Top"
+                                            Click="CheckForUpdates_Click" />
+                                </WrapPanel>
+                                <TextBlock x:Name="AppUpdateSettingsStatus" Style="{StaticResource Caption}"
+                                           Foreground="{StaticResource Accent}" TextWrapping="Wrap"
+                                           Visibility="Collapsed" />
                             </StackPanel>
                         </Border>
 
@@ -1802,11 +2012,54 @@
             </Border>
         </Grid>
 
-        <!-- Per-file drill-down: explains an opaque writer by showing the files it wrote -->
-        <Grid x:Name="FileTargetsOverlay" Grid.RowSpan="2" Panel.ZIndex="1000"
-              Background="#E815181B" Visibility="Collapsed"
-              PreviewKeyDown="FileTargetsOverlay_PreviewKeyDown" Focusable="True">
-            <Border Width="760" Margin="28" VerticalAlignment="Stretch"
+        <!-- First-run consent: no network update request occurs until the user chooses. -->
+        <Grid x:Name="AppUpdateConsentOverlay" Grid.RowSpan="2" Panel.ZIndex="1300"
+              Background="#E815181B" Visibility="Collapsed" Focusable="True">
+            <Border Width="640" Margin="28" VerticalAlignment="Center"
+                    Background="#1E2228" BorderBrush="#3A414A" BorderThickness="1"
+                    CornerRadius="14" Padding="24">
+                <Border.Effect>
+                    <DropShadowEffect Color="#000000" BlurRadius="30" ShadowDepth="10" Opacity="0.65" />
+                </Border.Effect>
+                <StackPanel>
+                    <Grid Margin="0,0,0,14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock FontSize="21" FontWeight="SemiBold" Text="Application updates" />
+                            <TextBlock Style="{StaticResource Caption}" Margin="0,4,0,0"
+                                       Text="Choose when Disk Activity Monitor may contact GitHub." />
+                        </StackPanel>
+                        <Button Grid.Column="1" Style="{StaticResource DismissButton}" Width="30" Height="30"
+                                FontSize="14" Content="&#x2715;" ToolTip="Decide later"
+                                AutomationProperties.Name="Decide about update checks later"
+                                Click="AppUpdateConsentClose_Click" />
+                    </Grid>
+                    <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextSecondary}"
+                               Text="Update checks read the public latest-release metadata from the official Disk Activity Monitor GitHub repository. No release information is requested until you make a choice." />
+                    <Border Background="#15181B" CornerRadius="8" Padding="13" Margin="0,16,0,0">
+                        <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
+                                   Text="Downloads are never installed silently. The app selects only your architecture, verifies the GitHub size and SHA-256 digest, then asks again before launching the installer." />
+                    </Border>
+                    <WrapPanel HorizontalAlignment="Right" Margin="0,20,0,0">
+                        <Button Content="Off" Style="{StaticResource ToolButton}"
+                                Margin="0,0,8,0" Click="AppUpdateConsentOff_Click" />
+                        <Button Content="Only when I ask" Style="{StaticResource ToolButton}"
+                                Margin="0,0,8,0" Click="AppUpdateConsentManual_Click" />
+                        <Button Content="Automatic" Style="{StaticResource ToolButton}"
+                                Click="AppUpdateConsentAutomatic_Click" />
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- Verified application update workflow. -->
+        <Grid x:Name="AppUpdateOverlay" Grid.RowSpan="2" Panel.ZIndex="1280"
+              Background="#E815181B" Visibility="Collapsed" Focusable="True"
+              PreviewKeyDown="AppUpdateOverlay_PreviewKeyDown">
+            <Border Width="720" Margin="28" VerticalAlignment="Stretch"
                     Background="#1E2228" BorderBrush="#3A414A" BorderThickness="1"
                     CornerRadius="14" Padding="0">
                 <Border.Effect>
@@ -1825,6 +2078,96 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
+                        <Border Width="44" Height="44" CornerRadius="8" Background="#213C31">
+                            <TextBlock Text="&#xE895;" FontFamily="Segoe MDL2 Assets" FontSize="21"
+                                       Foreground="#58C88B" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="13,0,0,0" VerticalAlignment="Center">
+                            <TextBlock x:Name="AppUpdateTitle" FontSize="19" FontWeight="SemiBold"
+                                       Text="Application update" TextWrapping="Wrap" />
+                            <TextBlock Text="Official GitHub release" Style="{StaticResource Caption}" Margin="0,3,0,0" />
+                        </StackPanel>
+                        <Button Grid.Column="2" Style="{StaticResource DismissButton}" Width="30" Height="30"
+                                FontSize="14" Content="&#x2715;" ToolTip="Close"
+                                AutomationProperties.Name="Close application update"
+                                Click="AppUpdateClose_Click" />
+                    </Grid>
+
+                    <ScrollViewer Grid.Row="1" Margin="22,0,16,0" VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="0,0,6,10">
+                            <TextBlock x:Name="AppUpdateMessage" TextWrapping="Wrap"
+                                       Foreground="{StaticResource TextSecondary}" />
+                            <Border x:Name="AppUpdateNotesPanel" Background="#15181B" CornerRadius="8"
+                                    Padding="13" Margin="0,14,0,0" Visibility="Collapsed">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource FieldLabel}" Text="Release notes" />
+                                    <ctl:MarkdownViewer x:Name="AppUpdateNotes" Margin="0,6,0,0" />
+                                </StackPanel>
+                            </Border>
+                            <ProgressBar x:Name="AppUpdateProgress" Height="8" Margin="0,16,0,0"
+                                         Minimum="0" Maximum="100" Visibility="Collapsed" />
+                            <TextBlock x:Name="AppUpdateStatus" Style="{StaticResource Caption}"
+                                       Foreground="{StaticResource Accent}" TextWrapping="Wrap"
+                                       Margin="0,8,0,0" Visibility="Collapsed" />
+                            <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,14,0,0"
+                                       Text="Disk Activity Monitor verifies the installer again immediately before launch. Installation still requires your Windows approval." />
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <Grid Grid.Row="2" Margin="22,13,22,18">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <WrapPanel VerticalAlignment="Center">
+                            <Button x:Name="AppUpdateOpenReleaseButton" Content="Open release"
+                                    Style="{StaticResource ToolButton}" Visibility="Collapsed"
+                                    Click="AppUpdateOpenRelease_Click" />
+                            <Button x:Name="AppUpdateOpenFolderButton" Content="Open folder"
+                                    Style="{StaticResource ToolButton}" Margin="8,0,0,0"
+                                    Visibility="Collapsed" Click="AppUpdateOpenFolder_Click" />
+                        </WrapPanel>
+                        <WrapPanel Grid.Column="1" Margin="14,0,0,0">
+                            <Button x:Name="AppUpdateSkipButton" Content="Skip this version"
+                                    Style="{StaticResource ToolButton}" Margin="0,0,8,0"
+                                    Visibility="Collapsed" Click="AppUpdateSkip_Click" />
+                            <Button x:Name="AppUpdateLaterButton" Content="Later"
+                                    Style="{StaticResource ToolButton}" Margin="0,0,8,0"
+                                    Click="AppUpdateClose_Click" />
+                            <Button x:Name="AppUpdatePrimaryButton" Content="Download update"
+                                    Style="{StaticResource ToolButton}" Visibility="Collapsed"
+                                    Click="AppUpdatePrimary_Click" />
+                        </WrapPanel>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- Per-file drill-down: explains an opaque writer by showing the files it wrote -->
+        <Grid x:Name="FileTargetsOverlay" Grid.RowSpan="2" Panel.ZIndex="1000"
+              Background="#E815181B" Visibility="Collapsed"
+              PreviewKeyDown="FileTargetsOverlay_PreviewKeyDown" Focusable="True">
+                <Border x:Name="FileTargetsDialogBorder" MaxWidth="1020" Margin="28"
+                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                    Background="#1E2228" BorderBrush="#3A414A" BorderThickness="1"
+                    CornerRadius="14" Padding="0">
+                <Border.Effect>
+                    <DropShadowEffect Color="#000000" BlurRadius="30" ShadowDepth="10" Opacity="0.65" />
+                </Border.Effect>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Margin="22,18,16,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
                         <Border Width="44" Height="44" CornerRadius="12" Background="#223A66">
                             <TextBlock Text="&#xE8A5;" FontFamily="Segoe MDL2 Assets" FontSize="21"
                                        Foreground="#64A7FF" HorizontalAlignment="Center" VerticalAlignment="Center" />
@@ -1835,7 +2178,12 @@
                             <TextBlock x:Name="FileTargetsSubtitle" Style="{StaticResource Caption}"
                                        TextTrimming="CharacterEllipsis" Margin="0,3,0,0" />
                         </StackPanel>
-                        <Button Grid.Column="2" Style="{StaticResource DismissButton}" Width="30" Height="30"
+                        <ToggleButton x:Name="BtnFileTargetsAnalytics" Grid.Column="2" IsChecked="True"
+                                      Style="{StaticResource ToggleTool}" Margin="0,0,8,0"
+                                      Content="Analytics" ToolTip="Show or hide the analytics charts"
+                                      AutomationProperties.Name="Toggle analytics charts"
+                                      Click="FileTargetsAnalyticsToggle_Click" />
+                        <Button Grid.Column="3" Style="{StaticResource DismissButton}" Width="30" Height="30"
                                 FontSize="14" Content="&#x2715;" ToolTip="Close"
                                 AutomationProperties.Name="Close file breakdown"
                                 Click="FileTargetsClose_Click" />
@@ -1849,14 +2197,85 @@
                                            Foreground="{StaticResource TextSecondary}" />
                             </Border>
 
+                            <!-- Analytics: share of system writes, this process's write timeline,
+                                 and which file types absorb the writes. -->
+                            <Border x:Name="FileTargetsAnalytics" CornerRadius="10" Padding="14"
+                                    Background="#191D22" BorderBrush="#2C333C" BorderThickness="1"
+                                    Margin="0,0,0,14">
+                                <StackPanel>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <StackPanel Grid.Column="0" Margin="0,0,9,0">
+                                            <TextBlock Text="Share of writes by process" FontWeight="SemiBold"
+                                                       FontSize="12" Margin="0,0,0,2" />
+                                            <TextBlock x:Name="FileTargetsPieCaption" Style="{StaticResource Caption}"
+                                                       TextWrapping="Wrap" Margin="0,0,0,6" />
+                                            <ctl:PieChart x:Name="FileTargetsPie" Height="168" />
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Column="1" Margin="9,0,0,0">
+                                            <TextBlock Text="Write volume over time" FontWeight="SemiBold"
+                                                       FontSize="12" Margin="0,0,0,2" />
+                                            <TextBlock x:Name="FileTargetsTimelineCaption" Style="{StaticResource Caption}"
+                                                       TextWrapping="Wrap" Margin="0,0,0,6" />
+                                            <ctl:BarChart x:Name="FileTargetsTimeline" Height="168" />
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <TextBlock Text="Bytes written by file type" FontWeight="SemiBold"
+                                               FontSize="12" Margin="0,14,0,2" />
+                                    <TextBlock x:Name="FileTargetsTypesCaption" Style="{StaticResource Caption}"
+                                               TextWrapping="Wrap" Margin="0,0,0,7" />
+                                    <ItemsControl x:Name="FileTargetsTypesList">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="0,0,0,6">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="86" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="{Binding Label}" FontSize="11.5"
+                                                               VerticalAlignment="Center"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               Foreground="{StaticResource TextSecondary}" />
+                                                    <Grid Grid.Column="1" Margin="6,0,10,0">
+                                                        <Border Height="9" CornerRadius="4" HorizontalAlignment="Stretch"
+                                                                Background="#232A33" />
+                                                        <Border Height="9" CornerRadius="4" HorizontalAlignment="Left"
+                                                                Width="{Binding BarWidth}" Background="{Binding Fill}" />
+                                                    </Grid>
+                                                    <TextBlock Grid.Column="2" Text="{Binding ValueText}" FontSize="11.5"
+                                                               VerticalAlignment="Center" MinWidth="74"
+                                                               TextAlignment="Right" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBlock x:Name="FileTargetsTypesEmpty" Style="{StaticResource Caption}"
+                                               TextWrapping="Wrap" Visibility="Collapsed"
+                                               Text="No per-file records in this window, so file types cannot be summarised." />
+                                </StackPanel>
+                            </Border>
+
                             <ItemsControl x:Name="FileTargetsList">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <Border Background="#15181B" CornerRadius="6" Padding="11,8" Margin="0,0,0,7">
+                                            <Border.ContextMenu>
+                                                <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                                                    <MenuItem Header="Copy full path" Click="FileTargetCopyPath_Click" />
+                                                </ContextMenu>
+                                            </Border.ContextMenu>
                                             <StackPanel>
                                                 <Grid>
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
                                                         <ColumnDefinition Width="Auto" />
                                                     </Grid.ColumnDefinitions>
                                                     <StackPanel Orientation="Horizontal">
@@ -1870,6 +2289,33 @@
                                                     </StackPanel>
                                                     <TextBlock Grid.Column="1" Text="{Binding WriteText}" Margin="10,0,0,0"
                                                                VerticalAlignment="Center" FontWeight="SemiBold" />
+                                                    <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="10,0,0,0">
+                                                        <Button Style="{StaticResource RowActionButton}"
+                                                                ToolTip="Copy full path"
+                                                                AutomationProperties.Name="{Binding CopyAutomationName}"
+                                                                Click="FileTargetCopyPath_Click">
+                                                            <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="13" />
+                                                        </Button>
+                                                        <Button Style="{StaticResource RowActionButton}"
+                                                                IsEnabled="{Binding CanTail}"
+                                                                ToolTip="{Binding TailToolTip}"
+                                                                AutomationProperties.Name="{Binding TailAutomationName}"
+                                                                Click="FileTargetTail_Click">
+                                                            <TextBlock Text="&#xE890;" FontFamily="Segoe MDL2 Assets" FontSize="13" />
+                                                        </Button>
+                                                        <Button Style="{StaticResource RowActionButton}"
+                                                                ToolTip="Find which processes have this file open"
+                                                                AutomationProperties.Name="{Binding TraceAutomationName}"
+                                                                Click="FileTargetTrace_Click">
+                                                            <TextBlock Text="&#xE72E;" FontFamily="Segoe MDL2 Assets" FontSize="13" />
+                                                        </Button>
+                                                        <Button Style="{StaticResource RowDeleteButton}"
+                                                                ToolTip="Delete this file"
+                                                                AutomationProperties.Name="{Binding DeleteAutomationName}"
+                                                                Click="FileTargetDelete_Click">
+                                                            <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="13" />
+                                                        </Button>
+                                                    </StackPanel>
                                                 </Grid>
                                                 <TextBlock Text="{Binding Path}" ToolTip="{Binding Path}"
                                                            Style="{StaticResource Caption}" TextTrimming="CharacterEllipsis"
@@ -1904,13 +2350,333 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock x:Name="FileTargetsFooter" Style="{StaticResource Caption}" VerticalAlignment="Center"
                                    TextWrapping="Wrap" />
-                        <Button Grid.Column="1" Content="Close" Style="{StaticResource ToolButton}" Margin="14,0,0,0"
+                        <Button x:Name="BtnTraceProcess" Grid.Column="1" Content="Trace open handles"
+                                Style="{StaticResource ToolButton}" Margin="14,0,0,0"
+                                ToolTip="List every file and object this process currently has open (Sysinternals Handle)"
+                                AutomationProperties.Name="Trace open handles for this process"
+                                Click="TraceProcessHandles_Click" />
+                        <Button Grid.Column="2" Content="Close" Style="{StaticResource ToolButton}" Margin="8,0,0,0"
                                 Click="FileTargetsClose_Click" />
                     </Grid>
                 </Grid>
+            </Border>
+        </Grid>
+
+        <!-- Sysinternals Handle output: which processes hold a file or what a process has open. -->
+        <Grid x:Name="HandleTraceOverlay" Grid.RowSpan="2" Panel.ZIndex="1320"
+              Background="#E815181B" Visibility="Collapsed"
+              PreviewKeyDown="HandleTraceOverlay_PreviewKeyDown" Focusable="True">
+            <Border Width="960" Margin="34" VerticalAlignment="Stretch"
+                    Background="#1E2228" BorderBrush="#3A414A" BorderThickness="1"
+                    CornerRadius="14">
+                <Border.Effect>
+                    <DropShadowEffect Color="#000000" BlurRadius="30" ShadowDepth="10" Opacity="0.65" />
+                </Border.Effect>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Margin="22,18,16,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Border Width="44" Height="44" CornerRadius="12" Background="#2E2740">
+                            <TextBlock Text="&#xE72E;" FontFamily="Segoe MDL2 Assets" FontSize="20"
+                                       Foreground="#C7A6FF" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="13,0,0,0" VerticalAlignment="Center">
+                            <TextBlock x:Name="HandleTraceTitle" FontSize="19" FontWeight="SemiBold"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock x:Name="HandleTraceSubtitle" Style="{StaticResource Caption}"
+                                       TextTrimming="CharacterEllipsis" Margin="0,3,0,0" />
+                        </StackPanel>
+                        <Button Grid.Column="2" Style="{StaticResource DismissButton}" Width="30" Height="30"
+                                FontSize="14" Content="&#x2715;" ToolTip="Close"
+                                AutomationProperties.Name="Close handle trace"
+                                Click="HandleTraceClose_Click" />
+                    </Grid>
+
+                    <StackPanel Grid.Row="1" Margin="22,0,22,10">
+                        <!-- Shown when Handle is not installed: explains the download before it happens. -->
+                        <Border x:Name="HandleInstallPrompt" CornerRadius="10" Padding="14"
+                                Background="#232B38" Visibility="Collapsed">
+                            <StackPanel>
+                                <TextBlock Text="Sysinternals Handle is required" FontWeight="SemiBold"
+                                           Margin="0,0,0,5" />
+                                <TextBlock x:Name="HandleInstallText" TextWrapping="Wrap" FontSize="11.5"
+                                           Foreground="{StaticResource TextSecondary}" />
+                                <WrapPanel Margin="0,12,0,0">
+                                    <Button x:Name="BtnHandleDownload" Content="Download Handle"
+                                            Style="{StaticResource ToolButton}" Margin="0,0,8,0"
+                                            AutomationProperties.Name="Download Sysinternals Handle"
+                                            Click="HandleDownload_Click" />
+                                    <Button Content="Not now" Style="{StaticResource ToolButton}"
+                                            Click="HandleTraceClose_Click" />
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border x:Name="HandleTraceStatusBorder" CornerRadius="10" Padding="12"
+                                Background="#232B38" Visibility="Collapsed" Margin="0,0,0,0">
+                            <TextBlock x:Name="HandleTraceStatus" TextWrapping="Wrap" FontSize="11.5"
+                                       Foreground="{StaticResource TextSecondary}" />
+                        </Border>
+
+                        <ItemsControl x:Name="HandleLockerList" Margin="0,10,0,0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="#15181B" CornerRadius="6" Padding="11,8" Margin="0,0,0,6">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding ProcessName}" FontWeight="SemiBold"
+                                                               VerticalAlignment="Center" />
+                                                    <Border Background="#232A33" CornerRadius="4" Padding="6,1"
+                                                            Margin="8,0,0,0" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding PidText}" FontSize="10.5"
+                                                                   Foreground="{StaticResource TextSecondary}" />
+                                                    </Border>
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding Detail}" Style="{StaticResource Caption}"
+                                                           TextTrimming="CharacterEllipsis" Margin="0,3,0,0"
+                                                           ToolTip="{Binding Detail}" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <Border Grid.Row="2" Margin="22,0,22,0" CornerRadius="8" Background="#101316"
+                            BorderBrush="#2C333C" BorderThickness="1" ClipToBounds="True">
+                        <TextBox x:Name="HandleTraceOutput" Style="{StaticResource ConsoleText}" />
+                    </Border>
+
+                    <Grid Grid.Row="3" Margin="22,12,22,18">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="HandleTraceFooter" Style="{StaticResource Caption}"
+                                   VerticalAlignment="Center" TextWrapping="Wrap" />
+                        <Button x:Name="BtnHandleCopy" Grid.Column="1" Content="Copy output"
+                                Style="{StaticResource ToolButton}" Margin="14,0,0,0"
+                                AutomationProperties.Name="Copy handle output to clipboard"
+                                Click="HandleTraceCopy_Click" />
+                        <Button Grid.Column="2" Content="Close" Style="{StaticResource ToolButton}" Margin="8,0,0,0"
+                                Click="HandleTraceClose_Click" />
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- Live tail of a text file written by the selected process. -->
+        <Grid x:Name="FileTailOverlay" Grid.RowSpan="2" Panel.ZIndex="1330"
+              Background="#E815181B" Visibility="Collapsed"
+              PreviewKeyDown="FileTailOverlay_PreviewKeyDown" Focusable="True">
+            <Border Width="1000" Margin="34" VerticalAlignment="Stretch"
+                    Background="#1E2228" BorderBrush="#3A414A" BorderThickness="1"
+                    CornerRadius="14">
+                <Border.Effect>
+                    <DropShadowEffect Color="#000000" BlurRadius="30" ShadowDepth="10" Opacity="0.65" />
+                </Border.Effect>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Margin="22,18,16,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Border Width="44" Height="44" CornerRadius="12" Background="#1F3A33">
+                            <TextBlock Text="&#xE890;" FontFamily="Segoe MDL2 Assets" FontSize="20"
+                                       Foreground="#6FD8A8" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="13,0,0,0" VerticalAlignment="Center">
+                            <TextBlock x:Name="FileTailTitle" FontSize="19" FontWeight="SemiBold"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock x:Name="FileTailPath" Style="{StaticResource Caption}"
+                                       TextTrimming="CharacterEllipsis" Margin="0,3,0,0" />
+                        </StackPanel>
+                        <Button Grid.Column="2" Style="{StaticResource DismissButton}" Width="30" Height="30"
+                                FontSize="14" Content="&#x2715;" ToolTip="Close"
+                                AutomationProperties.Name="Close live tail"
+                                Click="FileTailClose_Click" />
+                    </Grid>
+
+                    <Border Grid.Row="1" Margin="22,0,22,0" CornerRadius="8" Background="#101316"
+                            BorderBrush="#2C333C" BorderThickness="1" ClipToBounds="True">
+                        <TextBox x:Name="FileTailOutput" Style="{StaticResource ConsoleText}" />
+                    </Border>
+
+                    <Grid Grid.Row="2" Margin="22,12,22,18">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="FileTailStatus" Style="{StaticResource Caption}"
+                                   VerticalAlignment="Center" TextWrapping="Wrap" />
+                        <CheckBox x:Name="ChkFileTailFollow" Grid.Column="1" IsChecked="True" Margin="14,0,10,0"
+                                  VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}"
+                                  Content="Follow" ToolTip="Keep scrolling to the newest line" />
+                        <Button x:Name="BtnFileTailPause" Grid.Column="2" Content="Pause"
+                                Style="{StaticResource ToolButton}" Margin="0,0,8,0"
+                                AutomationProperties.Name="Pause or resume the live tail"
+                                Click="FileTailPause_Click" />
+                        <Button Grid.Column="3" Content="Close" Style="{StaticResource ToolButton}"
+                                Click="FileTailClose_Click" />
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- Delete confirmation and its outcome, including lock diagnosis. -->
+        <Grid x:Name="FileDeleteOverlay" Grid.RowSpan="2" Panel.ZIndex="1340"
+              Background="#E815181B" Visibility="Collapsed"
+              PreviewKeyDown="FileDeleteOverlay_PreviewKeyDown" Focusable="True">
+            <Border Width="640" Margin="28" VerticalAlignment="Center"
+                    Background="#1E2228" BorderBrush="#3A414A" BorderThickness="1"
+                    CornerRadius="14" Padding="24">
+                <Border.Effect>
+                    <DropShadowEffect Color="#000000" BlurRadius="30" ShadowDepth="10" Opacity="0.65" />
+                </Border.Effect>
+                <StackPanel>
+                    <Grid Margin="0,0,0,14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Width="40" Height="40" CornerRadius="11" Background="#4A2226"
+                                VerticalAlignment="Top">
+                            <TextBlock x:Name="FileDeleteIcon" Text="&#xE74D;" FontFamily="Segoe MDL2 Assets"
+                                       FontSize="18" Foreground="#FF8A80"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="13,0,0,0">
+                            <TextBlock x:Name="FileDeleteTitle" FontSize="19" FontWeight="SemiBold"
+                                       TextWrapping="Wrap" />
+                            <TextBlock x:Name="FileDeleteMessage" Style="{StaticResource Caption}"
+                                       TextWrapping="Wrap" Margin="0,5,0,0" />
+                        </StackPanel>
+                    </Grid>
+
+                    <Border Background="#15181B" CornerRadius="8" Padding="12">
+                        <TextBlock x:Name="FileDeletePath" TextWrapping="Wrap" FontSize="11.5"
+                                   FontFamily="Cascadia Mono, Consolas, Courier New"
+                                   Foreground="{StaticResource TextSecondary}" />
+                    </Border>
+
+                    <Border x:Name="FileDeleteLockBorder" Background="#232B38" CornerRadius="8" Padding="12"
+                            Margin="0,12,0,0" Visibility="Collapsed">
+                        <StackPanel>
+                            <TextBlock x:Name="FileDeleteLockTitle" FontWeight="SemiBold" FontSize="12"
+                                       Margin="0,0,0,6" TextWrapping="Wrap" />
+                            <ItemsControl x:Name="FileDeleteLockList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                            <TextBlock Text="{Binding ProcessName}" FontWeight="SemiBold"
+                                                       VerticalAlignment="Center" />
+                                            <Border Background="#15181B" CornerRadius="4" Padding="6,1"
+                                                    Margin="8,0,0,0" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding PidText}" FontSize="10.5"
+                                                           Foreground="{StaticResource TextSecondary}" />
+                                            </Border>
+                                            <TextBlock Text="{Binding Detail}" Style="{StaticResource Caption}"
+                                                       Margin="8,0,0,0" VerticalAlignment="Center"
+                                                       TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
+                    <WrapPanel HorizontalAlignment="Right" Margin="0,20,0,0">
+                        <Button x:Name="BtnFileDeleteDiagnose" Content="Find what is locking it"
+                                Style="{StaticResource ToolButton}" Margin="0,0,8,0" Visibility="Collapsed"
+                                AutomationProperties.Name="Find which process is locking this file"
+                                Click="FileDeleteDiagnose_Click" />
+                        <Button x:Name="BtnFileDeleteCancel" Content="Cancel" Style="{StaticResource ToolButton}"
+                                Margin="0,0,8,0" Click="FileDeleteCancel_Click" />
+                        <Button x:Name="BtnFileDeleteConfirm" Content="Delete file"
+                                Style="{StaticResource ToolButton}"
+                                AutomationProperties.Name="Confirm deleting this file"
+                                Click="FileDeleteConfirm_Click" />
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- Database growth warning with an offline compaction offer. -->
+        <Grid x:Name="DatabaseSizeOverlay" Grid.RowSpan="2" Panel.ZIndex="1310"
+              Background="#E815181B" Visibility="Collapsed"
+              PreviewKeyDown="DatabaseSizeOverlay_PreviewKeyDown" Focusable="True">
+            <Border Width="640" Margin="28" VerticalAlignment="Center"
+                    Background="#1E2228" BorderBrush="#3A414A" BorderThickness="1"
+                    CornerRadius="14" Padding="24">
+                <Border.Effect>
+                    <DropShadowEffect Color="#000000" BlurRadius="30" ShadowDepth="10" Opacity="0.65" />
+                </Border.Effect>
+                <StackPanel>
+                    <Grid Margin="0,0,0,14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Width="40" Height="40" CornerRadius="11" Background="#4A3A1E"
+                                VerticalAlignment="Top">
+                            <TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" FontSize="18"
+                                       Foreground="#F0A020" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="13,0,0,0">
+                            <TextBlock x:Name="DatabaseSizeTitle" FontSize="19" FontWeight="SemiBold"
+                                       TextWrapping="Wrap" Text="The monitoring database is large" />
+                            <TextBlock x:Name="DatabaseSizeMessage" Style="{StaticResource Caption}"
+                                       TextWrapping="Wrap" Margin="0,5,0,0" />
+                        </StackPanel>
+                    </Grid>
+
+                    <Border Background="#15181B" CornerRadius="8" Padding="13">
+                        <TextBlock x:Name="DatabaseSizeDetail" TextWrapping="Wrap" FontSize="11.5"
+                                   Foreground="{StaticResource TextSecondary}" />
+                    </Border>
+
+                    <WrapPanel HorizontalAlignment="Right" Margin="0,20,0,0">
+                        <Button x:Name="BtnDatabaseSizeSettings" Content="Change threshold"
+                                Style="{StaticResource ToolButton}" Margin="0,0,8,0"
+                                Click="DatabaseSizeSettings_Click" />
+                        <Button x:Name="BtnDatabaseSizeLater" Content="Not now" Style="{StaticResource ToolButton}"
+                                Margin="0,0,8,0" Click="DatabaseSizeClose_Click" />
+                        <Button x:Name="BtnDatabaseCompact" Content="Compact now"
+                                Style="{StaticResource ToolButton}"
+                                AutomationProperties.Name="Compact the monitoring database now"
+                                Click="DatabaseCompact_Click" />
+                    </WrapPanel>
+                </StackPanel>
             </Border>
         </Grid>
     </Grid>

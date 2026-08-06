@@ -16,6 +16,7 @@ using DiskActivityMonitor.Core.Ai;
 using DiskActivityMonitor.Core.Collection;
 using DiskActivityMonitor.Core.Configuration;
 using DiskActivityMonitor.Core.Data;
+using DiskActivityMonitor.Core.Files;
 using DiskActivityMonitor.Core.Models;
 using DiskActivityMonitor.Tray.Controls;
 using Microsoft.Web.WebView2.Core;
@@ -29,6 +30,7 @@ public partial class MainWindow : Window
     private readonly ConfigStore _config;
     private readonly UserSettingsStore _userSettings;
     private readonly DispatcherTimer _refreshTimer;
+    private readonly DispatcherTimer _liveDiskTimer;
     private bool _forceClose;
     private bool _helpInitialized;
     private Uri? _helpDocumentUri;
@@ -61,7 +63,26 @@ public partial class MainWindow : Window
 
     /// <summary>One file inside the per-process drill-down.</summary>
     private sealed record FileTargetRow(
-        string Path, string FileName, string KindLabel, string WriteText, double BarWidth, string Explanation);
+        string Path, string FileName, string KindLabel, string WriteText, double BarWidth, string Explanation)
+    {
+        /// <summary>False for extensions on the configured binary list, which cannot be tailed as text.</summary>
+        public bool CanTail { get; init; } = true;
+
+        public string TailToolTip => CanTail
+            ? "Live tail this file"
+            : "This file type is on the binary extensions list, so it cannot be tailed as text";
+
+        public string TailAutomationName => $"Live tail {FileName}";
+        public string CopyAutomationName => $"Copy full path for {FileName}";
+        public string TraceAutomationName => $"Find processes holding {FileName} open";
+        public string DeleteAutomationName => $"Delete {FileName}";
+    }
+
+    /// <summary>One horizontal bar in the dialog's file-type breakdown.</summary>
+    private sealed record FileTypeRow(string Label, string ValueText, double BarWidth, Brush Fill);
+
+    /// <summary>A process reported by Sysinternals Handle as holding an object open.</summary>
+    private sealed record HandleOwnerRow(string ProcessName, string PidText, string Detail);
     private sealed record AlertRow(
         string Title,
         string Message,
@@ -123,6 +144,8 @@ public partial class MainWindow : Window
     private TimeSpan _processWindow = TimeSpan.FromHours(24);
     private TimeSpan _throughputWindow = TimeSpan.FromHours(24);
     private IReadOnlyList<AlertRow> _alertRows = [];
+    private FrameworkElement? _fileTargetsHoverSource;
+    private FrameworkElement? _suppressedFileTargetsHoverSource;
 
     /// <summary>Editable view-model for one auto-suspend rule row.</summary>
     private sealed class SuspendRuleVm
@@ -180,6 +203,11 @@ public partial class MainWindow : Window
         _refreshTimer.Tick += (_, _) => RefreshAll();
         ApplyRefreshInterval();
         _refreshTimer.Start();
+
+        _liveDiskTimer = new DispatcherTimer();
+        _liveDiskTimer.Tick += (_, _) => RefreshLiveDiskActivity();
+        ApplyLiveDiskRefreshInterval();
+        _liveDiskTimer.Start();
     }
 
     /// <summary>Sets the auto-refresh timer interval from the configured dashboard refresh seconds.</summary>
@@ -187,6 +215,12 @@ public partial class MainWindow : Window
     {
         int secs = Math.Clamp(_config.Current.DashboardRefreshSeconds, 1, 600);
         _refreshTimer.Interval = TimeSpan.FromSeconds(secs);
+    }
+
+    private void ApplyLiveDiskRefreshInterval()
+    {
+        int seconds = Math.Clamp(_config.Current.SampleIntervalSeconds, 1, 60);
+        _liveDiskTimer.Interval = TimeSpan.FromSeconds(seconds);
     }
 
     // ----------------------------------------------------------- Window lifecycle
@@ -205,12 +239,15 @@ public partial class MainWindow : Window
 
     public void ForceClose()
     {
+        _refreshTimer.Stop();
+        _liveDiskTimer.Stop();
         _forceClose = true;
         Close();
     }
 
     protected override void OnClosing(CancelEventArgs e)
     {
+        CancelAppUpdateOperations();
         // Closing just hides the dashboard; the tray icon keeps the app alive.
         if (!_forceClose)
         {
@@ -260,11 +297,13 @@ public partial class MainWindow : Window
         if (disk is null) return;
 
         UpdateSummary(disk);
+        UpdateLiveDiskActivity(disk);
         UpdateChart(disk);
         UpdateThroughput(disk);
         UpdateProcesses();
         UpdateAlerts();
         RefreshSuspended();
+        CheckDatabaseSize();
     }
 
     // ----------------------------------------------------------- Compiled help
@@ -397,9 +436,16 @@ public partial class MainWindow : Window
     private void UpdateThroughput(DiskInfo disk)
     {
         var nowUtc = DateTime.UtcNow;
-        var perMinute = _repo.GetDiskMinuteTotals(disk.DiskId, nowUtc - _throughputWindow, nowUtc);
-        int totalMinutes = (int)Math.Round(_throughputWindow.TotalMinutes);
-        var stats = ThroughputStats.Compute(perMinute, totalMinutes);
+        var fromUtc = nowUtc - _throughputWindow;
+        var perMinute = _repo.GetDiskMinuteTotals(disk.DiskId, fromUtc, nowUtc);
+        MonitoringCoverage coverage = _repo.GetMonitoringCoverage(fromUtc, nowUtc);
+        var stats = ThroughputStats.Compute(perMinute, coverage.MonitoredMinutes);
+        double totalBytes = perMinute.Sum(value => (double)value);
+        var rates = MonitoringRateStats.Compute(
+            totalBytes,
+            coverage.MonitoredMinutes,
+            coverage.RequestedMinutes,
+            _config.Current.HighCoveragePercent);
 
         ThroughputAvg.Text = FormatMbps(stats.AverageMbps);
         ThroughputMedian.Text = FormatMbps(stats.MedianMbps);
@@ -412,6 +458,18 @@ public partial class MainWindow : Window
             new("Peak", stats.PeakMbps, Highlight: true),
         };
         ThroughputChart.SetData(bars, v => $"{FormatMbps(v)} MB/s");
+        ThroughputCoverageText.Text = FormatCoverageSummary(rates);
+    }
+
+    internal static string FormatCoverageSummary(MonitoringRateStats rates)
+    {
+        string coverage = $"Monitoring coverage: {rates.CoveragePercent:0.#}% ({rates.MonitoredMinutes:N0} of {rates.RequestedMinutes:N0} min).";
+        if (rates.MonitoredMinutes == 0)
+            return coverage + " No monitored throughput is available yet.";
+        if (!rates.HasHighCoverage)
+            return coverage + " Average and median are per monitored minute; calendar average is withheld.";
+        double calendarMbps = rates.CalendarBytesPerHour / 3600.0 / 1_000_000.0;
+        return coverage + $" Calendar average: {FormatMbps(calendarMbps)} MB/s.";
     }
 
     private static string FormatMbps(double mbps) => mbps switch
@@ -421,6 +479,51 @@ public partial class MainWindow : Window
         > 0 => mbps.ToString("0.##"),
         _ => "0",
     };
+
+    private void RefreshLiveDiskActivity()
+    {
+        var disk = SelectedDisk;
+        if (disk is not null) UpdateLiveDiskActivity(disk);
+    }
+
+    private void UpdateLiveDiskActivity(DiskInfo disk)
+    {
+        int retentionMinutes = Math.Clamp(_config.Current.LiveGraphRetentionMinutes, 1, 120);
+        IReadOnlyList<LiveDiskPoint> points = BuildLiveDiskPoints(
+            _repo.GetLiveDiskSamples(disk.DiskId, DateTime.UtcNow.AddMinutes(-retentionMinutes)),
+            maxPoints: 120);
+        LiveDiskActivityChart.SetData(points);
+        LiveDiskCaption.Text = $"Physical read/write throughput from the last {retentionMinutes:N0} min of granular collector samples";
+
+        if (points.Count == 0)
+        {
+            LiveDiskCurrent.Text = "Waiting for the collector's next granular sample.";
+            return;
+        }
+
+        LiveDiskPoint current = points[^1];
+        LiveDiskCurrent.Text = $"Now  Read {FormatMbps(current.ReadMbps)} MB/s   Write {FormatMbps(current.WriteMbps)} MB/s";
+    }
+
+    internal static IReadOnlyList<LiveDiskPoint> BuildLiveDiskPoints(
+        IReadOnlyList<LiveDiskSample> samples,
+        int maxPoints)
+    {
+        if (samples.Count == 0 || maxPoints <= 0) return [];
+
+        int stride = Math.Max(1, (int)Math.Ceiling(samples.Count / (double)maxPoints));
+        var points = new List<LiveDiskPoint>(Math.Min(samples.Count, maxPoints));
+        for (int start = 0; start < samples.Count; start += stride)
+        {
+            IReadOnlyList<LiveDiskSample> bucket = samples.Skip(start).Take(stride).ToList();
+            double elapsedSeconds = bucket.Sum(sample => Math.Max(1, sample.ElapsedMilliseconds)) / 1000.0;
+            points.Add(new LiveDiskPoint(
+                bucket[^1].TimestampUtc,
+                bucket.Sum(sample => Math.Max(0, sample.ReadBytes)) / elapsedSeconds / 1_000_000.0,
+                bucket.Sum(sample => Math.Max(0, sample.WriteBytes)) / elapsedSeconds / 1_000_000.0));
+        }
+        return points;
+    }
 
     private void UpdateSummary(DiskInfo disk)
     {
@@ -438,27 +541,25 @@ public partial class MainWindow : Window
         Week7Metric.Text = ByteFormat.Humanize(week7.Write);
         Week7AvgSub.Text = $"avg {ByteFormat.Humanize(week7.Write / 7.0)}/day";
 
-        UpdateEndurance(disk, nowUtc, week7.Write);
+        UpdateEndurance(disk, nowUtc);
     }
 
-    private void UpdateEndurance(DiskInfo disk, DateTime nowUtc, long week7Write)
+    private void UpdateEndurance(DiskInfo disk, DateTime nowUtc)
     {
         var cfg = _config.Current;
         var earliest = _repo.GetEarliestSample(disk.DiskId);
         double observedBytes = 0;
-        double daysMonitored = 0;
         if (earliest is not null)
-        {
             observedBytes = _repo.GetDiskTotals(disk.DiskId, earliest.Value, nowUtc).Write;
-            daysMonitored = Math.Max((nowUtc - earliest.Value).TotalDays, 1.0 / 24);
-        }
 
-        // Recent average write rate (trailing 7 days once we have them, else the whole history).
-        double avgPerDay = daysMonitored >= 7
-            ? week7Write / 7.0
-            : (daysMonitored > 0 ? observedBytes / daysMonitored : 0);
+        MonitoringRateStats recentRate = _repo.GetRecentDiskWriteRate(
+            disk.DiskId,
+            nowUtc,
+            cfg.HighCoveragePercent);
+        double avgPerDay = recentRate.MonitoredBytesPerHour * 24.0;
         double avgPerHour = avgPerDay / 24.0;
         double avgPerWeek = avgPerDay * 7.0;
+        bool canProject = recentRate.HasHighCoverage && avgPerDay > 0;
 
         double tbwLow = cfg.EffectiveTbw(disk.DiskId);
         double? tbwHigh = cfg.EffectiveTbwUpper(disk.DiskId);
@@ -478,8 +579,8 @@ public partial class MainWindow : Window
         double pctLow = tbwHighBytes > 0 ? consumedBytes / tbwHighBytes * 100.0 : pctHigh;
 
         // Years to reach TBW at the recent rate: a higher rating yields more years.
-        double yearsLow = avgPerDay > 0 ? Math.Max(tbwLowBytes - (lifeWritten ?? 0), tbwLowBytes * 0.001) / (avgPerDay * 365.0) : double.NaN;
-        double yearsHigh = avgPerDay > 0 ? Math.Max(tbwHighBytes - (lifeWritten ?? 0), tbwHighBytes * 0.001) / (avgPerDay * 365.0) : double.NaN;
+        double yearsLow = canProject ? Math.Max(tbwLowBytes - (lifeWritten ?? 0), tbwLowBytes * 0.001) / (avgPerDay * 365.0) : double.NaN;
+        double yearsHigh = canProject ? Math.Max(tbwHighBytes - (lifeWritten ?? 0), tbwHighBytes * 0.001) / (avgPerDay * 365.0) : double.NaN;
         string yearsText;
         if (double.IsNaN(yearsLow)) yearsText = "-";
         else if (!ranged) yearsText = $"{FormatYearsShort(yearsLow)} yrs";
@@ -495,7 +596,9 @@ public partial class MainWindow : Window
         else
         {
             WearMetric.Text = "-";
-            WearSub.Text = $"Using {tbwBasisLabel}. Collecting data to project lifespan.";
+            WearSub.Text = recentRate.MonitoredMinutes == 0
+                ? $"Using {tbwBasisLabel}. Collecting data to project lifespan."
+                : $"Projection withheld at {recentRate.CoveragePercent:0.#}% monitoring coverage (requires {cfg.HighCoveragePercent:0.#}%).";
         }
 
         // Endurance panel.
@@ -558,7 +661,9 @@ public partial class MainWindow : Window
         else
         {
             EnduranceProjValue.Text = "-";
-            EnduranceProjSub.Text = "collecting data to project a lifespan";
+            EnduranceProjSub.Text = recentRate.MonitoredMinutes == 0
+                ? "collecting data to project a lifespan"
+                : $"withheld at {recentRate.CoveragePercent:0.#}% coverage; requires {cfg.HighCoveragePercent:0.#}%";
         }
 
         // Averages.
@@ -576,7 +681,7 @@ public partial class MainWindow : Window
         }
         string sinceLine = earliest is null
             ? "No history recorded yet."
-            : $"Recorded by this app since {LocalTimeDisplay.FormatUtcWithZone(earliest.Value, "MMM d")}: {ByteFormat.Humanize(observedBytes)} written.";
+            : $"Recorded by this app since {LocalTimeDisplay.FormatUtcWithZone(earliest.Value, "MMM d")}: {ByteFormat.Humanize(observedBytes)} written. Recent monitoring coverage: {recentRate.CoveragePercent:0.#}%; averages are per monitored time.";
         EnduranceConsumedText.Text = lifeLine + sinceLine;
     }
 
@@ -640,16 +745,32 @@ public partial class MainWindow : Window
 
     private void ProcessRow_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
-        ShowFileTargetsFromElement(sender);
+        if ((sender as FrameworkElement)?.DataContext is ProcessRow row)
+            ShowFileTargets(row.Name);
     }
 
     private void ProcessBar_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
-        => ShowFileTargetsFromElement(sender);
-
-    private void ShowFileTargetsFromElement(object sender)
     {
-        if ((sender as FrameworkElement)?.DataContext is ProcessRow row)
-            ShowFileTargets(row.Name);
+        if (sender is not FrameworkElement element
+            || ReferenceEquals(element, _suppressedFileTargetsHoverSource)
+            || element.DataContext is not ProcessRow row)
+        {
+            return;
+        }
+
+        _fileTargetsHoverSource = element;
+        ShowFileTargets(row.Name);
+    }
+
+    private void ProcessBar_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (sender is not FrameworkElement element || FileTargetsOverlay.Visibility == Visibility.Visible)
+            return;
+
+        if (ReferenceEquals(element, _suppressedFileTargetsHoverSource))
+            _suppressedFileTargetsHoverSource = null;
+        if (ReferenceEquals(element, _fileTargetsHoverSource))
+            _fileTargetsHoverSource = null;
     }
 
     /// <summary>
@@ -662,6 +783,10 @@ public partial class MainWindow : Window
         var endUtc = new DateTime(nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, nowUtc.Minute, 0, DateTimeKind.Utc);
         var startUtc = endUtc - _processWindow;
 
+        _fileTargetsProcess = processName;
+        _fileTargetsWindowStartUtc = startUtc;
+        _fileTargetsWindowEndUtc = endUtc;
+
         var targets = _repo.GetTopFileTargets(processName, startUtc, endUtc, topN: 20);
         long processWrite = _repo.GetProcessWrite(processName, startUtc, endUtc);
         long attributed = _repo.GetFileTargetWriteTotal(processName, startUtc, endUtc);
@@ -673,6 +798,7 @@ public partial class MainWindow : Window
         FileTargetsNote.Text = note ?? "";
         FileTargetsNoteBorder.Visibility = note is null ? Visibility.Collapsed : Visibility.Visible;
 
+        var binaryPolicy = new BinaryExtensionPolicy(_config.Current.BinaryExtensions);
         const double barArea = 660;
         double max = targets.Count > 0 ? Math.Max(1, targets.Max(t => t.WriteBytes)) : 1;
         FileTargetsList.ItemsSource = targets
@@ -682,12 +808,17 @@ public partial class MainWindow : Window
                 FileTargetNormalizer.Label(t.Kind),
                 ByteFormat.Humanize(t.WriteBytes),
                 Math.Max(2, t.WriteBytes / max * barArea),
-                FileTargetNormalizer.ExplainTarget(t.Path, t.Kind)))
+                FileTargetNormalizer.ExplainTarget(t.Path, t.Kind))
+            {
+                CanTail = !binaryPolicy.IsBinary(t.Path),
+            })
             .ToList();
 
         FileTargetsEmpty.Text = FileTargetsEmptyText(_config.Current.TrackFileTargets);
         FileTargetsEmpty.Visibility = targets.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         FileTargetsFooter.Text = FileTargetsCoverage(processWrite, attributed, _config.Current.FileTargetRetentionDays);
+
+        UpdateFileTargetsAnalytics(processName, startUtc, endUtc, processWrite);
 
         FileTargetsOverlay.Visibility = Visibility.Visible;
         FileTargetsOverlay.Focus();
@@ -719,14 +850,23 @@ public partial class MainWindow : Window
     }
 
     internal void FileTargetsClose_Click(object sender, RoutedEventArgs e)
-        => FileTargetsOverlay.Visibility = Visibility.Collapsed;
+        => CloseFileTargets();
 
     private void FileTargetsOverlay_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
-        if (e.Key != System.Windows.Input.Key.Escape) return;
+        if (e.Key is not (System.Windows.Input.Key.Escape or System.Windows.Input.Key.Enter)) return;
         e.Handled = true;
+        CloseFileTargets();
+    }
+
+    internal void CloseFileTargets()
+    {
+        _suppressedFileTargetsHoverSource = _fileTargetsHoverSource;
         FileTargetsOverlay.Visibility = Visibility.Collapsed;
     }
+
+    internal bool IsFileTargetsHoverSuppressed(FrameworkElement element)
+        => ReferenceEquals(element, _suppressedFileTargetsHoverSource);
 
     internal void UpdateAlerts()
     {
@@ -1024,9 +1164,19 @@ public partial class MainWindow : Window
         TxtControllerCritical.Text = cfg.ControllerErrorCriticalCount.ToString(CultureInfo.InvariantCulture);
         TxtInterval.Text = cfg.SampleIntervalSeconds.ToString(CultureInfo.InvariantCulture);
         TxtRefresh.Text = cfg.DashboardRefreshSeconds.ToString(CultureInfo.InvariantCulture);
+        TxtLiveGraphRetention.Text = cfg.LiveGraphRetentionMinutes.ToString(CultureInfo.InvariantCulture);
         TxtEnduranceWarnYears.Text = cfg.TbwProjectionWarnYears.ToString(CultureInfo.InvariantCulture);
+        TxtHighCoveragePercent.Text = cfg.HighCoveragePercent.ToString(CultureInfo.InvariantCulture);
         ChkControllerErrors.IsChecked = cfg.EnableControllerErrorAlerts;
         ChkNotify.IsChecked = userSettings.EnableNotifications;
+        TxtDatabaseSizeWarnGb.Text = cfg.DatabaseSizeWarnGb.ToString(CultureInfo.InvariantCulture);
+        TxtDatabaseSizeCooldown.Text = cfg.DatabaseSizeAlertCooldownHours.ToString(CultureInfo.InvariantCulture);
+        TxtBinaryExtensions.Text = cfg.BinaryExtensions;
+        TxtTailInitialLines.Text = cfg.TailInitialLines.ToString(CultureInfo.InvariantCulture);
+        TxtTailMaxLines.Text = cfg.TailMaxLines.ToString(CultureInfo.InvariantCulture);
+        TxtTailMaxReadKb.Text = cfg.TailMaxReadKb.ToString(CultureInfo.InvariantCulture);
+        TxtTailMaxBufferKb.Text = cfg.TailMaxBufferKb.ToString(CultureInfo.InvariantCulture);
+        UpdateDatabaseSizeCaption();
 
         ChkTrackFileTargets.IsChecked = cfg.TrackFileTargets;
         TxtFileTargetsPerProcess.Text = cfg.FileTargetsPerProcessPerMinute.ToString(CultureInfo.InvariantCulture);
@@ -1043,6 +1193,7 @@ public partial class MainWindow : Window
         TxtGoogleKey.Text = secrets.GoogleApiKey ?? "";
         TxtGoogleCx.Text = secrets.GoogleCseId ?? "";
         TxtSerperKey.Password = secrets.SerperApiKey ?? "";
+        LoadAppUpdateSettings(userSettings);
 
         LoadTbwField();
     }
@@ -1158,6 +1309,21 @@ public partial class MainWindow : Window
         if (lookupMethod == TbwLookupMethod.SerperOnly)
             webSearchProvider = "serper";
 
+        if (!TryParseHighCoveragePercent(TxtHighCoveragePercent.Text, out double highCoveragePercent))
+        {
+            SaveStatus.Text = "High monitoring coverage must be between 1 and 100%.";
+            return;
+        }
+
+        var appUpdateMode = SelectedAppUpdateMode();
+        if (!TryParseMaximumInstallerSize(TxtMaxInstallerSizeMb.Text, out int maxInstallerSizeMb))
+        {
+            SaveStatus.Text = "Maximum installer size must be greater than 0 MB.";
+            return;
+        }
+        bool requestAutomaticUpdateCheck = appUpdateMode == Core.Updates.AppUpdateCheckMode.Automatic
+            && _userSettings.Current.AppUpdateCheckMode != Core.Updates.AppUpdateCheckMode.Automatic;
+
         double? tbwLower = null;
         double? tbwUpper = null;
         bool useTbwRange = RadTbwRange.IsChecked == true;
@@ -1201,7 +1367,9 @@ public partial class MainWindow : Window
                 cfg.ControllerErrorCriticalCount = Math.Max(cfg.ControllerErrorWarnCount, cfg.ControllerErrorCriticalCount);
             cfg.SampleIntervalSeconds = (int)Math.Clamp(ParseOr(TxtInterval.Text, cfg.SampleIntervalSeconds), 1, 60);
             cfg.DashboardRefreshSeconds = (int)Math.Clamp(ParseOr(TxtRefresh.Text, cfg.DashboardRefreshSeconds), 1, 600);
+            cfg.LiveGraphRetentionMinutes = (int)Math.Clamp(ParseOr(TxtLiveGraphRetention.Text, cfg.LiveGraphRetentionMinutes), 1, 120);
             cfg.TbwProjectionWarnYears = ParseOr(TxtEnduranceWarnYears.Text, cfg.TbwProjectionWarnYears);
+            cfg.HighCoveragePercent = highCoveragePercent;
             cfg.EnableControllerErrorAlerts = ChkControllerErrors.IsChecked == true;
 
             cfg.TrackFileTargets = ChkTrackFileTargets.IsChecked == true;
@@ -1209,6 +1377,15 @@ public partial class MainWindow : Window
             cfg.FileTargetMinKbPerMinute = ParseOr(TxtFileTargetMinKb.Text, cfg.FileTargetMinKbPerMinute);
             cfg.FileTargetRetentionDays = (int)Math.Clamp(ParseOr(TxtFileTargetRetention.Text, cfg.FileTargetRetentionDays), 1, 365);
             cfg.FileTargetTrackingLimit = (int)Math.Clamp(ParseOr(TxtFileTargetTrackingLimit.Text, cfg.FileTargetTrackingLimit), 100, 500000);
+
+            // 0 GB disables the size warning; the upper bound keeps the threshold meaningful.
+            cfg.DatabaseSizeWarnGb = Math.Clamp(ParseOr(TxtDatabaseSizeWarnGb.Text, cfg.DatabaseSizeWarnGb), 0, 4096);
+            cfg.DatabaseSizeAlertCooldownHours = (int)Math.Clamp(ParseOr(TxtDatabaseSizeCooldown.Text, cfg.DatabaseSizeAlertCooldownHours), 1, 720);
+            cfg.BinaryExtensions = NormalizeExtensionList(TxtBinaryExtensions.Text, cfg.BinaryExtensions);
+            cfg.TailInitialLines = (int)Math.Clamp(ParseOr(TxtTailInitialLines.Text, cfg.TailInitialLines), 10, 20000);
+            cfg.TailMaxLines = (int)Math.Clamp(ParseOr(TxtTailMaxLines.Text, cfg.TailMaxLines), 100, 200000);
+            cfg.TailMaxReadKb = (int)Math.Clamp(ParseOr(TxtTailMaxReadKb.Text, cfg.TailMaxReadKb), 64, 16384);
+            cfg.TailMaxBufferKb = (int)Math.Clamp(ParseOr(TxtTailMaxBufferKb.Text, cfg.TailMaxBufferKb), 128, 32768);
 
             if (disk is null)
                 return;
@@ -1238,15 +1415,25 @@ public partial class MainWindow : Window
             settings.TbwLookupMethod = lookupMethod;
             if (webSearchProvider is not null)
                 settings.WebSearchProvider = webSearchProvider;
+            settings.AppUpdateCheckMode = appUpdateMode;
+            settings.MaxInstallerSizeMb = maxInstallerSizeMb;
         });
         SaveStatus.Text = "Saved \u2713";
+        if (requestAutomaticUpdateCheck)
+            AutomaticUpdateCheckRequested();
         ApplyRefreshInterval();
+        ApplyLiveDiskRefreshInterval();
         LoadSettingsFields();
         RefreshAll();
     }
 
     private static double ParseOr(string text, double fallback)
         => double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double v) && v >= 0 ? v : fallback;
+
+    internal static bool TryParseHighCoveragePercent(string text, out double value)
+        => double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+            && double.IsFinite(value)
+            && value is >= 1 and <= 100;
 
     // ----------------------------------------------------------- Auto-suspend rules
 
@@ -1850,26 +2037,40 @@ public partial class MainWindow : Window
                 return;
 
             var progress = new Progress<TbwLookupProgress>(p =>
-            {
-                TbwLookupStatus.Text = p.Stage switch
-                {
-                    TbwLookupStage.Searching => SetTbwLookupProgress(
-                        "Searching web evidence",
-                        $"Searching Serper for \u201C{model}\u201D endurance specifications\u2026"),
-                    TbwLookupStage.Analyzing => SetTbwLookupProgress(
-                        serperOnly ? "Parsing explicit TBW evidence" : "Verifying with the local model",
-                        serperOnly
-                            ? "Accepting only capacity-matched TBW values explicitly present in Serper titles and snippets\u2026"
-                            : "Reading the search evidence with the on-device model and rejecting unsupported values\u2026"),
-                    _ => TbwLookupStatus.Text,
-                };
-            });
+                DispatchTbwLookupProgress(p, serperOnly, model));
 
             var result = await svc.LookupAsync(model, force, progress, ct);
             if (ct.IsCancellationRequested) return;
             RenderTbwResult(disk, result);
         }
         catch (OperationCanceledException) { /* superseded by a newer selection */ }
+    }
+
+    internal void DispatchTbwLookupProgress(TbwLookupProgress progress, bool serperOnly, string model)
+    {
+        void UpdateProgress() => UpdateTbwLookupProgress(progress.Stage, serperOnly, model);
+
+        if (Dispatcher.CheckAccess())
+            UpdateProgress();
+        else
+            Dispatcher.BeginInvoke(UpdateProgress);
+    }
+
+    internal string UpdateTbwLookupProgress(TbwLookupStage stage, bool serperOnly, string model)
+    {
+        TbwLookupStatus.Text = stage switch
+        {
+            TbwLookupStage.Searching => SetTbwLookupProgress(
+                "Searching web evidence",
+                $"Searching Serper for \u201C{model}\u201D endurance specifications\u2026"),
+            TbwLookupStage.Analyzing => SetTbwLookupProgress(
+                serperOnly ? "Parsing explicit TBW evidence" : "Verifying with the local model",
+                serperOnly
+                    ? "Accepting only capacity-matched TBW values explicitly present in Serper titles and snippets\u2026"
+                    : "Reading the search evidence with the on-device model and rejecting unsupported values\u2026"),
+            _ => TbwLookupStatus.Text,
+        };
+        return TbwLookupStatus.Text;
     }
 
     internal bool HandleTbwReadiness(TbwReadiness readiness)

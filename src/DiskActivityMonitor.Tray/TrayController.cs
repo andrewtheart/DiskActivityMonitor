@@ -8,6 +8,7 @@ using DiskActivityMonitor.Core.Collection;
 using DiskActivityMonitor.Core.Configuration;
 using DiskActivityMonitor.Core.Data;
 using DiskActivityMonitor.Core.Models;
+using DiskActivityMonitor.Core.Updates;
 using Microsoft.Toolkit.Uwp.Notifications;
 
 namespace DiskActivityMonitor.Tray;
@@ -33,7 +34,17 @@ internal sealed class TrayController : IDisposable
     private Icon? _currentIcon;
     private readonly DispatcherTimer _toastTimer;
     private readonly Queue<AlertRecord> _toastQueue = new();
+    internal Action<ToastContentBuilder> ToastPresenter { get; set; }
+    internal Action<int, string, string, ToolTipIcon> BalloonPresenter { get; set; }
+    internal Action<string, Exception> ToastErrorLogger { get; set; } = LogToastError;
     internal Action TbwSetupPresenter { get; set; }
+    internal Action StartupPromptsRunner { get; set; }
+    internal Action DashboardPresenter { get; set; }
+    internal Action DataFolderPresenter { get; set; }
+    internal Action ExitRequester { get; set; }
+    internal Func<string, CancellationToken, Task<AppUpdateCheckResult?>> AppUpdateCheck { get; set; } =
+        (version, cancellationToken) => AppUpdateChecker.CheckLatestAsync(version, cancellationToken: cancellationToken);
+    internal Action<AppUpdateCheckResult, AppReleaseInfo> AppUpdateAvailablePresenter { get; set; }
 
     /// <summary>Alerts are treated as timestamped events shown once; the icon color and the
     /// dashboard log reflect only alerts raised within this trailing window, then auto-clear.</summary>
@@ -51,11 +62,24 @@ internal sealed class TrayController : IDisposable
         // on-screen balloon when a new one is shown).
         _toastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(6) };
         _toastTimer.Tick += (_, _) => DrainToastQueue();
+        ToastPresenter = typeof(ToastContentBuilder)
+            .GetMethod(nameof(ToastContentBuilder.Show), Type.EmptyTypes)!
+            .CreateDelegate<Action<ToastContentBuilder>>();
+        BalloonPresenter = _notifyIcon.ShowBalloonTip;
         TbwSetupPresenter = () =>
         {
             ShowDashboard();
             _window!.ShowTbwOnlineSetup();
         };
+        AppUpdateAvailablePresenter = (check, release) =>
+        {
+            ShowDashboard();
+            _window!.ShowAppUpdateRelease(check, release);
+        };
+        StartupPromptsRunner = RunStartupPrompts;
+        DashboardPresenter = ShowDashboard;
+        DataFolderPresenter = OpenDataFolder;
+        ExitRequester = () => System.Windows.Application.Current.Shutdown();
     }
 
     public void Initialize()
@@ -63,13 +87,13 @@ internal sealed class TrayController : IDisposable
         SetIcon(TrayIconFactory.Ok, AlertSeverity.Info);
         _notifyIcon.Visible = true;
         _notifyIcon.Text = "Disk Activity Monitor";
-        _notifyIcon.DoubleClick += (_, _) => ShowDashboard();
+        _notifyIcon.DoubleClick += OnOpenDashboard;
 
         _trayMenu = new DarkTrayContextMenu();
-        _trayMenu.AddCommand("Open dashboard", (_, _) => ShowDashboard());
-        _trayMenu.AddCommand("Open data folder", (_, _) => OpenDataFolder());
+        _trayMenu.AddCommand("Open dashboard", OnOpenDashboard);
+        _trayMenu.AddCommand("Open data folder", OnOpenDataFolder);
         _trayMenu.AddDivider();
-        _trayMenu.AddCommand("Exit", (_, _) => System.Windows.Application.Current.Shutdown());
+        _trayMenu.AddCommand("Exit", OnExitRequested);
         _notifyIcon.ContextMenuStrip = _trayMenu;
 
         // Suppress balloons for alerts that already existed when the app launched.
@@ -78,7 +102,30 @@ internal sealed class TrayController : IDisposable
         SafeUpdate();
         _timer.Start();
 
+        StartupPromptsRunner();
+    }
+
+    internal void OnOpenDashboard(object? sender, EventArgs e)
+        => DashboardPresenter();
+
+    internal void OnOpenDataFolder(object? sender, EventArgs e)
+        => DataFolderPresenter();
+
+    internal void OnExitRequested(object? sender, EventArgs e)
+        => ExitRequester();
+
+    internal void RunStartupPrompts()
+    {
         PromptTbwOnlineSetupIfNeeded();
+        if (MainWindow.ShouldPromptAppUpdateConsent(_userSettings.Current))
+        {
+            ShowDashboard();
+            _window!.ShowAppUpdateConsent();
+        }
+        else
+        {
+            _ = MaybeRunAutomaticAppUpdateCheckAsync();
+        }
     }
 
     internal bool PromptTbwOnlineSetupIfNeeded()
@@ -87,6 +134,40 @@ internal sealed class TrayController : IDisposable
             return false;
         TbwSetupPresenter();
         return true;
+    }
+
+    internal async Task<AppUpdateCheckResult?> MaybeRunAutomaticAppUpdateCheckAsync()
+    {
+        UserSettings settings = _userSettings.Current;
+        if (settings.AppUpdateCheckMode != AppUpdateCheckMode.Automatic
+            || !AppUpdateChecker.ShouldAutoCheck(
+                settings.LastAppUpdateCheckUtc,
+                DateTimeOffset.UtcNow,
+                AppUpdateChecker.DefaultAutoCheckInterval))
+        {
+            return null;
+        }
+
+        AppUpdateCheckResult? check;
+        try
+        {
+            check = await AppUpdateCheck(MainWindow.CurrentAppVersion(), CancellationToken.None);
+        }
+        catch
+        {
+            check = null;
+        }
+        _userSettings.Update(value => value.LastAppUpdateCheckUtc = DateTimeOffset.UtcNow);
+
+        if (check?.UpdateAvailable == true && check.Release is { } release
+            && !string.Equals(
+                release.Version.ToString(),
+                _userSettings.Current.LastAppUpdateAlertedVersion,
+                StringComparison.Ordinal))
+        {
+            AppUpdateAvailablePresenter(check, release);
+        }
+        return check;
     }
 
     private void SafeUpdate()
@@ -196,27 +277,24 @@ internal sealed class TrayController : IDisposable
     /// each with its own duration picker - while other alerts are informational only.
     /// Falls back to a legacy balloon if toasts are unavailable.
     /// </summary>
-    private void ShowAlertToast(AlertRecord a)
+    internal void ShowAlertToast(AlertRecord a)
     {
+        var text = FormatAlertToastText(a, GetAlertWriteWindows(a));
         try
         {
-            const string procPrefix = "proc-1h:";
-            string? process = a.RuleKey.StartsWith(procPrefix, StringComparison.Ordinal)
-                ? a.RuleKey[procPrefix.Length..]
-                : null;
-            string? topFiles = process is null ? null : GetTopWrittenFilesText(process, a.TimestampUtc);
             var builder = new ToastContentBuilder()
-                .AddText(a.Title)
-                .AddText(a.Message)
+                .AddText(text.Title)
+                .AddText(text.Body)
                 .SetToastDuration(ToastDuration.Long);
-            if (topFiles is not null)
-                builder.AddText(topFiles);
 
             // Labelled duration picker shared by the snooze buttons below.
             builder.AddComboBox("snoozeDuration", "Snooze for", SnoozeOptions.DefaultId, SnoozeOptions.Choices);
 
-            if (process is not null)
+            const string procPrefix = "proc-1h:";
+            if (a.RuleKey.StartsWith(procPrefix, StringComparison.Ordinal))
             {
+                var process = a.RuleKey[procPrefix.Length..];
+
                 // Suspending is the strongest action offered here, so it gets its own interval
                 // picker; the app resumes the process automatically when that interval elapses.
                 builder.AddComboBox(
@@ -245,7 +323,7 @@ internal sealed class TrayController : IDisposable
                     .AddArgument("action", "dismiss")
                     .AddArgument("alertId", a.Id.ToString()));
 
-            builder.Show();
+            ToastPresenter(builder);
         }
         catch (Exception ex)
         {
@@ -259,18 +337,114 @@ internal sealed class TrayController : IDisposable
 
             var icon = a.Severity == AlertSeverity.Critical ? ToolTipIcon.Error : ToolTipIcon.Warning;
             if (!_notifyIcon.Visible) _notifyIcon.Visible = true;
-            string? process = a.RuleKey.StartsWith("proc-1h:", StringComparison.Ordinal)
-                ? a.RuleKey["proc-1h:".Length..]
-                : null;
-            string? topFiles = process is null ? null : GetTopWrittenFilesText(process, a.TimestampUtc);
-            _notifyIcon.ShowBalloonTip(8000, a.Title, AppendTopFiles(a.Message, topFiles), icon);
+            BalloonPresenter(8000, text.Title, text.Body, icon);
         }
     }
 
-    /// <summary>Asks the user (via a toast with a Suspend button) to confirm suspending a heavy writer.</summary>
-    private void ShowSuspendConfirmToast(AutoSuspendRule rule, long written)
+    internal readonly record struct WriteWindowStats(
+        long FiveMinutes,
+        long FifteenMinutes,
+        long ThirtyMinutes,
+        long TwentyFourHours);
+
+    internal WriteWindowStats GetAlertWriteWindows(AlertRecord alert)
     {
-        string? topFiles = GetTopWrittenFilesText(rule.ProcessName, DateTime.UtcNow);
+        if (alert.RuleKey.StartsWith("proc-1h:", StringComparison.Ordinal))
+        {
+            string process = alert.RuleKey["proc-1h:".Length..];
+            return GetWriteWindows(alert.TimestampUtc, (from, to) => _repo.GetProcessWrite(process, from, to));
+        }
+
+        if (alert.RuleKey == "procs-all-1h")
+            return GetWriteWindows(alert.TimestampUtc, _repo.GetAllProcessesWrite);
+
+        if (alert.RuleKey.StartsWith("ssd-1h:", StringComparison.Ordinal)
+            || alert.RuleKey.StartsWith("ssd-24h:", StringComparison.Ordinal))
+        {
+            string diskId = alert.RuleKey[(alert.RuleKey.IndexOf(':') + 1)..];
+            return GetWriteWindows(alert.TimestampUtc, (from, to) => _repo.GetDiskTotals(diskId, from, to).Write);
+        }
+
+        return default;
+    }
+
+    private WriteWindowStats GetProcessWriteWindows(string processName, DateTime nowUtc)
+        => GetWriteWindows(nowUtc, (from, to) => _repo.GetProcessWrite(processName, from, to));
+
+    internal static WriteWindowStats GetWriteWindows(
+        DateTime nowUtc,
+        Func<DateTime, DateTime, long> windowWrite)
+    {
+        var end = new DateTime(nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, nowUtc.Minute, 0, DateTimeKind.Utc);
+        return new WriteWindowStats(
+            windowWrite(end.AddMinutes(-5), end),
+            windowWrite(end.AddMinutes(-15), end),
+            windowWrite(end.AddMinutes(-30), end),
+            windowWrite(end.AddHours(-24), end));
+    }
+
+    internal static (string Title, string Body) FormatAlertToastText(AlertRecord alert, WriteWindowStats windows)
+    {
+        if (alert.RuleKey.StartsWith("proc-1h:", StringComparison.Ordinal))
+        {
+            string process = alert.RuleKey["proc-1h:".Length..];
+            return ($"High logical writes: {process}",
+                $"{FormatWriteWindows(windows)}. 1h limit: {ByteFormat.Humanize(alert.Threshold)}.");
+        }
+
+        if (alert.RuleKey == "procs-all-1h")
+            return ("High combined logical writes",
+                $"{FormatWriteWindows(windows)}. 1h limit: {ByteFormat.Humanize(alert.Threshold)}.");
+
+        if (alert.RuleKey.StartsWith("ssd-wear:", StringComparison.Ordinal))
+            return (alert.Title,
+                $"SMART endurance used: {alert.Value:0.#}% (warning {alert.Threshold:0.#}%). Back up data and plan replacement.");
+
+        if (alert.RuleKey.StartsWith("ssd-1h:", StringComparison.Ordinal))
+            return (alert.Title,
+                $"{FormatWriteWindows(windows)}. 1h limit: {ByteFormat.Humanize(alert.Threshold)}.");
+
+        if (alert.RuleKey.StartsWith("ssd-24h:", StringComparison.Ordinal))
+        {
+            string limit = alert.Severity == AlertSeverity.Critical ? "critical limit" : "limit";
+            return (alert.Title,
+                $"{FormatWriteWindows(windows)}. 24h {limit}: {ByteFormat.Humanize(alert.Threshold)}.");
+        }
+
+        if (alert.RuleKey.StartsWith("tbw-life:", StringComparison.Ordinal))
+            return (alert.Title,
+                $"Projected life: ~{FormatToastYears(alert.Value)} at the recent write rate.");
+
+        if (alert.RuleKey.StartsWith("disk-controller:", StringComparison.Ordinal))
+        {
+            string countWord = alert.Value == 1 ? "error" : "errors";
+            return (alert.Title,
+                $"Windows logged {alert.Value:0} Disk event 11 {countWord}. Back up data; check cable, port, power, enclosure, or controller.");
+        }
+
+        return (alert.Title, alert.Message);
+    }
+
+    private static string FormatWriteWindows(WriteWindowStats windows)
+        => $"5m: {ByteFormat.Humanize(windows.FiveMinutes)}, "
+            + $"15m: {ByteFormat.Humanize(windows.FifteenMinutes)}, "
+            + $"30m: {ByteFormat.Humanize(windows.ThirtyMinutes)}, "
+            + $"24h: {ByteFormat.Humanize(windows.TwentyFourHours)}";
+
+    internal static string FormatToastYears(double years)
+    {
+        if (!double.IsFinite(years) || years <= 0)
+            return "an unknown time";
+        if (years >= 1)
+            return $"{years:0.0} years";
+        int months = Math.Max(1, (int)Math.Round(years * 12));
+        return months == 1 ? "1 month" : $"{months} months";
+    }
+
+    /// <summary>Asks the user (via a toast with a Suspend button) to confirm suspending a heavy writer.</summary>
+    internal void ShowSuspendConfirmToast(AutoSuspendRule rule, long written)
+    {
+        var text = FormatSuspendConfirmationText(rule, GetProcessWriteWindows(rule.ProcessName, DateTime.UtcNow));
         try
         {
             var suspendButton = new ToastButton()
@@ -282,12 +456,9 @@ internal sealed class TrayController : IDisposable
                 suspendButton.AddArgument("path", rule.ExecutablePath);
 
             var builder = new ToastContentBuilder()
-                .AddText($"{rule.ProcessName} is requesting heavy file writes")
-                .AddText($"{rule.ProcessName} requested {ByteFormat.Humanize(written)} of logical file writes in the last hour (limit {rule.ThresholdGbPerHour:0.#} GB/h). Physical disk writes may be lower. Suspend it?")
-                .SetToastDuration(ToastDuration.Long);
-            if (topFiles is not null)
-                builder.AddText(topFiles);
-            builder
+                .AddText(text.Title)
+                .AddText(text.Body)
+                .SetToastDuration(ToastDuration.Long)
                 .AddComboBox(
                     "suspendDuration",
                     "Suspend for",
@@ -297,39 +468,38 @@ internal sealed class TrayController : IDisposable
                 .AddButton(new ToastButton()
                     .SetContent("Ignore")
                     .AddArgument("action", "suspend-ignore")
-                    .AddArgument("process", rule.ProcessName))
-                .Show();
+                    .AddArgument("process", rule.ProcessName));
+            ToastPresenter(builder);
         }
         catch (Exception ex)
         {
-            LogToastError($"suspend-confirm:{rule.ProcessName}", ex);
+            ToastErrorLogger($"suspend-confirm:{rule.ProcessName}", ex);
             if (!_notifyIcon.Visible) _notifyIcon.Visible = true;
-            _notifyIcon.ShowBalloonTip(8000, $"{rule.ProcessName} requesting heavy file writes",
-                AppendTopFiles($"Requested {ByteFormat.Humanize(written)} of logical file writes in the last hour. Open the dashboard to suspend it.", topFiles), ToolTipIcon.Warning);
+            BalloonPresenter(8000, text.Title, text.Body, ToolTipIcon.Warning);
         }
     }
 
+    internal static (string Title, string Body) FormatSuspendConfirmationText(
+        AutoSuspendRule rule,
+        WriteWindowStats windows)
+        => ($"High logical writes: {rule.ProcessName}",
+            $"{FormatWriteWindows(windows)}. 1h limit: {rule.ThresholdGbPerHour:0.#} GB. Suspend?");
+
     /// <summary>Notifies the user that an auto-suspend rule fired, offering a Resume button on success.</summary>
-    private void ShowAutoSuspendedToast(AutoSuspendRule rule, long written, ProcessControl.Result result)
+    internal void ShowAutoSuspendedToast(AutoSuspendRule rule, long written, ProcessControl.Result result)
     {
-        string? topFiles = GetTopWrittenFilesText(rule.ProcessName, DateTime.UtcNow);
         int minutes = _userSettings.Current.DefaultSuspendMinutes;
-        string until = minutes > 0
-            ? $" It resumes automatically in {minutes} minute(s)."
-            : " It stays suspended until you resume it.";
-        string body = result.Affected > 0
-            ? $"{rule.ProcessName} was suspended after requesting {ByteFormat.Humanize(written)} of logical file writes in the last hour (limit {rule.ThresholdGbPerHour:0.#} GB/h).{until}"
-            : result.AccessDenied
-                ? $"{rule.ProcessName} exceeded its write limit but could not be suspended (access denied - it may require elevation)."
-                : $"{rule.ProcessName} exceeded its write limit but is no longer running.";
+        var text = FormatAutoSuspendText(
+            rule,
+            GetProcessWriteWindows(rule.ProcessName, DateTime.UtcNow),
+            result,
+            minutes);
         try
         {
             var b = new ToastContentBuilder()
-                .AddText(result.Affected > 0 ? $"{rule.ProcessName} auto-suspended" : $"{rule.ProcessName} not suspended")
-                .AddText(body)
+                .AddText(text.Title)
+                .AddText(text.Body)
                 .SetToastDuration(ToastDuration.Long);
-            if (topFiles is not null)
-                b.AddText(topFiles);
             if (result.Affected > 0)
             {
                 var resumeButton = new ToastButton()
@@ -340,68 +510,57 @@ internal sealed class TrayController : IDisposable
                     resumeButton.AddArgument("path", rule.ExecutablePath);
                 b.AddButton(resumeButton);
             }
-            b.Show();
+            ToastPresenter(b);
         }
         catch (Exception ex)
         {
-            LogToastError($"auto-suspend:{rule.ProcessName}", ex);
+            ToastErrorLogger($"auto-suspend:{rule.ProcessName}", ex);
             if (!_notifyIcon.Visible) _notifyIcon.Visible = true;
-            _notifyIcon.ShowBalloonTip(8000, $"{rule.ProcessName} auto-suspended", AppendTopFiles(body, topFiles), ToolTipIcon.Warning);
+            BalloonPresenter(8000, text.Title, text.Body, ToolTipIcon.Warning);
         }
     }
 
-    private string? GetTopWrittenFilesText(string processName, DateTime endUtc)
+    internal static (string Title, string Body) FormatAutoSuspendText(
+        AutoSuspendRule rule,
+        WriteWindowStats windows,
+        ProcessControl.Result result,
+        int minutes)
     {
-        try
+        if (result.Affected > 0)
         {
-            return FormatTopWrittenFiles(
-                _repo.GetTopFileTargets(processName, endUtc.AddHours(-1), endUtc, topN: 3));
+            string resume = minutes > 0 ? $"Resumes in {minutes} min." : "Resume manually.";
+            return ($"{rule.ProcessName} suspended",
+                $"{FormatWriteWindows(windows)}. 1h limit: {rule.ThresholdGbPerHour:0.#} GB. {resume}");
         }
-        catch
-        {
-            return null;
-        }
-    }
 
-    internal static string? FormatTopWrittenFiles(IEnumerable<FileTargetRank> targets)
-    {
-        var files = targets
-            .Where(target => !string.Equals(
-                target.Path,
-                FileTargetNormalizer.OtherFilesPath,
-                StringComparison.Ordinal))
-            .Take(2)
-            .Select(target => $"{target.Path} ({ByteFormat.Humanize(target.WriteBytes)})")
-            .ToArray();
-        return files.Length == 0 ? null : $"Top written files: {string.Join("; ", files)}";
+        return result.AccessDenied
+            ? ($"Could not suspend {rule.ProcessName}", "Write limit exceeded; access denied. Elevation may be required.")
+            : ($"{rule.ProcessName} not suspended", "Write limit exceeded, but the process had exited.");
     }
-
-    private static string AppendTopFiles(string message, string? topFiles)
-        => topFiles is null ? message : $"{message}{Environment.NewLine}{topFiles}";
 
     /// <summary>Tells the user a suspension interval elapsed and the process is running again.</summary>
-    private void ShowResumedToast(ExpiredSuspension expired)
+    internal void ShowResumedToast(ExpiredSuspension expired)
     {
-        string title = expired.Result.Affected > 0
-            ? $"{expired.ProcessName} resumed"
-            : $"{expired.ProcessName} no longer suspended";
-        string body = expired.Result.Affected > 0
-            ? $"The suspension interval elapsed, so {expired.ProcessName} was resumed automatically."
-            : $"The suspension interval for {expired.ProcessName} elapsed. It is no longer running or was already resumed, so nothing was left to restore.";
+        var text = FormatResumeText(expired.ProcessName, expired.Result);
         try
         {
-            new ToastContentBuilder()
-                .AddText(title)
-                .AddText(body)
-                .Show();
+            var builder = new ToastContentBuilder()
+                .AddText(text.Title)
+                .AddText(text.Body);
+            ToastPresenter(builder);
         }
         catch (Exception ex)
         {
-            LogToastError($"auto-resume:{expired.ProcessName}", ex);
+            ToastErrorLogger($"auto-resume:{expired.ProcessName}", ex);
             if (!_notifyIcon.Visible) _notifyIcon.Visible = true;
-            _notifyIcon.ShowBalloonTip(8000, title, body, ToolTipIcon.Info);
+            BalloonPresenter(8000, text.Title, text.Body, ToolTipIcon.Info);
         }
     }
+
+    internal static (string Title, string Body) FormatResumeText(string processName, ProcessControl.Result result)
+        => result.Affected > 0
+            ? ($"{processName} resumed", "Suspension expired; process resumed automatically.")
+            : ($"{processName} no longer suspended", "Suspension expired; process exited or was already resumed.");
 
     private static void LogToastError(string context, Exception ex)
     {
@@ -436,7 +595,11 @@ internal sealed class TrayController : IDisposable
 
     private void ShowDashboard()
     {
-        _window ??= new MainWindow(_repo, _config, _userSettings);
+        if (_window is null)
+        {
+            _window = new MainWindow(_repo, _config, _userSettings);
+            _window.AutomaticUpdateCheckRequested = () => _ = MaybeRunAutomaticAppUpdateCheckAsync();
+        }
         _window.Icon = TrayIconFactory.CreateImageSource(_currentColor);
         _window.ShowAndActivate();
     }
