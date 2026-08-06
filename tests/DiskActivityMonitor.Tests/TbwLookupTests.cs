@@ -116,6 +116,55 @@ public class TbwLookupTests
         Assert.Empty(claims);
     }
 
+    [Fact]
+    public void ParseClaims_RejectsRatingAssociatedWithAnotherCapacityInSameResult()
+    {
+        var hits = new List<WebSearchHit>
+        {
+            new(
+                "Samsung 870 EVO capacities",
+                "https://example.com/870",
+                "The 500GB model is rated for 300 TBW, while the 1TB model is rated for 600 TBW."),
+        };
+
+        Assert.Empty(TbwLookupService.ParseClaims(
+            "[{\"tbw_tb\":300,\"source_index\":0}]",
+            hits,
+            "Samsung SSD 870 EVO 1TB"));
+        Assert.Equal(600, Assert.Single(TbwLookupService.ParseClaims(
+            "[{\"tbw_tb\":600,\"source_index\":0}]",
+            hits,
+            "Samsung SSD 870 EVO 1TB")).TbwTerabytes);
+    }
+
+    [Fact]
+    public void ParseClaims_RejectsMarketplaceListingsAndAcceptsBoundedTbwMaxForm()
+    {
+        var hits = new List<WebSearchHit>
+        {
+            new(
+                "Samsung SSD 870 EVO 1TB",
+                "https://www.aliexpress.com/item/870-evo.html",
+                "The Samsung 870 EVO 1TB delivers 300 TBW."),
+            new(
+                "Samsung 870 EVO 1TB experience",
+                "https://www.reddit.com/r/storage/comments/example",
+                "Samsung EVO 870 1TB (TBW max 600TB) failed after years of use."),
+        };
+
+        Assert.Empty(TbwLookupService.ParseClaims(
+            "[{\"tbw_tb\":300,\"source_index\":0}]",
+            hits,
+            "Samsung SSD 870 EVO 1TB"));
+        Assert.Equal(600, Assert.Single(TbwLookupService.ParseClaims(
+            "[{\"tbw_tb\":600,\"source_index\":1}]",
+            hits,
+            "Samsung SSD 870 EVO 1TB")).TbwTerabytes);
+        Assert.Equal(600, Assert.Single(TbwLookupService.ExtractExplicitClaims(
+            "Samsung SSD 870 EVO 1TB",
+            hits)).TbwTerabytes);
+    }
+
     [Theory]
     [InlineData("Crucial MX500 1TB is rated for 360TB (TBW).", 360)]
     [InlineData("TBW (Terabytes Written), 1200TB for the 2TB model.", 1200)]
@@ -217,8 +266,9 @@ public class TbwLookupTests
         var result = await service.LookupAsync("Samsung SSD 870 EVO 1TB", true,
             new Progress<TbwLookupProgress>(p => progress.Add(p.Stage)), CancellationToken.None);
 
-        Assert.Contains(result.Candidates, candidate => Math.Abs(candidate.TbwTerabytes - 600) <= 5);
-        Assert.DoesNotContain(result.Candidates, candidate => candidate.TbwTerabytes != 600);
+        string diagnostics = $"Search: {result.Diagnostics?.SearchResponseJson}\nModel: {result.Diagnostics?.ModelResponseJson}";
+        Assert.True(result.Candidates.Any(candidate => Math.Abs(candidate.TbwTerabytes - 600) <= 5), diagnostics);
+        Assert.True(result.Candidates.All(candidate => candidate.TbwTerabytes == 600), diagnostics);
     }
 
     [Fact]

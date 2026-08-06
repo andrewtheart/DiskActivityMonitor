@@ -282,13 +282,17 @@ public sealed class TbwLookupService
 
     private static bool SourceSupportsClaim(WebSearchHit hit, double tbw, string? driveModel)
     {
-        string evidence = $"{hit.Title} {hit.Snippet}".Replace(",", "", StringComparison.Ordinal);
+        if (IsMarketplaceSource(hit)) return false;
+
+        string evidence = NormalizeEvidence($"{hit.Title} {hit.Snippet}");
         string tbwNumber = Math.Round(tbw).ToString(System.Globalization.CultureInfo.InvariantCulture);
         string tbwPattern = $@"(?<!\d){Regex.Escape(tbwNumber)}(?:\.0+)?(?!\d)";
         const string enduranceUnit = @"(?:TBW|TB\s*(?:\(\s*TBW\s*\))?|terabytes?\s+written)";
+        const string reverseEndurancePrefix =
+            @"(?:TBW(?:\s*\(\s*terabytes?\s+written\s*\))?|terabytes?\s+written)\s*(?:max(?:imum)?|rated|endurance)?\s*[:=,-]?\s*";
         var match = Regex.Match(
             evidence,
-            $@"(?i)(?:{tbwPattern}\s*{enduranceUnit}|(?:TBW|terabytes?\s+written)[^\d]{{0,32}}{tbwPattern}\s*(?:TB)?)");
+            $@"(?i)(?:{tbwPattern}\s*{enduranceUnit}|{reverseEndurancePrefix}{tbwPattern}\s*(?:TB)?)");
 
         // A source may state the endurance in PB/PBW while the model correctly converts it to TBW.
         if (!match.Success && tbw >= 1000)
@@ -301,13 +305,79 @@ public sealed class TbwLookupService
 
         if (!match.Success) return false;
 
-        // If the requested model names a capacity (e.g. 2TB), require that capacity in the same
-        // search result. This rejects family-level snippets that quote another capacity's rating.
-        var capacity = Regex.Match(driveModel ?? "", @"(?i)(?<value>\d+(?:\.\d+)?)\s*(?<unit>TB|GB)\b");
-        if (!capacity.Success) return true;
+        Match exactRating = Regex.Match(
+            evidence,
+            $@"(?i){tbwPattern}\s*{enduranceUnit}");
+        int ratingIndex = match.Index;
+        int ratingLength = match.Length;
+        if (exactRating.Success)
+        {
+            ratingIndex = exactRating.Index;
+            ratingLength = exactRating.Length;
+        }
+        else
+        {
+            Match numeric = Regex.Match(match.Value, tbwPattern);
+            if (numeric.Success)
+            {
+                ratingIndex = match.Index + numeric.Index;
+                ratingLength = numeric.Length;
+            }
+        }
 
-        string capacityPattern = $@"(?i)(?<![\d.]){Regex.Escape(capacity.Groups["value"].Value)}\s*{capacity.Groups["unit"].Value}\b";
-        return Regex.IsMatch(evidence, capacityPattern);
+        return IsRatingAssociatedWithRequestedCapacity(evidence, ratingIndex, ratingLength, driveModel);
+    }
+
+    private static bool IsRatingAssociatedWithRequestedCapacity(
+        string evidence,
+        int ratingIndex,
+        int ratingLength,
+        string? driveModel)
+    {
+        double? requested = ParseCapacityGb(driveModel ?? "");
+        if (requested is null) return true;
+
+        var enduranceValueSpans = Regex.Matches(
+                evidence,
+                @"(?i)(?<rating>\d+(?:\.\d+)?)\s*(?:TBW\b|TB\s*\(\s*TBW\s*\)|terabytes?\s+(?:written|endurance)|PBW\b|PB\s+(?:written|endurance))")
+            .Cast<Match>()
+            .Select(match => match.Groups["rating"])
+            .Concat(Regex.Matches(
+                    evidence,
+                    @"(?i)(?:TBW(?:\s*\(\s*terabytes?\s+written\s*\))?|terabytes?\s+written)\s*(?:max(?:imum)?|rated|endurance)?\s*[:=,-]?\s*(?<rating>\d+(?:\.\d+)?)\s*(?:TB)?")
+                .Cast<Match>()
+                .Select(match => match.Groups["rating"]))
+            .Select(group => (group.Index, group.Length))
+            .ToList();
+        var capacities = Regex.Matches(evidence, @"(?i)(?<value>\d+(?:\.\d+)?)\s*(?<unit>TB|GB)\b")
+            .Cast<Match>()
+            .Where(capacity => !enduranceValueSpans.Any(span =>
+                                   Overlaps(capacity.Index, capacity.Length, span.Index, span.Length)) &&
+                               !Overlaps(capacity.Index, capacity.Length, ratingIndex, ratingLength))
+            .Select(capacity => new
+            {
+                Match = capacity,
+                Gb = double.Parse(capacity.Groups["value"].Value, System.Globalization.CultureInfo.InvariantCulture) *
+                     (capacity.Groups["unit"].Value.Equals("TB", StringComparison.OrdinalIgnoreCase) ? 1000d : 1d),
+            })
+            .ToList();
+
+        int clauseStart = evidence.LastIndexOfAny([',', ';'], Math.Max(0, ratingIndex - 1)) + 1;
+        int nextComma = evidence.IndexOf(',', ratingIndex + ratingLength);
+        int nextSemicolon = evidence.IndexOf(';', ratingIndex + ratingLength);
+        int clauseEnd = new[] { nextComma, nextSemicolon }
+            .Where(index => index >= 0)
+            .DefaultIfEmpty(evidence.Length)
+            .Min();
+        var sameClause = capacities
+            .Where(capacity => capacity.Match.Index >= clauseStart && capacity.Match.Index < clauseEnd)
+            .ToList();
+        var nearest = (sameClause.Count > 0 ? sameClause : capacities)
+            .OrderBy(capacity => Distance(ratingIndex, ratingLength, capacity.Match))
+            .FirstOrDefault();
+
+        return nearest is not null && Distance(ratingIndex, ratingLength, nearest.Match) <= 120 &&
+               Math.Abs(nearest.Gb - requested.Value) <= 1;
     }
 
     /// <summary>
@@ -322,14 +392,21 @@ public sealed class TbwLookupService
 
         foreach (var hit in hits)
         {
-            string evidence = $"{hit.Title} {hit.Snippet}".Replace(",", "", StringComparison.Ordinal);
+            string evidence = NormalizeEvidence($"{hit.Title} {hit.Snippet}");
             var ratings = Regex.Matches(
-                evidence,
-                @"(?i)(?<rating>\d+(?:\.\d+)?)\s*(?:TBW\b|TB\s*\(\s*TBW\s*\)|terabytes?\s+(?:written|endurance))");
+                    evidence,
+                    @"(?i)(?<rating>\d+(?:\.\d+)?)\s*(?:TBW\b|TB\s*\(\s*TBW\s*\)|terabytes?\s+(?:written|endurance))")
+                .Cast<Match>()
+                .Concat(Regex.Matches(
+                        evidence,
+                        @"(?i)(?:TBW(?:\s*\(\s*terabytes?\s+written\s*\))?|terabytes?\s+written)\s*(?:max(?:imum)?|rated|endurance)?\s*[:=,-]?\s*(?<rating>\d+(?:\.\d+)?)\s*(?:TB)?")
+                    .Cast<Match>())
+                .OrderBy(match => match.Index)
+                .ToList();
             if (ratings.Count == 0) continue;
 
             var capacities = Regex.Matches(evidence, @"(?i)(?<value>\d+(?:\.\d+)?)\s*(?<unit>TB|GB)\b")
-                .Where(m => !ratings.Cast<Match>().Any(r => Overlaps(m, r)))
+                .Where(m => !ratings.Any(r => Overlaps(m, r)))
                 .Select(m => new
                 {
                     Match = m,
@@ -369,11 +446,31 @@ public sealed class TbwLookupService
         return match.Groups["unit"].Value.Equals("TB", StringComparison.OrdinalIgnoreCase) ? value * 1000d : value;
     }
 
+    private static string NormalizeEvidence(string evidence)
+        => Regex.Replace(evidence, @"(?<=\d),(?=\d{3}\b)", string.Empty);
+
+    private static bool IsMarketplaceSource(WebSearchHit hit)
+    {
+        string domain = hit.Domain;
+        return domain.EndsWith("aliexpress.com", StringComparison.OrdinalIgnoreCase) ||
+               domain.EndsWith("amazon.com", StringComparison.OrdinalIgnoreCase) ||
+               domain.EndsWith("amazon.co.uk", StringComparison.OrdinalIgnoreCase) ||
+               domain.EndsWith("ebay.com", StringComparison.OrdinalIgnoreCase) ||
+               domain.EndsWith("temu.com", StringComparison.OrdinalIgnoreCase) ||
+               domain.EndsWith("walmart.com", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static int Distance(Match a, Match b)
         => Math.Abs((a.Index + a.Length / 2) - (b.Index + b.Length / 2));
 
+    private static int Distance(int index, int length, Match other)
+        => Math.Abs((index + length / 2) - (other.Index + other.Length / 2));
+
     private static bool Overlaps(Match a, Match b)
         => a.Index < b.Index + b.Length && b.Index < a.Index + a.Length;
+
+    private static bool Overlaps(int firstIndex, int firstLength, int secondIndex, int secondLength)
+        => firstIndex < secondIndex + secondLength && secondIndex < firstIndex + firstLength;
 
     /// <summary>
     /// Aggregates per-source claims into candidate TBW values with a confidence score. Each distinct
