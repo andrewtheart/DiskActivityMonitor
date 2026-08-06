@@ -22,6 +22,7 @@ AppId={{8B5F2E2A-7C3D-4F2B-9E1A-2D6C9F4A1B77}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#Publisher}
+SetupMutex=Global\DiskActivityMonitor.Setup.SingleInstance
 DefaultDirName={autopf}\{#AppName}
 DisableDirPage=yes
 UsePreviousAppDir=no
@@ -32,7 +33,11 @@ OutputBaseFilename=DiskActivityMonitor-Setup-{#AppVersion}-{#AppArch}
 SetupIconFile=..\assets\app.ico
 UninstallDisplayIcon={app}\app.ico
 UninstallDisplayName={#AppName}
-WizardStyle=modern
+WizardStyle=modern dark includetitlebar hidebevels
+WizardSizePercent=115
+WizardKeepAspectRatio=yes
+WizardImageFile=assets\wizard-dark.png
+WizardSmallImageFile=assets\wizard-small-dark.png
 Compression=lzma2/max
 SolidCompression=yes
 PrivilegesRequired=admin
@@ -509,6 +514,172 @@ begin
   Result := True;
 end;
 
+function GetInstalledInstancesRunning(var Running: Boolean; var ErrorText: String): Boolean;
+var
+  ResultCode: Integer;
+  Script: String;
+  Parameters: String;
+  TargetPath: String;
+begin
+  Result := False;
+  Running := False;
+  TargetPath := ExpandConstant('{app}\tray\{#TrayExe}');
+  Script := '$ErrorActionPreference = ''Stop''; ' +
+    '$target = [IO.Path]::GetFullPath(' + PowerShellLiteral(TargetPath) + '); ' +
+    '$tray = @(Get-CimInstance Win32_Process -Filter ' +
+      PowerShellLiteral('Name = ''{#TrayExe}''') + ' | ' +
+      'Where-Object { $_.ExecutablePath -and ' +
+        '[string]::Equals([IO.Path]::GetFullPath($_.ExecutablePath), $target, ' +
+        '[StringComparison]::OrdinalIgnoreCase) }); ' +
+    '$service = Get-Service -Name ' + PowerShellLiteral('{#ServiceName}') +
+      ' -ErrorAction SilentlyContinue; ' +
+    'if (($tray.Count -gt 0) -or ($service -and $service.Status -ne ''Stopped'')) { exit 10 }; exit 0';
+  Parameters := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' + Script + '"';
+  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parameters,
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    ErrorText := 'Setup could not inspect the installed Disk Activity Monitor processes.';
+    Exit;
+  end;
+  if (ResultCode <> 0) and (ResultCode <> 10) then
+  begin
+    ErrorText := 'Setup could not inspect the installed Disk Activity Monitor processes. ' +
+      'PowerShell exit code: ' + IntToStr(ResultCode);
+    Exit;
+  end;
+  Running := ResultCode = 10;
+  Result := True;
+end;
+
+function ShowRunningInstancesPrompt(): Integer;
+var
+  PromptForm: TSetupForm;
+  Title: TNewStaticText;
+  Details: TNewStaticText;
+  AutomaticButton: TNewButton;
+  ManualButton: TNewButton;
+  CancelButton: TNewButton;
+  FormWidth, ContentLeft, ContentWidth, ButtonWidth, ButtonTop: Integer;
+begin
+  FormWidth := ScaleX(620);
+  ContentLeft := ScaleX(24);
+  ContentWidth := FormWidth - (2 * ContentLeft);
+  PromptForm := CreateCustomForm(FormWidth, ScaleY(236), True, True);
+  try
+    PromptForm.Caption := '{#AppName} Setup';
+
+    Title := TNewStaticText.Create(PromptForm);
+    Title.Parent := PromptForm;
+    Title.Left := ContentLeft;
+    Title.Top := ScaleY(22);
+    Title.Width := ContentWidth;
+    Title.WordWrap := True;
+    Title.Font.Style := [fsBold];
+    Title.Caption := 'Disk Activity Monitor must close before setup continues';
+    Title.AdjustHeight;
+
+    Details := TNewStaticText.Create(PromptForm);
+    Details.Parent := PromptForm;
+    Details.Left := ContentLeft;
+    Details.Top := Title.Top + Title.Height + ScaleY(14);
+    Details.Width := ContentWidth;
+    Details.WordWrap := True;
+    Details.Caption :=
+      'Setup detected the tray dashboard or collector service running. They must be stopped ' +
+      'before setup writes the new application files.' + #13#10 + #13#10 +
+      'Choose Close automatically to let setup stop them now. Or close the tray and stop the ' +
+      'Disk Activity Monitor service yourself, then click I''ve closed them - continue.';
+    Details.AdjustHeight;
+
+    ButtonWidth := PromptForm.CalculateButtonWidth([
+      'Close automatically and continue',
+      'I''ve closed them - continue',
+      'Cancel']);
+    ButtonTop := PromptForm.ClientHeight - ScaleY(47);
+
+    AutomaticButton := TNewButton.Create(PromptForm);
+    AutomaticButton.Parent := PromptForm;
+    AutomaticButton.Caption := 'Close automatically and continue';
+    AutomaticButton.ModalResult := mrYes;
+    AutomaticButton.Width := ButtonWidth;
+    AutomaticButton.Left := ContentLeft;
+    AutomaticButton.Top := ButtonTop;
+    AutomaticButton.Default := True;
+
+    ManualButton := TNewButton.Create(PromptForm);
+    ManualButton.Parent := PromptForm;
+    ManualButton.Caption := 'I''ve closed them - continue';
+    ManualButton.ModalResult := mrOk;
+    ManualButton.Width := ButtonWidth;
+    ManualButton.Left := AutomaticButton.Left + ButtonWidth + ScaleX(8);
+    ManualButton.Top := ButtonTop;
+
+    CancelButton := TNewButton.Create(PromptForm);
+    CancelButton.Parent := PromptForm;
+    CancelButton.Caption := 'Cancel';
+    CancelButton.ModalResult := mrCancel;
+    CancelButton.Width := ButtonWidth;
+    CancelButton.Left := ManualButton.Left + ButtonWidth + ScaleX(8);
+    CancelButton.Top := ButtonTop;
+    CancelButton.Cancel := True;
+
+    Result := PromptForm.ShowModal();
+  finally
+    PromptForm.Free();
+  end;
+end;
+
+function ConfirmRunningInstancesCanClose(var ErrorText: String): Boolean;
+var
+  Running: Boolean;
+  Choice: Integer;
+begin
+  Result := False;
+  if not GetInstalledInstancesRunning(Running, ErrorText) then
+    Exit;
+  if not Running then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  // Unattended installs keep the established behavior: setup stops exact installed instances.
+  if WizardSilent then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  while True do
+  begin
+    Choice := ShowRunningInstancesPrompt();
+    if Choice = mrYes then
+    begin
+      Result := True;
+      Exit;
+    end;
+    if Choice <> mrOk then
+    begin
+      ErrorText := 'Setup was canceled before the running application was closed.';
+      Exit;
+    end;
+
+    if not GetInstalledInstancesRunning(Running, ErrorText) then
+      Exit;
+    if not Running then
+    begin
+      Result := True;
+      Exit;
+    end;
+
+    MsgBox(
+      'Disk Activity Monitor is still running.' + #13#10 + #13#10 +
+      'Close the tray dashboard and stop the Disk Activity Monitor service, then click ' +
+      'I''ve closed them - continue again.',
+      mbInformation, MB_OK);
+  end;
+end;
+
 function DeleteRegularFile(Path: String; var ErrorText: String): Boolean;
 begin
   Result := False;
@@ -594,18 +765,23 @@ begin
   end;
 end;
 
-const
-  KeepButtonColor = $D47800;
-
 var
   RetentionForm: TSetupForm;
   RetentionDeleteButton: TNewButton;
-  RetentionKeepPanel: TPanel;
+  RetentionKeepButton: TNewButton;
+  RetentionDeleteWarning: String;
+  RetentionDeleteConfirmed: Boolean;
 
-procedure RetentionKeepClick(Sender: TObject);
+procedure RetentionDeleteClick(Sender: TObject);
 begin
-  // Closing yields mrCancel, which the caller treats as keep.
-  RetentionForm.Close;
+  if SuppressibleMsgBox(
+      RetentionDeleteWarning + #13#10 + #13#10 +
+      'Are you sure you want to continue?',
+      mbConfirmation, MB_YESNO, IDNO) = IDYES then
+  begin
+    RetentionDeleteConfirmed := True;
+    RetentionForm.Close;
+  end;
 end;
 
 procedure RetentionKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
@@ -619,7 +795,7 @@ begin
 end;
 
 // Keeping is the safe answer, so it is the rightmost button and the accent-coloured one.
-function AskKeepExistingData(const Instruction, Body: String): Boolean;
+function AskKeepExistingData(const Instruction, Body, DeleteWarning: String): Boolean;
 var
   Title: TNewStaticText;
   Details: TNewStaticText;
@@ -642,6 +818,8 @@ begin
 
   RetentionForm := CreateCustomForm(FormWidth, ButtonTop + ButtonHeight + ScaleY(22), True, True);
   try
+    RetentionDeleteWarning := DeleteWarning;
+    RetentionDeleteConfirmed := False;
     RetentionForm.Caption := '{#AppName}';
     RetentionForm.KeyPreview := True;
     RetentionForm.OnKeyDown := @RetentionKeyDown;
@@ -668,32 +846,33 @@ begin
     RetentionDeleteButton := TNewButton.Create(RetentionForm);
     RetentionDeleteButton.Parent := RetentionForm;
     RetentionDeleteButton.Caption := '&Delete existing data';
-    RetentionDeleteButton.ModalResult := mrNo;
+    RetentionDeleteButton.ModalResult := mrNone;
+    RetentionDeleteButton.Default := False;
+    RetentionDeleteButton.OnClick := @RetentionDeleteClick;
 
     ButtonWidth := RetentionForm.CalculateButtonWidth(['&Delete existing data', 'Keep existing data']);
 
-    // A themed push button ignores Color/Font.Color, so the accent button is a painted panel.
-    RetentionKeepPanel := TPanel.Create(RetentionForm);
-    RetentionKeepPanel.Parent := RetentionForm;
-    RetentionKeepPanel.Caption := 'Keep existing data';
-    RetentionKeepPanel.BevelOuter := bvNone;
-    RetentionKeepPanel.ParentBackground := False;
-    RetentionKeepPanel.Color := KeepButtonColor;
-    RetentionKeepPanel.Font.Color := clWhite;
-    RetentionKeepPanel.Cursor := crHand;
-    RetentionKeepPanel.OnClick := @RetentionKeepClick;
-    RetentionKeepPanel.Width := ButtonWidth;
-    RetentionKeepPanel.Height := ButtonHeight;
-    RetentionKeepPanel.Top := ButtonTop;
-    RetentionKeepPanel.Left := RetentionForm.ClientWidth - ContentLeft - ButtonWidth;
+    // Native dark mode paints the default/focused button blue. Keep is intentionally primary.
+    RetentionKeepButton := TNewButton.Create(RetentionForm);
+    RetentionKeepButton.Parent := RetentionForm;
+    RetentionKeepButton.Caption := 'Keep existing data';
+    RetentionKeepButton.ModalResult := mrOk;
+    RetentionKeepButton.Default := True;
+    RetentionKeepButton.Width := ButtonWidth;
+    RetentionKeepButton.Height := ButtonHeight;
+    RetentionKeepButton.Top := ButtonTop;
+    RetentionKeepButton.Left := RetentionForm.ClientWidth - ContentLeft - ButtonWidth;
 
     RetentionDeleteButton.Width := ButtonWidth;
     RetentionDeleteButton.Height := ButtonHeight;
-    RetentionDeleteButton.Top := RetentionKeepPanel.Top;
-    RetentionDeleteButton.Left := RetentionKeepPanel.Left - ScaleX(8) - ButtonWidth;
+    RetentionDeleteButton.Top := RetentionKeepButton.Top;
+    RetentionDeleteButton.Left := RetentionKeepButton.Left - ScaleX(8) - ButtonWidth;
 
-    // Only the delete button returns mrNo; Esc and the title-bar X therefore keep.
-    Result := RetentionForm.ShowModal() <> mrNo;
+    RetentionForm.ActiveControl := RetentionKeepButton;
+
+    // Esc, Keep, and the title-bar X leave the explicit delete-confirmed flag false.
+    RetentionForm.ShowModal();
+    Result := not RetentionDeleteConfirmed;
   finally
     RetentionForm.Free();
   end;
@@ -719,7 +898,9 @@ begin
         'Keep existing data reuses your saved values. Settings added by this version use their ' +
         'new defaults.' + #13#10 + #13#10 +
         'Delete existing data starts from default settings and will remove saved API credentials. ' +
-        'Your monitoring history is not affected by this choice.');
+        'Your monitoring history is not affected by this choice.',
+        'This deletes the existing machine settings, current-account preferences, and saved API ' +
+        'credentials. Monitoring history is not deleted.');
 
   KeepExistingDatabase := True;
   if FileExists(DatabasePath()) then
@@ -731,7 +912,10 @@ begin
         'history, and alert log carry over.' + #13#10 + #13#10 +
         'Delete existing data starts a new, empty database. The existing file is renamed with ' +
         'a timestamp beside it so you can inspect or remove it yourself; setup does not erase ' +
-        'your history.');
+        'your history.',
+        'This replaces the active monitoring database with a new, empty database. Your trends, ' +
+        'endurance history, and alert log will no longer appear in the app. The existing database ' +
+        'is renamed with a timestamp beside the new one; setup does not erase it.');
   Result := True;
 end;
 
@@ -793,9 +977,7 @@ begin
       Exit;
     CompleteInstallPreparationStep;
 
-    if not SecureApplicationDirectory(Result) then
-      Exit;
-    if not SecureDataDirectory(Result) then
+    if not ConfirmRunningInstancesCanClose(Result) then
       Exit;
 
     SetInstallPreparationStatus('Closing the existing tray application...', '');
@@ -826,6 +1008,12 @@ begin
       Exit;
     end;
     CompleteInstallPreparationStep;
+
+    // Every installed instance is now stopped and unregistered. [Files] copying has not begun.
+    if not SecureApplicationDirectory(Result) then
+      Exit;
+    if not SecureDataDirectory(Result) then
+      Exit;
 
     SetInstallPreparationStatus('Applying your settings choice...', '');
     if not UseExistingSettings then
