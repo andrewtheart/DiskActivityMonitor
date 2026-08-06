@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\DiskActivityMonitor.Core\DiskActivityMonitor.Core.csproj" />
+    <ProjectReference Include="..\..\src\DiskActivityMonitor.Cli\DiskActivityMonitor.Cli.csproj" />
     <ProjectReference Include="..\..\src\DiskActivityMonitor.Service\DiskActivityMonitor.Service.csproj" />
     <ProjectReference Include="..\..\src\DiskActivityMonitor.Tray\DiskActivityMonitor.Tray.csproj" />
   </ItemGroup>

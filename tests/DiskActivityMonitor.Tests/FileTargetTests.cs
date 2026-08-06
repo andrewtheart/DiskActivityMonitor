@@ -1,10 +1,8 @@
-using DiskActivityMonitor.Core;
 using DiskActivityMonitor.Core.Collection;
 using DiskActivityMonitor.Core.Configuration;
 using DiskActivityMonitor.Core.Data;
 using DiskActivityMonitor.Core.Models;
 using DiskActivityMonitor.Service;
-using DiskActivityMonitor.Tray;
 
 namespace DiskActivityMonitor.Tests;
 
@@ -183,32 +181,6 @@ public sealed class FileTargetTests : IDisposable
         Assert.Equal(
             FileTargetNormalizer.Explain(FileTargetKind.PagingFile),
             FileTargetNormalizer.ExplainTarget(@"C:\pagefile.sys", FileTargetKind.PagingFile));
-    }
-
-    [Fact]
-    public void NotificationSummary_IncludesTwoLargestActualFilesAndTheirAmounts()
-    {
-        string? summary = TrayController.FormatTopWrittenFiles(
-        [
-            new FileTargetRank
-            {
-                Path = FileTargetNormalizer.OtherFilesPath,
-                Kind = FileTargetKind.Other,
-                WriteBytes = 9000,
-            },
-            new FileTargetRank { Path = @"C:\one.db", Kind = FileTargetKind.Database, WriteBytes = 3000 },
-            new FileTargetRank { Path = @"D:\two.log", Kind = FileTargetKind.LogFile, WriteBytes = 2000 },
-            new FileTargetRank { Path = @"E:\three.tmp", Kind = FileTargetKind.Temporary, WriteBytes = 1000 },
-        ]);
-
-        Assert.NotNull(summary);
-        Assert.Contains(@"C:\one.db", summary);
-        Assert.Contains(ByteFormat.Humanize(3000), summary);
-        Assert.Contains(@"D:\two.log", summary);
-        Assert.Contains(ByteFormat.Humanize(2000), summary);
-        Assert.DoesNotContain(FileTargetNormalizer.OtherFilesPath, summary);
-        Assert.DoesNotContain(@"E:\three.tmp", summary);
-        Assert.Null(TrayController.FormatTopWrittenFiles([]));
     }
 
     [Fact]

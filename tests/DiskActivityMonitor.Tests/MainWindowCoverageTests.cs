@@ -252,6 +252,7 @@ public sealed class MainWindowCoverageTests : IDisposable
                 window.TxtControllerCritical.Text = "2";
                 window.TxtInterval.Text = "999";
                 window.TxtRefresh.Text = "9999";
+                window.TxtHighCoveragePercent.Text = "92.5";
                 window.RadTbwRange.IsChecked = true;
                 window.TxtTbw.Text = "900";
                 window.TxtTbwUpper.Text = "1200";
@@ -261,8 +262,15 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Assert.Equal(8, config.Current.ControllerErrorCriticalCount);
                 Assert.Equal(60, config.Current.SampleIntervalSeconds);
                 Assert.False(config.Current.EnableControllerErrorAlerts);
+                Assert.Equal(92.5, config.Current.HighCoveragePercent);
                 Assert.Equal(900, config.Current.DiskTbwRatings["2"]);
                 Assert.Equal(1200, config.Current.DiskTbwRatingsUpper["2"]);
+
+                window.TxtHighCoveragePercent.Text = "0";
+                window.Save_Click(window, new RoutedEventArgs());
+                Assert.Contains("between 1 and 100", window.SaveStatus.Text);
+                Assert.Equal(92.5, config.Current.HighCoveragePercent);
+                window.TxtHighCoveragePercent.Text = "92.5";
 
                 window.TxtTbw.Text = "bad";
                 window.TxtTbwUpper.Text = "1";
@@ -600,6 +608,67 @@ public sealed class MainWindowCoverageTests : IDisposable
         });
     }
 
+    [Fact]
+    public void PendingMainWindowRowsAndProgressStates_AreDeterministic()
+    {
+        RunStaAsync(async () =>
+        {
+            EnsureApplication();
+            var repo = new MonitorRepository(_db); repo.EnsureSchema();
+            using var config = new ConfigStore(_cfg);
+            var userSettings = new UserSettingsStore(_userSettings);
+            var window = new MainWindow(repo, config, userSettings);
+            try
+            {
+                object tailRow = CreateFileTargetRow(canTail: true);
+                Assert.Equal("Live tail this file", Property<string>(tailRow, "TailToolTip"));
+                Assert.Equal("Live tail trace.log", Property<string>(tailRow, "TailAutomationName"));
+                Assert.Equal("Copy full path for trace.log", Property<string>(tailRow, "CopyAutomationName"));
+                Assert.Equal("Find processes holding trace.log open", Property<string>(tailRow, "TraceAutomationName"));
+                Assert.Equal("Delete trace.log", Property<string>(tailRow, "DeleteAutomationName"));
+
+                object binaryRow = CreateFileTargetRow(canTail: false);
+                Assert.Contains("cannot be tailed as text", Property<string>(binaryRow, "TailToolTip"));
+
+                object owner = CreateHandleOwnerRow();
+                Assert.Equal("writer", Property<string>(owner, "ProcessName"));
+                Assert.Equal("42", Property<string>(owner, "PidText"));
+                Assert.Equal("File  C:\\data\\trace.log", Property<string>(owner, "Detail"));
+
+                int automaticChecks = 0;
+                window.AutomaticUpdateCheckRequested = () => automaticChecks++;
+                window.LoadSettingsFields();
+                window.AppUpdateModeSelector.SelectedItem = window.AppUpdateModeSelector.Items
+                    .Cast<ComboBoxItem>()
+                    .Single(item => Equals(item.Tag, "Automatic"));
+                window.Save_Click(window, new RoutedEventArgs());
+                Assert.Equal(1, automaticChecks);
+
+                const string model = "Test SSD 2TB";
+                Assert.Contains(model, window.UpdateTbwLookupProgress(TbwLookupStage.Searching, false, model));
+                Assert.Equal("Searching web evidence", window.TbwLookupHeadline.Text);
+
+                Assert.Contains("capacity-matched", window.UpdateTbwLookupProgress(TbwLookupStage.Analyzing, true, model));
+                Assert.Equal("Parsing explicit TBW evidence", window.TbwLookupHeadline.Text);
+
+                Assert.Contains("on-device model", window.UpdateTbwLookupProgress(TbwLookupStage.Analyzing, false, model));
+                Assert.Equal("Verifying with the local model", window.TbwLookupHeadline.Text);
+
+                string unchanged = window.TbwLookupStatus.Text;
+                Assert.Equal(unchanged, window.UpdateTbwLookupProgress(TbwLookupStage.Idle, false, model));
+
+                window.DispatchTbwLookupProgress(new TbwLookupProgress(TbwLookupStage.Searching), false, model);
+                Assert.Equal("Searching web evidence", window.TbwLookupHeadline.Text);
+
+                await Task.Run(() => window.DispatchTbwLookupProgress(
+                    new TbwLookupProgress(TbwLookupStage.Analyzing), true, model));
+                await window.Dispatcher.InvokeAsync(() => { });
+                Assert.Equal("Parsing explicit TBW evidence", window.TbwLookupHeadline.Text);
+            }
+            finally { window.ForceClose(); }
+        });
+    }
+
     [Theory]
     [InlineData(2, "2%")]
     [InlineData(2.5, "2.5%")]
@@ -642,23 +711,41 @@ public sealed class MainWindowCoverageTests : IDisposable
                 MediaType = DiskMediaType.Ssd, WearPercent = 2,
                 LifetimeBytesWritten = 70_800_000_000_000,
             }]);
+            var now = DateTime.UtcNow;
+            var coverageEnd = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
+            var monitoredMinute = coverageEnd.AddMinutes(-4);
+            repo.AddDiskSamples([new DiskSample
+            {
+                TimestampUtc = monitoredMinute, DiskId = "0", WriteBytes = 1_000_000,
+            }]);
+            repo.AddCollectorHeartbeat(monitoredMinute);
             using var config = new ConfigStore(_cfg);
             config.Update(settings => settings.DefaultSsdTbw = 750);
 
             var window = new MainWindow(repo, config, new UserSettingsStore(_userSettings));
             try
             {
+                Invoke(window, "UpdateEndurance", new DiskInfo
+                {
+                    DiskId = "no-history", InstanceName = "no-history D:", MediaType = DiskMediaType.Ssd,
+                }, coverageEnd);
+                Assert.Contains("Collecting data", window.WearSub.Text);
+                Assert.Contains("collecting data", window.EnduranceProjSub.Text);
+
+                Invoke(window, "UpdateEndurance", repo.GetDisks().Single(), coverageEnd);
+                Assert.Contains("Projection withheld", window.WearSub.Text);
+                Assert.Contains("withheld at", window.EnduranceProjSub.Text);
                 Assert.Equal("~9.44%", window.SmartWearValue.Text);
                 Assert.Contains("drive SMART reports 2% used", window.SmartWearText.Text);
 
                 config.Update(settings => settings.DefaultSsdTbwUpper = 1_000);
-                Invoke(window, "UpdateEndurance", repo.GetDisks().Single(), DateTime.UtcNow, 0L);
+                Invoke(window, "UpdateEndurance", repo.GetDisks().Single(), DateTime.UtcNow);
                 Assert.Equal("~7.08% to 9.44%", window.SmartWearValue.Text);
 
                 Invoke(window, "UpdateEndurance", new DiskInfo
                 {
                     DiskId = "0", InstanceName = "0 C:", MediaType = DiskMediaType.Ssd, WearPercent = 2,
-                }, DateTime.UtcNow, 0L);
+                }, DateTime.UtcNow);
                 Assert.Equal("2%", window.SmartWearValue.Text);
                 Assert.Contains("whole-percent precision", window.SmartWearText.Text);
 
@@ -666,7 +753,7 @@ public sealed class MainWindowCoverageTests : IDisposable
                 {
                     DiskId = "0", InstanceName = "0 C:", MediaType = DiskMediaType.Ssd,
                     LifetimeBytesWritten = 70_800_000_000_000,
-                }, DateTime.UtcNow, 0L);
+                }, DateTime.UtcNow);
                 Assert.Contains("no SMART wear attribute", window.SmartWearText.Text);
             }
             finally { window.ForceClose(); }
@@ -849,6 +936,37 @@ public sealed class MainWindowCoverageTests : IDisposable
             diskId, 2, canScan, canScan ? Visibility.Visible : Visibility.Collapsed, alertIds ?? new long[] { 1 })!;
     }
 
+    private static object CreateProcessRow(string processName)
+    {
+        Type type = typeof(MainWindow).GetNestedType("ProcessRow", BindingFlags.NonPublic)!;
+        return Activator.CreateInstance(type, processName, "1 GB", "0 B", 100d)!;
+    }
+
+    private static object CreateFileTargetRow(bool canTail)
+    {
+        Type type = typeof(MainWindow).GetNestedType("FileTargetRow", BindingFlags.NonPublic)!;
+        object row = Activator.CreateInstance(type,
+            @"C:\data\trace.log", "trace.log", "Log", "1 KB", 100d, "Text log")!;
+        type.GetProperty("CanTail")!.SetValue(row, canTail);
+        return row;
+    }
+
+    private static object CreateHandleOwnerRow()
+    {
+        Type type = typeof(MainWindow).GetNestedType("HandleOwnerRow", BindingFlags.NonPublic)!;
+        return Activator.CreateInstance(type, "writer", "42", @"File  C:\data\trace.log")!;
+    }
+
+    private static T Property<T>(object target, string name)
+        => (T)target.GetType().GetProperty(name)!.GetValue(target)!;
+
+    private sealed class FakePresentationSource : PresentationSource
+    {
+        public override Visual RootVisual { get; set; } = null!;
+        public override bool IsDisposed => false;
+        protected override CompositionTarget GetCompositionTargetCore() => null!;
+    }
+
     [Fact]
     public void SettingsHeader_StaysPinnedOutsideTheScrollingContent()
     {
@@ -950,50 +1068,6 @@ public sealed class MainWindowCoverageTests : IDisposable
     }
 
     [Fact]
-    public void ProcessBar_HoverOpensTheSameFileTargetDetailsAsClick()
-    {
-        RunStaAsync(() =>
-        {
-            EnsureApplication();
-            var repo = new MonitorRepository(_db); repo.EnsureSchema();
-            repo.UpsertDisks([Disk()]);
-            var utcNow = DateTime.UtcNow;
-            var minute = new DateTime(utcNow.Year, utcNow.Month, utcNow.Day, utcNow.Hour, utcNow.Minute, 0, DateTimeKind.Utc)
-                .AddMinutes(-2);
-            repo.AddProcessSamples(
-            [
-                new ProcessIoSample
-                {
-                    TimestampUtc = minute,
-                    ProcessName = "writer",
-                    WriteBytes = 4096,
-                },
-            ]);
-            using var config = new ConfigStore(_cfg);
-            var window = new MainWindow(repo, config, new UserSettingsStore(_userSettings));
-            try
-            {
-                object row = Assert.Single(((IEnumerable)window.ProcessList.ItemsSource).Cast<object>());
-                var templateRoot = Assert.IsType<Grid>(window.ProcessList.ItemTemplate.LoadContent());
-                templateRoot.DataContext = row;
-                var processBar = Assert.IsType<Border>(templateRoot.Children[1]);
-
-                processBar.RaiseEvent(new System.Windows.Input.MouseEventArgs(
-                    System.Windows.Input.Mouse.PrimaryDevice,
-                    0)
-                {
-                    RoutedEvent = System.Windows.Input.Mouse.MouseEnterEvent,
-                });
-
-                Assert.Equal(Visibility.Visible, window.FileTargetsOverlay.Visibility);
-                Assert.Equal("Files written by writer", window.FileTargetsTitle.Text);
-            }
-            finally { window.ForceClose(); }
-            return Task.CompletedTask;
-        });
-    }
-
-    [Fact]
     public void FileTargets_DescribeCoverageAndDisabledTracking()
     {
         Assert.Contains("turned off", MainWindow.FileTargetsEmptyText(trackingEnabled: false));
@@ -1001,6 +1075,209 @@ public sealed class MainWindowCoverageTests : IDisposable
         Assert.Equal("Per-file history is kept for 7 day(s).", MainWindow.FileTargetsCoverage(0, 0, 7));
         Assert.Contains("50%", MainWindow.FileTargetsCoverage(1000, 500, 7));
         Assert.Contains("100%", MainWindow.FileTargetsCoverage(1000, 4000, 7));
+    }
+
+    [Fact]
+    public void FileTargets_EnterClose_DoesNotReopenUntilPointerLeavesBar()
+    {
+        RunStaAsync(() =>
+        {
+            EnsureApplication();
+            var repo = new MonitorRepository(_db); repo.EnsureSchema();
+            using var config = new ConfigStore(_cfg);
+            var window = new MainWindow(repo, config, new UserSettingsStore(_userSettings));
+            try
+            {
+                object processRow = CreateProcessRow("System");
+                var bar = new Border { DataContext = processRow };
+                var mouse = new System.Windows.Input.MouseEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice,
+                    Environment.TickCount)
+                { RoutedEvent = UIElement.MouseEnterEvent };
+
+                Invoke(window, "ProcessBar_MouseEnter", bar, mouse);
+                Assert.Equal(Visibility.Visible, window.FileTargetsOverlay.Visibility);
+
+                var visibleLeave = new System.Windows.Input.MouseEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice,
+                    Environment.TickCount)
+                { RoutedEvent = UIElement.MouseLeaveEvent };
+                Invoke(window, "ProcessBar_MouseLeave", bar, visibleLeave);
+                Assert.False(window.IsFileTargetsHoverSuppressed(bar));
+
+                var enter = new System.Windows.Input.KeyEventArgs(
+                    System.Windows.Input.Keyboard.PrimaryDevice,
+                    new FakePresentationSource(),
+                    Environment.TickCount,
+                    System.Windows.Input.Key.Enter)
+                { RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent };
+                Invoke(window, "FileTargetsOverlay_PreviewKeyDown", window.FileTargetsOverlay, enter);
+                Assert.True(enter.Handled);
+                Assert.Equal(Visibility.Collapsed, window.FileTargetsOverlay.Visibility);
+                Assert.True(window.IsFileTargetsHoverSuppressed(bar));
+
+                Invoke(window, "ProcessBar_MouseEnter", bar, mouse);
+                Assert.Equal(Visibility.Collapsed, window.FileTargetsOverlay.Visibility);
+
+                var unrelated = new Border { DataContext = processRow };
+                Invoke(window, "ProcessBar_MouseLeave", unrelated, visibleLeave);
+                Assert.True(window.IsFileTargetsHoverSuppressed(bar));
+
+                var leave = new System.Windows.Input.MouseEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice,
+                    Environment.TickCount)
+                { RoutedEvent = UIElement.MouseLeaveEvent };
+                Invoke(window, "ProcessBar_MouseLeave", bar, leave);
+                Assert.False(window.IsFileTargetsHoverSuppressed(bar));
+
+                Invoke(window, "ProcessBar_MouseEnter", bar, mouse);
+                Assert.Equal(Visibility.Visible, window.FileTargetsOverlay.Visibility);
+
+                var escape = new System.Windows.Input.KeyEventArgs(
+                    System.Windows.Input.Keyboard.PrimaryDevice,
+                    new FakePresentationSource(),
+                    Environment.TickCount,
+                    System.Windows.Input.Key.Escape)
+                { RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent };
+                Invoke(window, "FileTargetsOverlay_PreviewKeyDown", window.FileTargetsOverlay, escape);
+                Assert.True(escape.Handled);
+
+                window.ShowFileTargets("System");
+                var otherKey = new System.Windows.Input.KeyEventArgs(
+                    System.Windows.Input.Keyboard.PrimaryDevice,
+                    new FakePresentationSource(),
+                    Environment.TickCount,
+                    System.Windows.Input.Key.Space)
+                { RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent };
+                Invoke(window, "FileTargetsOverlay_PreviewKeyDown", window.FileTargetsOverlay, otherKey);
+                Assert.False(otherKey.Handled);
+                Assert.Equal(Visibility.Visible, window.FileTargetsOverlay.Visibility);
+
+                var rowGrid = new Grid { DataContext = processRow };
+                var click = new System.Windows.Input.MouseButtonEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice,
+                    Environment.TickCount,
+                    System.Windows.Input.MouseButton.Left)
+                { RoutedEvent = UIElement.MouseLeftButtonUpEvent };
+                Invoke(window, "ProcessRow_Click", rowGrid, click);
+                Assert.Equal(Visibility.Visible, window.FileTargetsOverlay.Visibility);
+                Invoke(window, "ProcessRow_Click", new Grid(), click);
+                Invoke(window, "ProcessRow_Click", new object(), click);
+                Invoke(window, "ProcessBar_MouseLeave", new object(), leave);
+            }
+            finally { window.ForceClose(); }
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public void MonitoringCoverage_HighCoverage_RendersProjectionAndAllThroughputRanges()
+    {
+        RunStaAsync(() =>
+        {
+            EnsureApplication();
+            var repo = new MonitorRepository(_db); repo.EnsureSchema();
+            var now = DateTime.UtcNow;
+            var end = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
+            var disk = new DiskInfo
+            {
+                DiskId = "coverage", InstanceName = "coverage C:", FriendlyName = "Coverage SSD", Volumes = "C:",
+                MediaType = DiskMediaType.Ssd, LifetimeBytesWritten = 10_000_000_000,
+                LifetimeBytesRead = 20_000_000_000,
+            };
+            repo.UpsertDisks([disk]);
+            repo.AddDiskSamples([
+                new DiskSample { TimestampUtc = end.AddDays(-8), DiskId = disk.DiskId, WriteBytes = 1 },
+                new DiskSample { TimestampUtc = end.AddMinutes(-1), DiskId = disk.DiskId, WriteBytes = 7_000_000_000_000 },
+            ]);
+            for (int minute = 7 * 24 * 60; minute >= 1; minute--)
+                repo.AddCollectorHeartbeat(end.AddMinutes(-minute));
+
+            using var config = new ConfigStore(_cfg);
+            config.Update(value =>
+            {
+                value.DiskTbwRatings[disk.DiskId] = 150;
+                value.DiskTbwRatingsUpper[disk.DiskId] = 600;
+                value.HighCoveragePercent = 90;
+            });
+            var window = new MainWindow(repo, config, new UserSettingsStore(_userSettings));
+            try
+            {
+                Invoke(window, "UpdateEndurance", disk, end);
+                Assert.NotEqual("-", window.EnduranceProjValue.Text);
+                Assert.Contains("reaches 150 to 600 TBW", window.EnduranceProjSub.Text);
+                Assert.Contains("18.63 GB read", window.SmartWearLifeText.Text);
+                Assert.Contains("Recent monitoring coverage: 100%", window.EnduranceConsumedText.Text);
+                Assert.NotEqual("-", window.EnduranceAvgHour.Text);
+
+                foreach (System.Windows.Controls.Primitives.ToggleButton button in new[] { window.TpBtn1h, window.TpBtn24h, window.TpBtn7d, window.TpBtn30d })
+                    Invoke(window, "ThroughputRange_Click", button, new RoutedEventArgs());
+                Assert.Contains("Monitoring coverage:", window.ThroughputCoverageText.Text);
+
+                window.DiskSelector.ItemsSource = Array.Empty<object>();
+                window.DiskSelector.SelectedItem = null;
+                Invoke(window, "ThroughputRange_Click", window.TpBtn1h, new RoutedEventArgs());
+            }
+            finally { window.ForceClose(); }
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public void LiveDiskActivity_ProjectsRatesDownsamplesAndRendersCurrentValues()
+    {
+        var now = new DateTime(2026, 8, 6, 12, 0, 0, DateTimeKind.Utc);
+        var projected = MainWindow.BuildLiveDiskPoints(
+        [
+            new LiveDiskSample { TimestampUtc = now.AddSeconds(-10), DiskId = "0", ElapsedMilliseconds = 5000, ReadBytes = 5_000_000, WriteBytes = 10_000_000 },
+            new LiveDiskSample { TimestampUtc = now.AddSeconds(-5), DiskId = "0", ElapsedMilliseconds = 5000, ReadBytes = 15_000_000, WriteBytes = 20_000_000 },
+            new LiveDiskSample { TimestampUtc = now, DiskId = "0", ElapsedMilliseconds = 5000, ReadBytes = 25_000_000, WriteBytes = 30_000_000 },
+        ], maxPoints: 2);
+
+        Assert.Equal(2, projected.Count);
+        Assert.Equal(2, projected[0].ReadMbps);
+        Assert.Equal(3, projected[0].WriteMbps);
+        Assert.Equal(5, projected[1].ReadMbps);
+        Assert.Equal(6, projected[1].WriteMbps);
+        Assert.Empty(MainWindow.BuildLiveDiskPoints([], 120));
+        Assert.Empty(MainWindow.BuildLiveDiskPoints(
+            [new LiveDiskSample { TimestampUtc = now, DiskId = "0", ElapsedMilliseconds = 5000 }], 0));
+
+        RunStaAsync(() =>
+        {
+            EnsureApplication();
+            var repo = new MonitorRepository(_db); repo.EnsureSchema();
+            var disk = Disk();
+            repo.UpsertDisks([disk]);
+            repo.AddLiveDiskSamples(
+            [
+                new LiveDiskSample
+                {
+                    TimestampUtc = DateTime.UtcNow,
+                    DiskId = disk.DiskId,
+                    ElapsedMilliseconds = 5000,
+                    ReadBytes = 10_000_000,
+                    WriteBytes = 20_000_000,
+                },
+            ], DateTime.UtcNow.AddMinutes(-30));
+            using var config = new ConfigStore(_cfg);
+            config.Update(value => value.LiveGraphRetentionMinutes = 30);
+            var window = new MainWindow(repo, config, new UserSettingsStore(_userSettings));
+            try
+            {
+                Assert.Contains("last 30 min", window.LiveDiskCaption.Text);
+                Assert.Contains("Read 2 MB/s", window.LiveDiskCurrent.Text);
+                Assert.Contains("Write 4 MB/s", window.LiveDiskCurrent.Text);
+                Invoke(window, "RefreshLiveDiskActivity");
+
+                repo.AddLiveDiskSamples([], DateTime.UtcNow);
+                window.DiskSelector.ItemsSource = Array.Empty<object>();
+                window.DiskSelector.SelectedItem = null;
+                Invoke(window, "RefreshLiveDiskActivity");
+            }
+            finally { window.ForceClose(); }
+            return Task.CompletedTask;
+        });
     }
 
     [Fact]

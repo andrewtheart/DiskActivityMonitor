@@ -1,3 +1,4 @@
+using System.Reflection;
 using DiskActivityMonitor.Core.Configuration;
 using DiskActivityMonitor.Core.Data;
 using DiskActivityMonitor.Core.Models;
@@ -118,6 +119,48 @@ public sealed class CollectorWorkerControllerTests : IDisposable
     }
 
     [Fact]
+    public void RunPeriodicTasks_LogsAlertsRaisedByTheAlertEngine()
+    {
+        using var harness = Create(new FakeReader([]));
+        DateTime now = new(2026, 8, 5, 12, 0, 0, DateTimeKind.Utc);
+        SetField(harness.Worker, "_lastDiskScanUtc", now);
+        SetField(harness.Worker, "_lastPruneUtc", now);
+        SetField(harness.Worker, "_lastCheckpointUtc", now);
+        SetField(harness.Worker, "_disks", new List<DiskInfo>
+        {
+            new()
+            {
+                DiskId = "0",
+                InstanceName = "0 C:",
+                FriendlyName = "Test SSD",
+                Volumes = "C:",
+                MediaType = DiskMediaType.Ssd,
+            },
+        });
+        harness.Repo.AddDiskSamples(
+        [
+            new DiskSample
+            {
+                TimestampUtc = now.AddMinutes(-1),
+                DiskId = "0",
+                WriteBytes = 2 * 1024 * 1024,
+            },
+        ]);
+
+        harness.Worker.RunPeriodicTasks(
+            new AppConfig
+            {
+                EnableControllerErrorAlerts = false,
+                SsdWarnGbPerHour = 0.001,
+            },
+            now);
+
+        Assert.Contains(
+            harness.Logger.Entries,
+            entry => entry.Level == LogLevel.Warning && entry.Message.Contains("ALERT", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void InternalConstructor_NullEtwFactory_UsesFallback()
     {
         var reader = new FakeReader([]);
@@ -127,6 +170,133 @@ public sealed class CollectorWorkerControllerTests : IDisposable
         Assert.NotNull(worker);
         try { File.Delete(_configPath + ".null"); } catch { }
     }
+
+    [Fact]
+    public void RecordCollectorHeartbeat_PersistsCompletedMinuteCoverage()
+    {
+        using var harness = Create(new FakeReader([]));
+        var minute = new DateTime(2026, 8, 5, 12, 34, 0, DateTimeKind.Utc);
+
+        harness.Worker.RecordCollectorHeartbeat(minute);
+
+        MonitoringCoverage coverage = harness.Repo.GetMonitoringCoverage(minute, minute.AddMinutes(1));
+        Assert.Equal(1, coverage.MonitoredMinutes);
+        Assert.Equal(1, coverage.RequestedMinutes);
+    }
+
+    [Fact]
+    public void FlushBuckets_RecordsZeroIoMinuteAndIgnoresDefaultMinute()
+    {
+        using var harness = Create(new FakeReader([]));
+        var minute = new DateTime(2026, 8, 5, 12, 34, 0, DateTimeKind.Utc);
+
+        harness.Worker.FlushBuckets(new AppConfig(), default);
+        harness.Worker.FlushBuckets(new AppConfig(), minute);
+
+        Assert.Equal(0, harness.Repo.GetMonitoringCoverage(minute.AddMinutes(-1), minute).MonitoredMinutes);
+        Assert.Equal(1, harness.Repo.GetMonitoringCoverage(minute, minute.AddMinutes(1)).MonitoredMinutes);
+    }
+
+    [Fact]
+    public void RecordLiveDiskSamples_PersistsElapsedDeltasAndClampsNegativeBytes()
+    {
+        using var harness = Create(new FakeReader([]));
+        var now = new DateTime(2026, 8, 6, 12, 0, 0, DateTimeKind.Utc);
+
+        harness.Worker.RecordLiveDiskSamples(
+            now,
+            4.5,
+            new Dictionary<string, (long Read, long Write)> { ["0"] = (-1, 9000) },
+            new AppConfig { LiveGraphRetentionMinutes = 15 });
+
+        LiveDiskSample sample = Assert.Single(harness.Repo.GetLiveDiskSamples("0", now.AddMinutes(-1)));
+        Assert.Equal(4500, sample.ElapsedMilliseconds);
+        Assert.Equal(0, sample.ReadBytes);
+        Assert.Equal(9000, sample.WriteBytes);
+    }
+
+    [Fact]
+    public void ProcessDiskDeltas_AccumulatesMinuteAndPersistsLiveSample()
+    {
+        using var harness = Create(new FakeReader([]));
+        var now = new DateTime(2026, 8, 6, 12, 0, 0, DateTimeKind.Utc);
+
+        harness.Worker.ProcessDiskDeltas(
+            now,
+            5,
+            new Dictionary<string, (long Read, long Write)> { ["0"] = (100, 200) },
+            new AppConfig());
+
+        Assert.Equal((100L, 200L), GetField<Dictionary<string, (long Read, long Write)>>(harness.Worker, "_diskAccum")["0"]);
+        Assert.Single(harness.Repo.GetLiveDiskSamples("0", now.AddSeconds(-1)));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(double.NaN)]
+    public void RecordLiveDiskSamples_IgnoresInvalidElapsedTime(double elapsedSeconds)
+    {
+        using var harness = Create(new FakeReader([]));
+
+        harness.Worker.RecordLiveDiskSamples(
+            DateTime.UtcNow,
+            elapsedSeconds,
+            new Dictionary<string, (long Read, long Write)> { ["0"] = (1, 2) },
+            new AppConfig());
+        harness.Worker.RecordLiveDiskSamples(
+            DateTime.UtcNow,
+            5,
+            new Dictionary<string, (long Read, long Write)>(),
+            new AppConfig());
+
+        Assert.Empty(harness.Repo.GetLiveDiskSamples("0", DateTime.UnixEpoch));
+    }
+
+    [Fact]
+    public void SampleOnce_RollsTheMinuteAndFlushesTheCompletedBucket()
+    {
+        using var harness = Create(new FakeReader([]));
+        DateTime currentMinute = DateTime.UtcNow.AddMinutes(-1);
+        SetField(harness.Worker, "_currentMinuteUtc", currentMinute);
+        SetField(harness.Worker, "_lastDiskScanUtc", DateTime.UtcNow);
+        SetField(harness.Worker, "_lastPruneUtc", DateTime.UtcNow);
+        SetField(harness.Worker, "_lastCheckpointUtc", DateTime.UtcNow);
+        SetField(harness.Worker, "_procReader", new EmptyProcessReader());
+
+        harness.Worker.SampleOnce(0, new AppConfig { EnableControllerErrorAlerts = false });
+
+        Assert.Equal(1, harness.Repo.GetMonitoringCoverage(currentMinute, currentMinute.AddMinutes(1)).MonitoredMinutes);
+    }
+
+    [Fact]
+    public void FlushBuckets_PersistsDiskProcessAndFileAccumulators()
+    {
+        using var harness = Create(new FakeReader([]));
+        DateTime minute = new(2026, 8, 5, 12, 34, 0, DateTimeKind.Utc);
+        GetField<Dictionary<string, (long Read, long Write)>>(harness.Worker, "_diskAccum")["0"] = (10, 20);
+        GetField<Dictionary<string, (long Read, long Write)>>(harness.Worker, "_procAccum")["writer"] = (30, 40);
+        GetField<Dictionary<(string Process, string Path), (long Read, long Write)>>(harness.Worker, "_fileAccum")
+            [("writer", @"C:\data.bin")] = (50, 60);
+
+        harness.Worker.FlushBuckets(
+            new AppConfig
+            {
+                ProcessMinMbPerMinute = 0,
+                FileTargetMinKbPerMinute = 0,
+                FileTargetsPerProcessPerMinute = 5,
+            },
+            minute);
+
+        Assert.Equal((10, 20), harness.Repo.GetDiskTotals("0", minute, minute.AddMinutes(1)));
+        Assert.Equal(40, harness.Repo.GetProcessWrite("writer", minute, minute.AddMinutes(1)));
+        Assert.Equal(60, Assert.Single(harness.Repo.GetTopFileTargets("writer", minute, minute.AddMinutes(1), 5)).WriteBytes);
+    }
+
+    private static T GetField<T>(CollectorWorker worker, string name)
+        => (T)typeof(CollectorWorker).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(worker)!;
+
+    private static void SetField(CollectorWorker worker, string name, object value)
+        => typeof(CollectorWorker).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(worker, value);
 
     private Harness Create(FakeReader reader)
     {
@@ -156,6 +326,13 @@ public sealed class CollectorWorkerControllerTests : IDisposable
             if (_error is not null) throw _error;
             return _result!;
         }
+    }
+
+    private sealed class EmptyProcessReader : DiskActivityMonitor.Core.Collection.IProcessIoReader
+    {
+        public string Description => "test";
+        public Dictionary<string, (long Read, long Write)> SampleDeltas() => [];
+        public void Dispose() { }
     }
 
     private sealed record LogEntry(LogLevel Level, string Message, Exception? Exception);

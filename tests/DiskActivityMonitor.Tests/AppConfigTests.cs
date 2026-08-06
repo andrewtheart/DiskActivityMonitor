@@ -12,6 +12,7 @@ public class AppConfigTests
 
         Assert.Equal(5, cfg.SampleIntervalSeconds);
         Assert.Equal(15, cfg.DashboardRefreshSeconds);
+        Assert.Equal(15, cfg.LiveGraphRetentionMinutes);
         Assert.Equal(365, cfg.RetentionDays);
         Assert.Equal(10, cfg.SsdWarnGbPerHour);
         Assert.Equal(100, cfg.SsdWarnGbPerDay);
@@ -28,6 +29,9 @@ public class AppConfigTests
         Assert.Equal(90, cfg.SsdWearWarnPercent);
         Assert.Equal(2, cfg.TbwProjectionWarnYears);
         Assert.Equal(1, cfg.TbwProjectionCriticalYears);
+        Assert.Equal(90, cfg.HighCoveragePercent);
+        Assert.Equal(512, cfg.TailMaxReadKb);
+        Assert.Equal(1024, cfg.TailMaxBufferKb);
     }
 
     [Fact]
@@ -131,6 +135,9 @@ public class AppConfigTests
         var cfg = new AppConfig
         {
             SampleIntervalSeconds = 10,
+            LiveGraphRetentionMinutes = 30,
+            TailMaxReadKb = 2048,
+            TailMaxBufferKb = 4096,
             SsdWarnGbPerHour = 20,
             DefaultSsdTbw = 1000,
             DefaultSsdTbwUpper = 1500,
@@ -147,6 +154,9 @@ public class AppConfigTests
         var deserialized = JsonSerializer.Deserialize<AppConfig>(json, AppConfig.SerializerOptions)!;
 
         Assert.Equal(10, deserialized.SampleIntervalSeconds);
+        Assert.Equal(30, deserialized.LiveGraphRetentionMinutes);
+        Assert.Equal(2048, deserialized.TailMaxReadKb);
+        Assert.Equal(4096, deserialized.TailMaxBufferKb);
         Assert.Equal(20, deserialized.SsdWarnGbPerHour);
         Assert.Equal(1000, deserialized.DefaultSsdTbw);
         Assert.Equal(1500, deserialized.DefaultSsdTbwUpper);

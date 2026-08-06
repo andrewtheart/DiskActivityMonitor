@@ -177,6 +177,20 @@ public class TbwLookupTests
     }
 
     [Fact]
+    public void SerializedLineCallback_HandlesParallelStreamsWithoutCorruption()
+    {
+        var lines = new List<string>();
+        Action<string?> report = FoundryLocalClient.SerializeLineCallback(line => lines.Add(line));
+
+        Parallel.For(0, 10_000, index => report(index.ToString()));
+        report(null);
+        FoundryLocalClient.SerializeLineCallback(null)("ignored");
+
+        Assert.Equal(10_000, lines.Count);
+        Assert.Equal(10_000, lines.Distinct().Count());
+    }
+
+    [Fact]
     public void ExtractExplicitClaims_CoversNoCapacityNullModelAndGbCapacity()
     {
         var noCapacity = TbwLookupService.ExtractExplicitClaims(null!,

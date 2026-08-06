@@ -1,3 +1,4 @@
+using DiskActivityMonitor.Core;
 using DiskActivityMonitor.Core.Data;
 using DiskActivityMonitor.Core.Collection;
 using DiskActivityMonitor.Core.Models;
@@ -155,6 +156,41 @@ public class MonitorRepositoryTests : IDisposable
     }
 
     [Fact]
+    public void LiveDiskSamples_AreOrderedFilteredAndPruned()
+    {
+        var repo = CreateRepo();
+        var now = new DateTime(2026, 8, 6, 12, 0, 0, DateTimeKind.Utc);
+
+        repo.AddLiveDiskSamples(
+        [
+            new LiveDiskSample { TimestampUtc = now.AddMinutes(-20), DiskId = "0", ElapsedMilliseconds = 5000, ReadBytes = 1, WriteBytes = 2 },
+            new LiveDiskSample { TimestampUtc = now.AddSeconds(-5), DiskId = "0", ElapsedMilliseconds = 5000, ReadBytes = 30, WriteBytes = 40 },
+            new LiveDiskSample { TimestampUtc = now.AddSeconds(-10), DiskId = "0", ElapsedMilliseconds = 4500, ReadBytes = 10, WriteBytes = 20 },
+            new LiveDiskSample { TimestampUtc = now.AddSeconds(-5), DiskId = "1", ElapsedMilliseconds = 5000, ReadBytes = 99, WriteBytes = 99 },
+        ], now.AddMinutes(-15));
+
+        var samples = repo.GetLiveDiskSamples("0", now.AddMinutes(-15));
+
+        Assert.Equal(2, samples.Count);
+        Assert.Equal(now.AddSeconds(-10), samples[0].TimestampUtc);
+        Assert.Equal(4500, samples[0].ElapsedMilliseconds);
+        Assert.Equal((10L, 20L), (samples[0].ReadBytes, samples[0].WriteBytes));
+        Assert.Equal(now.AddSeconds(-5), samples[1].TimestampUtc);
+        Assert.DoesNotContain(samples, sample => sample.ReadBytes == 1);
+        Assert.Empty(repo.GetLiveDiskSamples("1", now));
+    }
+
+    [Fact]
+    public void AddLiveDiskSamples_EmptyBatchDoesNothing()
+    {
+        var repo = CreateRepo();
+
+        repo.AddLiveDiskSamples([], DateTime.UtcNow);
+
+        Assert.Empty(repo.GetLiveDiskSamples("0", DateTime.UnixEpoch));
+    }
+
+    [Fact]
     public void GetDiskTotals_NoDiskData_ReturnsZero()
     {
         var repo = CreateRepo();
@@ -184,6 +220,107 @@ public class MonitorRepositoryTests : IDisposable
     {
         var repo = CreateRepo();
         Assert.Null(repo.GetEarliestSample("missing"));
+    }
+
+    [Fact]
+    public void MonitoringCoverage_CountsHeartbeatsOnceAndUsesDiskRowsForHistoricalFallback()
+    {
+        var repo = CreateRepo();
+        var start = new DateTime(2025, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+
+        repo.AddCollectorHeartbeat(start);
+        repo.AddCollectorHeartbeat(start);
+        repo.AddCollectorHeartbeat(start.AddMinutes(1));
+        repo.AddDiskSamples([
+            new DiskSample { TimestampUtc = start.AddMinutes(1), DiskId = "0", WriteBytes = 1 },
+            new DiskSample { TimestampUtc = start.AddMinutes(2), DiskId = "0", WriteBytes = 1 },
+            new DiskSample { TimestampUtc = start.AddMinutes(2), DiskId = "1", WriteBytes = 1 },
+        ]);
+
+        MonitoringCoverage coverage = repo.GetMonitoringCoverage(start, start.AddMinutes(4));
+
+        Assert.Equal(3, coverage.MonitoredMinutes);
+        Assert.Equal(4, coverage.RequestedMinutes);
+        Assert.Equal(0.75, coverage.Fraction);
+        Assert.Equal(75, coverage.Percent);
+    }
+
+    [Fact]
+    public void MonitoringCoverage_HandlesEmptyAndClampsRowsToRequestedRange()
+    {
+        var repo = CreateRepo();
+        var start = new DateTime(2025, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+
+        MonitoringCoverage empty = repo.GetMonitoringCoverage(start, start);
+        Assert.Equal(default, empty);
+        Assert.Equal(0, empty.Fraction);
+        Assert.Equal(0, empty.Percent);
+
+        repo.AddCollectorHeartbeat(start);
+        repo.AddCollectorHeartbeat(start.AddMinutes(1));
+        MonitoringCoverage coverage = repo.GetMonitoringCoverage(start, start.AddSeconds(30));
+
+        Assert.Equal(1, coverage.MonitoredMinutes);
+        Assert.Equal(1, coverage.RequestedMinutes);
+        Assert.Equal(1, coverage.Fraction);
+    }
+
+    [Fact]
+    public void PruneOlderThan_RemovesCollectorHeartbeats()
+    {
+        var repo = CreateRepo();
+        var start = new DateTime(2025, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+        repo.AddCollectorHeartbeat(start);
+        repo.AddCollectorHeartbeat(start.AddMinutes(1));
+
+        int removed = repo.PruneOlderThan(start.AddMinutes(1));
+
+        Assert.Equal(1, removed);
+        Assert.Equal(1, repo.GetMonitoringCoverage(start, start.AddMinutes(2)).MonitoredMinutes);
+    }
+
+    [Fact]
+    public void RecentDiskWriteRate_NoHistory_ReturnsDefault()
+    {
+        var repo = CreateRepo();
+        Assert.Equal(default, repo.GetRecentDiskWriteRate("0", DateTime.UtcNow, 90));
+    }
+
+    [Fact]
+    public void RecentDiskWriteRate_UsesMonitoredMinutesAndCoverageGate()
+    {
+        var repo = CreateRepo();
+        var start = new DateTime(2025, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+        repo.AddDiskSamples([new DiskSample { TimestampUtc = start, DiskId = "0", WriteBytes = 600 }]);
+        repo.AddCollectorHeartbeat(start);
+        repo.AddCollectorHeartbeat(start.AddMinutes(1));
+
+        MonitoringRateStats rate = repo.GetRecentDiskWriteRate("0", start.AddMinutes(4), 90);
+
+        Assert.Equal(2, rate.MonitoredMinutes);
+        Assert.Equal(4, rate.RequestedMinutes);
+        Assert.Equal(18_000, rate.MonitoredBytesPerHour);
+        Assert.Equal(9_000, rate.CalendarBytesPerHour);
+        Assert.False(rate.HasHighCoverage);
+    }
+
+    [Fact]
+    public void RecentDiskWriteRate_UsesOnlyTrailingSevenDaysForLongHistory()
+    {
+        var repo = CreateRepo();
+        var now = new DateTime(2025, 6, 10, 12, 0, 0, DateTimeKind.Utc);
+        repo.AddDiskSamples([
+            new DiskSample { TimestampUtc = now.AddDays(-8), DiskId = "0", WriteBytes = 1_000_000 },
+            new DiskSample { TimestampUtc = now.AddMinutes(-1), DiskId = "0", WriteBytes = 600 },
+        ]);
+        repo.AddCollectorHeartbeat(now.AddMinutes(-1));
+
+        MonitoringRateStats rate = repo.GetRecentDiskWriteRate("0", now, 0);
+
+        Assert.Equal(600, rate.TotalBytes);
+        Assert.Equal(1, rate.MonitoredMinutes);
+        Assert.Equal(7 * 24 * 60, rate.RequestedMinutes);
+        Assert.False(rate.HasHighCoverage);
     }
 
     [Fact]

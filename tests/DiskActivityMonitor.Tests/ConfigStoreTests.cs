@@ -24,6 +24,7 @@ public class ConfigStoreTests : IDisposable
     {
         using var store = new ConfigStore(_configPath);
         Assert.Equal(5, store.Current.SampleIntervalSeconds);
+        Assert.Equal(90, store.Current.HighCoveragePercent);
         Assert.True(File.Exists(_configPath));
     }
 
@@ -34,11 +35,50 @@ public class ConfigStoreTests : IDisposable
         var cfg = store.Current;
         cfg.SsdWarnGbPerHour = 42;
         cfg.AlertCooldownMinutes = 30;
+        cfg.HighCoveragePercent = 92.5;
+        cfg.TrackFileTargets = false;
+        cfg.FileTargetsPerProcessPerMinute = 42;
+        cfg.FileTargetMinKbPerMinute = 12.5;
+        cfg.FileTargetRetentionDays = 45;
+        cfg.FileTargetTrackingLimit = 54321;
+        cfg.DatabaseSizeWarnGb = 2.5;
+        cfg.DatabaseSizeAlertCooldownHours = 24;
+        cfg.BinaryExtensions = "exe;bin";
+        cfg.TailInitialLines = 321;
+        cfg.TailMaxLines = 6543;
+        cfg.TailMaxReadKb = 2048;
+        cfg.TailMaxBufferKb = 4096;
+        cfg.LiveGraphRetentionMinutes = 30;
         store.Save(cfg);
 
         var reloaded = store.Reload();
         Assert.Equal(42, reloaded.SsdWarnGbPerHour);
         Assert.Equal(30, reloaded.AlertCooldownMinutes);
+        Assert.Equal(92.5, reloaded.HighCoveragePercent);
+        Assert.False(reloaded.TrackFileTargets);
+        Assert.Equal(42, reloaded.FileTargetsPerProcessPerMinute);
+        Assert.Equal(12.5, reloaded.FileTargetMinKbPerMinute);
+        Assert.Equal(45, reloaded.FileTargetRetentionDays);
+        Assert.Equal(54321, reloaded.FileTargetTrackingLimit);
+        Assert.Equal(2.5, reloaded.DatabaseSizeWarnGb);
+        Assert.Equal(24, reloaded.DatabaseSizeAlertCooldownHours);
+        Assert.Equal("exe;bin", reloaded.BinaryExtensions);
+        Assert.Equal(321, reloaded.TailInitialLines);
+        Assert.Equal(6543, reloaded.TailMaxLines);
+        Assert.Equal(2048, reloaded.TailMaxReadKb);
+        Assert.Equal(4096, reloaded.TailMaxBufferKb);
+        Assert.Equal(30, reloaded.LiveGraphRetentionMinutes);
+    }
+
+    [Theory]
+    [InlineData(double.NaN, 90)]
+    [InlineData(-5, 1)]
+    [InlineData(500, 100)]
+    public void HighCoveragePercent_IsFiniteAndClamped(double configured, double expected)
+    {
+        using var store = new ConfigStore(_configPath);
+        store.Update(config => config.HighCoveragePercent = configured);
+        Assert.Equal(expected, store.Current.HighCoveragePercent);
     }
 
     [Fact]

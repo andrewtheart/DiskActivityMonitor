@@ -5,6 +5,25 @@ namespace DiskActivityMonitor.Tests;
 public sealed class InstallerScriptTests
 {
     [Fact]
+    public void BuildInstallersLaunchNoPush_BuildsAllPreservesVersionAndLaunchesFreshX64Installer()
+    {
+        string wrapper = ReadScript("scripts", "build-installers-launch-nopush.ps1");
+
+        Assert.Contains("$canonicalScript = Join-Path $PSScriptRoot 'build-all-installers.ps1'", wrapper);
+        Assert.Contains("Variant = @('all')", wrapper);
+        Assert.Contains("$buildArgs['Version'] = $Version", wrapper);
+        Assert.Contains("& $canonicalScript @buildArgs", wrapper);
+        Assert.Contains("$buildStartedUtc = [DateTime]::UtcNow", wrapper);
+        Assert.Contains("DiskActivityMonitor-Setup-*-x64.exe", wrapper);
+        Assert.Contains("Start-Process -FilePath $x64Installer.FullName", wrapper);
+        Assert.DoesNotContain("$buildArgs['Commit']", wrapper);
+        Assert.DoesNotContain("$buildArgs['Push']", wrapper);
+        Assert.DoesNotContain("git commit", wrapper);
+        Assert.DoesNotContain("git push", wrapper);
+        Assert.DoesNotContain("Build + 1", wrapper);
+    }
+
+    [Fact]
     public void CanonicalScript_RemainsBuildAllInstallers()
     {
         string canonical = ReadScript("scripts", "build-all-installers.ps1");
@@ -260,6 +279,7 @@ public sealed class InstallerScriptTests
     {
         AssertParsesWithWindowsPowerShell(ReadScriptPath("scripts", "installer-git-commits.ps1"));
         AssertParsesWithWindowsPowerShell(ReadScriptPath("scripts", "build-all-installers.ps1"));
+        AssertParsesWithWindowsPowerShell(ReadScriptPath("scripts", "build-installers-launch-nopush.ps1"));
         AssertParsesWithWindowsPowerShell(ReadScriptPath("installer", "build-installer.ps1"));
     }
 
@@ -304,28 +324,41 @@ public sealed class InstallerScriptTests
         // Task dialogs render custom labels as stacked command links, so a custom form is used
         // to get ordinary push buttons side by side.
         Assert.DoesNotContain("SuppressibleTaskDialogMsgBox(", script);
-        Assert.Contains("function AskKeepExistingData(const Instruction, Body: String): Boolean;", script);
+        Assert.Contains("function AskKeepExistingData(const Instruction, Body, DeleteWarning: String): Boolean;", script);
         Assert.Contains("CreateCustomForm(FormWidth,", script);
 
         Assert.Contains("DeleteButton.Caption := '&Delete existing data';", script);
-        Assert.Contains("KeepPanel.Caption := 'Keep existing data';", script);
+        Assert.Contains("KeepButton.Caption := 'Keep existing data';", script);
 
-        // A themed push button ignores Color/Font.Color, so keep is drawn as an accent panel.
-        Assert.Contains("KeepButtonColor = $D47800;", script);
-        Assert.Contains("RetentionKeepPanel.ParentBackground := False;", script);
-        Assert.Contains("RetentionKeepPanel.Color := KeepButtonColor;", script);
-        Assert.Contains("RetentionKeepPanel.Font.Color := clWhite;", script);
-        Assert.Contains("RetentionKeepPanel.OnClick := @RetentionKeepClick;", script);
+        // Native dark mode paints the real default/focused Keep button blue.
+        Assert.Contains("RetentionKeepButton := TNewButton.Create(RetentionForm);", script);
+        Assert.Contains("RetentionKeepButton.ModalResult := mrOk;", script);
+        Assert.Contains("RetentionKeepButton.Default := True;", script);
+        Assert.Contains("RetentionForm.ActiveControl := RetentionKeepButton;", script);
+        Assert.DoesNotContain("RetentionKeepPanel", script);
+        Assert.DoesNotContain("KeepButtonColor", script);
 
         // Same row, with delete placed to the left of keep, so keep is the rightmost button.
-        Assert.Contains("RetentionKeepPanel.Left := RetentionForm.ClientWidth - ContentLeft - ButtonWidth;", script);
-        Assert.Contains("RetentionDeleteButton.Left := RetentionKeepPanel.Left - ScaleX(8) - ButtonWidth;", script);
-        Assert.Contains("RetentionDeleteButton.Top := RetentionKeepPanel.Top;", script);
+        Assert.Contains("RetentionKeepButton.Left := RetentionForm.ClientWidth - ContentLeft - ButtonWidth;", script);
+        Assert.Contains("RetentionDeleteButton.Left := RetentionKeepButton.Left - ScaleX(8) - ButtonWidth;", script);
+        Assert.Contains("RetentionDeleteButton.Top := RetentionKeepButton.Top;", script);
 
-        // Only delete returns mrNo, so Esc, Enter and the title-bar X all keep.
-        Assert.Contains("RetentionDeleteButton.ModalResult := mrNo;", script);
+        // Delete is neutral and cannot close the form until its warning is confirmed.
+        Assert.Contains("RetentionDeleteButton.ModalResult := mrNone;", script);
+        Assert.Contains("RetentionDeleteButton.Default := False;", script);
+        Assert.Contains("RetentionDeleteButton.OnClick := @RetentionDeleteClick;", script);
+        Assert.Contains("procedure RetentionDeleteClick(Sender: TObject);", script);
+        Assert.Contains("RetentionDeleteConfirmed := True;", script);
+        Assert.Contains("RetentionForm.Close;", script);
         Assert.Contains("RetentionForm.OnKeyDown := @RetentionKeyDown;", script);
-        Assert.Contains("Result := RetentionForm.ShowModal() <> mrNo;", script);
+        Assert.Contains("RetentionForm.ShowModal();", script);
+        Assert.Contains("Result := not RetentionDeleteConfirmed;", script);
+
+        Assert.Contains("Are you sure you want to continue?", script);
+        Assert.Contains("This deletes the existing machine settings, current-account preferences, and saved API", script);
+        Assert.Contains("Monitoring history is not deleted.", script);
+        Assert.Contains("This replaces the active monitoring database with a new, empty database.", script);
+        Assert.Contains("setup does not erase it.", script);
 
         // Suppressed unattended installs must keep rather than block on a modal form.
         Assert.Contains("WizardSilent and CommandLineHasSwitch('/SUPPRESSMSGBOXES')", script);
@@ -386,6 +419,63 @@ public sealed class InstallerScriptTests
             @"(?m)^\s+CompleteInstallPreparationStep;\s*$").Count;
 
         Assert.Equal(expectedSteps, completedSteps);
+    }
+
+    [Fact]
+    public void PrepareToInstall_InformsUserAndStopsRunningInstancesBeforeFilePreparation()
+    {
+        string script = ReadInstallerScript();
+
+        Assert.Contains("function GetInstalledInstancesRunning(var Running: Boolean; var ErrorText: String): Boolean;", script);
+        Assert.Contains("Get-CimInstance Win32_Process", script);
+        Assert.Contains("[string]::Equals([IO.Path]::GetFullPath($_.ExecutablePath), $target", script);
+        Assert.Contains("Get-Service -Name ", script);
+        Assert.Contains("$service.Status -ne ''Stopped''", script);
+
+        Assert.Contains("Disk Activity Monitor must close before setup continues", script);
+        Assert.Contains("before setup writes the new application files", script);
+        Assert.Contains("Close automatically and continue", script);
+        Assert.Contains("I''ve closed them - continue", script);
+        Assert.Contains("Disk Activity Monitor is still running.", script);
+        Assert.Contains("if WizardSilent then", script);
+
+        int confirm = script.IndexOf("if not ConfirmRunningInstancesCanClose(Result) then", StringComparison.Ordinal);
+        int stopTray = script.IndexOf("SetInstallPreparationStatus('Closing the existing tray application...'", confirm, StringComparison.Ordinal);
+        int stopService = script.IndexOf("'stop {#ServiceName}'", stopTray, StringComparison.Ordinal);
+        int secureApp = script.IndexOf("if not SecureApplicationDirectory(Result) then", stopService, StringComparison.Ordinal);
+        int secureData = script.IndexOf("if not SecureDataDirectory(Result) then", secureApp, StringComparison.Ordinal);
+
+        Assert.True(confirm > 0 && stopTray > confirm);
+        Assert.True(stopService > stopTray);
+        Assert.True(secureApp > stopService);
+        Assert.True(secureData > secureApp);
+        Assert.Contains("Every installed instance is now stopped and unregistered. [Files] copying has not begun.", script);
+    }
+
+    [Fact]
+    public void Installer_UsesNativeDarkThemeAndDiskActivityMonitorArtworkOnEveryPage()
+    {
+        string script = ReadInstallerScript();
+        string iconScript = ReadScript("scripts", "make-icon.ps1");
+
+        Assert.Contains("WizardStyle=modern dark includetitlebar hidebevels", script);
+        Assert.Contains("WizardImageFile=assets\\wizard-dark.png", script);
+        Assert.Contains("WizardSmallImageFile=assets\\wizard-small-dark.png", script);
+        Assert.Contains("SetupIconFile=..\\assets\\app.ico", script);
+        Assert.Contains("Save-WizardAssets -GlyphPng $frames[-1]", iconScript);
+        Assert.Contains("wizard-dark.png", iconScript);
+        Assert.Contains("wizard-small-dark.png", iconScript);
+        Assert.Contains("$graphics.Clear([System.Drawing.Color]::Transparent)", iconScript);
+        Assert.Contains("Get-AlphaBounds -Bitmap $glyphBitmap", iconScript);
+        Assert.DoesNotContain("$graphics.Clear($panel)", iconScript);
+    }
+
+    [Fact]
+    public void Installer_UsesMachineWideSingleInstanceMutex()
+    {
+        string script = ReadInstallerScript();
+
+        Assert.Contains("SetupMutex=Global\\DiskActivityMonitor.Setup.SingleInstance", script);
     }
 
     private static void AssertParsesWithWindowsPowerShell(string scriptPath)

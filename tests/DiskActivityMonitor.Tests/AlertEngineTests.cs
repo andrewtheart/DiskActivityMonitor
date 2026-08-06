@@ -164,6 +164,8 @@ public class AlertEngineTests : IDisposable
                 WriteBytes = 100_000_000_000_000,
             }]);
         }
+        for (int minute = 7 * 24 * 60; minute >= 1; minute--)
+            _repo.AddCollectorHeartbeat(now.AddMinutes(-minute));
 
         var alerts = _engine.Evaluate([MakeSsd()], cfg, now);
 
@@ -171,6 +173,72 @@ public class AlertEngineTests : IDisposable
         Assert.Equal(AlertSeverity.Critical, alert.Severity);
         Assert.Contains("150 to 600 TBW estimate", alert.Message);
         Assert.Contains("to", alert.Message);
+    }
+
+    [Fact]
+    public void Evaluate_TbwProjection_LowCoverageDoesNotRaise()
+    {
+        var cfg = new AppConfig
+        {
+            SsdWarnGbPerHour = 0,
+            SsdWarnGbPerDay = 0,
+            SsdCriticalGbPerDay = 0,
+            TbwProjectionWarnYears = 100,
+            TbwProjectionCriticalYears = 50,
+        };
+        var now = new DateTime(2025, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+        _repo.AddDiskSamples([
+            new DiskSample { TimestampUtc = now.AddDays(-8), DiskId = "0", WriteBytes = 100_000_000_000_000 },
+            new DiskSample { TimestampUtc = now.AddMinutes(-1), DiskId = "0", WriteBytes = 100_000_000_000_000 },
+        ]);
+
+        var alerts = _engine.Evaluate([MakeSsd()], cfg, now, highCoveragePercent: 90);
+
+        Assert.DoesNotContain(alerts, candidate => candidate.RuleKey == "tbw-life:0");
+    }
+
+    [Theory]
+    [InlineData(7_000_000_000_000, 10, 1, AlertSeverity.Critical)]
+    [InlineData(1_000_000_000_000, 10, 1, AlertSeverity.Warning)]
+    [InlineData(100_000_000_000, 10, 1, null)]
+    public void Evaluate_TbwProjection_CoversCriticalWarningAndHealthyRates(
+        long sevenDayBytes,
+        double warningYears,
+        double criticalYears,
+        AlertSeverity? expectedSeverity)
+    {
+        var cfg = new AppConfig
+        {
+            DefaultSsdTbw = 150,
+            DefaultSsdTbwUpper = null,
+            SsdWarnGbPerHour = 0,
+            SsdWarnGbPerDay = 0,
+            SsdCriticalGbPerDay = 0,
+            TbwProjectionWarnYears = warningYears,
+            TbwProjectionCriticalYears = criticalYears,
+        };
+        var now = new DateTime(2025, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+        _repo.AddDiskSamples([
+            new DiskSample { TimestampUtc = now.AddDays(-8), DiskId = "0", WriteBytes = 1 },
+            new DiskSample { TimestampUtc = now.AddMinutes(-1), DiskId = "0", WriteBytes = sevenDayBytes },
+        ]);
+        for (int minute = 7 * 24 * 60; minute >= 1; minute--)
+            _repo.AddCollectorHeartbeat(now.AddMinutes(-minute));
+
+        var alerts = _engine.Evaluate([MakeSsd()], cfg, now);
+        var projection = alerts.SingleOrDefault(candidate => candidate.RuleKey == "tbw-life:0");
+
+        if (expectedSeverity is null)
+        {
+            Assert.Null(projection);
+        }
+        else
+        {
+            Assert.NotNull(projection);
+            Assert.Equal(expectedSeverity, projection.Severity);
+            Assert.Contains("150 TBW rating", projection.Message);
+            Assert.DoesNotContain(" to ", projection.Message);
+        }
     }
 
     // ────────────────────────────────────────── SMART wear percentage

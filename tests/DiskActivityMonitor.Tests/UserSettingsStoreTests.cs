@@ -1,4 +1,5 @@
 using DiskActivityMonitor.Core.Configuration;
+using DiskActivityMonitor.Core.Updates;
 
 namespace DiskActivityMonitor.Tests;
 
@@ -19,6 +20,7 @@ public sealed class UserSettingsStoreTests : IDisposable
     [Fact]
     public void Save_And_Reload_PreservesAutoSuspendRules()
     {
+        var lastUpdateCheck = new DateTimeOffset(2026, 8, 5, 12, 30, 0, TimeSpan.Zero);
         var store = new UserSettingsStore(_path);
         store.Save(new UserSettings
         {
@@ -28,6 +30,10 @@ public sealed class UserSettingsStoreTests : IDisposable
             WebSearchProvider = "google",
             TbwLookupMethod = TbwLookupMethod.SerperOnly,
             TbwLookupModel = "model-id",
+            AppUpdateCheckMode = AppUpdateCheckMode.Manual,
+            LastAppUpdateCheckUtc = lastUpdateCheck,
+            LastAppUpdateAlertedVersion = "1.4.13",
+            MaxInstallerSizeMb = 384,
             AutoSuspendRules =
             [
                 new AutoSuspendRule
@@ -52,6 +58,10 @@ public sealed class UserSettingsStoreTests : IDisposable
         Assert.Equal("google", reloaded.WebSearchProvider);
         Assert.Equal(TbwLookupMethod.SerperOnly, reloaded.TbwLookupMethod);
         Assert.Equal("model-id", reloaded.TbwLookupModel);
+        Assert.Equal(AppUpdateCheckMode.Manual, reloaded.AppUpdateCheckMode);
+        Assert.Equal(lastUpdateCheck, reloaded.LastAppUpdateCheckUtc);
+        Assert.Equal("1.4.13", reloaded.LastAppUpdateAlertedVersion);
+        Assert.Equal(384, reloaded.MaxInstallerSizeMb);
     }
 
     [Fact]
@@ -90,6 +100,14 @@ public sealed class UserSettingsStoreTests : IDisposable
 
         Assert.False(store.Current.EnableNotifications);
         Assert.Equal("writer", Assert.Single(store.Current.AutoSuspendRules).ProcessName);
+    }
+
+    [Fact]
+    public void InvalidInstallerSizeLimit_FallsBackToTheDocumentedDefault()
+    {
+        new UserSettingsStore(_path).Save(new UserSettings { MaxInstallerSizeMb = 0 });
+
+        Assert.Equal(AppUpdateDownloader.DefaultMaxInstallerSizeMb, new UserSettingsStore(_path).Current.MaxInstallerSizeMb);
     }
 
     [Fact]
