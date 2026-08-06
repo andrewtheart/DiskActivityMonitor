@@ -348,7 +348,10 @@ flowchart LR
   writes. The per-disk physical totals remain authoritative for SSD endurance. (Under the
   un-elevated fallback reader, per-process numbers over-count further because they also include
   pipe/device I/O.)
-- TBW projections assume your recent observed average write rate continues; they are estimates,
+- Average/median throughput and endurance write rates use only minutes when the collector was
+  monitoring. The dashboard reports coverage and withholds calendar-rate/projection claims below
+  the configurable high-coverage threshold (90% by default), rather than treating gaps as idle.
+- TBW projections assume your recent monitored average write rate continues; they are estimates,
   not guarantees. Consumed endurance uses drive-reported lifetime writes when available and falls
   back to writes observed since monitoring started when lifetime telemetry is unavailable.
 - Reading some processes owned by other accounts requires the collector to run with
@@ -369,6 +372,7 @@ replacements are ignored in favor of the last known-good settings. Thresholds ar
 |-----|---------|---------|
 | `sampleIntervalSeconds` | Counter sampling cadence | 5 |
 | `dashboardRefreshSeconds` | How often the dashboard re-reads the DB and redraws tables, graphs and stats | 15 |
+| `liveGraphRetentionMinutes` | Rolling granular physical read/write history shown by the live graph | 15 |
 | `retentionDays` | Minute-level history kept before pruning | 365 |
 | `processMinMbPerMinute` | Ignore processes writing less than this per minute | 0.5 |
 | `ssdWarnGbPerHour` | Warn above this many GB written to an SSD in 1h | 10 |
@@ -385,6 +389,8 @@ replacements are ignored in favor of the last known-good settings. Thresholds ar
 | `diskTbwRatingsUpper` | Optional per-disk upper TBW; when set, endurance %/projection are shown as a range | none |
 | `tbwProjectionWarnYears` / `tbwProjectionCriticalYears` | Projected-years warning / critical thresholds | 2 / 1 |
 | `ssdWearWarnPercent` | SMART wear warning threshold | 90 |
+| `tailMaxReadKb` | Maximum decoded data per live-tail poll; total file size is unrestricted | 512 |
+| `tailMaxBufferKb` | Maximum decoded text retained by the live-tail viewer | 1024 |
 
 Action-bearing preferences are isolated per Windows user in
 `%LOCALAPPDATA%\DiskActivityMonitor\user-settings.json`:

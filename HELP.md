@@ -157,6 +157,12 @@ The current bucket is highlighted.
 
 The throughput card shows average, median, and busiest-minute MB/s for 1 hour, 24 hours, 7 days, or 30 days.
 
+Average and median use only minutes when the collector was actually monitoring. A monitored minute
+with no disk activity counts as zero; a minute missed because the service or computer was stopped
+does not. The card shows monitoring coverage for the selected period. When coverage reaches the
+configured high-coverage threshold, it also shows a calendar-time average. Below that threshold,
+the calendar average is withheld rather than treating missing time as idle.
+
 ### Processes and Alert center
 
 - **Top application write requests** ranks process-level logical writes for the selected time range.
@@ -203,7 +209,10 @@ Many drives expose their native SMART wear field only as a whole integer. In tha
 
 ### Projection caveats
 
-The projected years-to-TBW value assumes the recent average write rate continues. It is not a failure prediction or warranty calculation. Workload changes can materially change the projection.
+The projected years-to-TBW value uses the recent average per monitored time and is shown only when
+recent monitoring coverage reaches the configured high-coverage threshold. This prevents a long
+service shutdown from making drive life look artificially long. It is not a failure prediction or
+warranty calculation. Workload changes can materially change the projection.
 
 ---
 
@@ -392,11 +401,14 @@ So the process name cannot identify the work - the target file can.
 
 ### Which files a process wrote
 
-Hover over any bar or click any row in **Top application write requests** to open the per-file
-breakdown for that process. Each file shows its size share, a classification (NTFS metadata, paging file, registry
+Hover over a process bar or click any row in **Top application write requests** to open the per-file breakdown for that
+process. Each file shows its size share, a classification (NTFS metadata, paging file, registry
 hive, virtual disk, search index, Defender, event log, shadow copy, temporary, log, database,
 network path) and one line explaining what causes that kind of write. Opening it for `System`
 also shows the kernel explanation above.
+
+After closing a hover-opened breakdown with Enter, Escape, or Close, it stays closed until the
+pointer leaves that bar. This prevents a stationary pointer from immediately reopening it.
 
 The same data is available from the CLI:
 
@@ -411,11 +423,111 @@ Per-file attribution requires the ETW collector and is controlled in Settings:
 | Record which files each process writes | on | Master switch for per-file attribution. |
 | Files kept per process / minute | 15 | Busiest files stored for each process each minute. |
 | Minimum per file (KB/min) | 256 | Files below this in a minute are not stored. |
-| File history (days) | 7 | Per-file rows are far more numerous, so they expire sooner than the process rollup. |
+| File history (days) | 30 | Per-file rows are far more numerous, so they expire sooner than the process rollup. Configurable from 1 to 365 days. |
 | Files tracked in memory | 20000 | Upper bound on distinct files tracked between samples. |
 
 Because of the size floor, the listed files usually account for most - not all - of a process's
 logical writes; the modal states the exact share.
+
+### Analytics in the per-file breakdown
+
+The **Analytics** button in the breakdown header toggles a chart band above the file list:
+
+- **Share of writes by process** - a donut showing every process that wrote during the selected
+  window, with the process you opened pulled out and highlighted. The centre shows the total, so
+  you can see immediately whether this process is the main writer or a minor one.
+- **Write volume over time** - the process's own writes bucketed across the window (at most 48
+  intervals). A single tall bar is a burst; an even row is sustained background writing. The
+  busiest interval is highlighted.
+- **Bytes written by file type** - the tracked files grouped by extension. This answers "is this
+  logs, databases, or temporary files?" without reading every path.
+
+### Row actions
+
+Each file row carries four actions on the right and the same copy command on its right-click menu:
+
+| Icon | Action | Notes |
+|---|---|---|
+| Copy | Copy full path | Copies the exact path to the clipboard. Also available as **Copy full path** on right-click. |
+| Eye | Live tail | Streams new lines as they are written. Disabled for binary extensions. |
+| Lock | Find open handles | Lists which processes currently hold that file open. |
+| Bin | Delete | Asks for confirmation, then reports exactly why a delete failed. |
+
+**Live tail** opens the file with shared read/write/delete access, so it never blocks the process
+that is writing. It seeds the view with the last lines, then polls once a second. *Follow* keeps
+the newest line in view and *Pause* freezes the display without stopping the writer. If the file
+is truncated or rotated, the view restarts and says so. Files whose extension is on the binary
+list are not opened as text; the viewer explains why instead.
+
+Tail safety is based on bounded work, not total file size. The reader seeks directly to the end and
+decodes only the configured trailing window, so a multi-gigabyte log does not require reading the
+whole file. Controlled sparse-file tests from 1 MiB through 8 GiB showed effectively constant read
+time at a 512 KiB window (about 1-5 ms after warm-up, roughly 3 MiB temporary managed allocation).
+A 4 MiB window allocated about 24 MiB per read, so 512 KiB remains the conservative default. The
+display has a separate 1 MiB decoded-text ceiling for minified files with extremely long lines.
+
+**Delete** never uses the Recycle Bin. When it fails, the reason is classified rather than shown
+as a raw error:
+
+| Result | Meaning |
+|---|---|
+| Read-only | The file carries the read-only attribute. Clear it and retry. |
+| Access denied | Permission, ownership, or elevation problem. |
+| In use by another process | Another process holds a conflicting handle. |
+
+For the last two, a **Find what is locking it** button runs Sysinternals Handle and names the
+holding processes with their PIDs. Without administrator rights, handles owned by other accounts
+are invisible, and the app says so rather than reporting a misleading "nothing found".
+
+### Sysinternals Handle
+
+**Trace open handles** in the breakdown footer lists every file, key, and object the process
+currently has open. Both this and the per-file lock lookup need `handle.exe`, which the app finds
+in this order:
+
+1. Beside the monitoring database in `%ProgramData%\DiskActivityMonitor`.
+2. Any directory on `PATH`.
+
+If it is not present, the app explains what it is and offers to download it. The download comes
+only from the official Sysinternals HTTPS endpoint
+(`https://download.sysinternals.com/files/Handle.zip`); redirects to any other host are rejected,
+only the Handle executables and EULA are extracted, and the result is stored next to the database.
+Nothing is installed system-wide and no elevation is required.
+
+Handle enumerates handles owned by other users only when Disk Activity Monitor itself runs
+elevated. Every trace states whether it ran elevated so an empty result is never misread.
+
+### Live tail settings
+
+| Setting | Default | Meaning |
+|---|---|---|
+| Binary file extensions | Yagu's binary, media, archive, and database defaults | Extensions never opened as text by the eye icon. Semicolon-separated. |
+| Lines shown on open | 200 | Trailing lines seeded when the tail opens. |
+| Maximum lines buffered | 5000 | Ceiling on retained lines, so a busy log cannot grow without bound. |
+| Maximum decoded per poll (KiB) | 512 | Bounds each read regardless of total file size or append burst size. |
+| Maximum displayed text (KiB) | 1024 | Bounds retained decoded text even when lines are extremely long. |
+
+**Restore default extensions** puts the shipped list back. Clearing the box entirely keeps the
+previous list rather than making every file tailable.
+
+### Database size and compaction
+
+Disk Activity Monitor watches its own database and warns when it grows past a threshold.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| Warn above (GB) | 1 | Total of the database, its write-ahead log, and index. Set to 0 to disable. |
+| Repeat warning after (hours) | 12 | Minimum gap between repeat warnings. |
+
+The warning offers **Compact now**, which checkpoints the write-ahead log and runs a SQLite
+`VACUUM`. Deleting expired history only marks pages reusable, so a database that has pruned a lot
+of data stays large on disk until it is rebuilt; compaction returns that space. No history is
+lost, but the rebuild briefly blocks the collector and can take minutes on a large file.
+
+If the dashboard is minimised, in the tray, or not focused when the threshold is crossed, the
+warning also arrives as a Windows notification with a **Compact now** button. Compaction always
+runs in the dashboard rather than in the short-lived notification process. You can also compact at
+any time from **Settings -> Database size -> Compact database now**.
 
 ---
 
@@ -436,9 +548,6 @@ Auto-suspend freezes all threads in matching processes after their rolling-hour 
 5. Save rules.
 
 ### Suspend from an alert
-
-Process-heavy-write notifications include the top two attributed files and how much was written
-to each when per-file ETW data is available.
 
 An alert about a single heavy-writing process offers a **Suspend `<process>`** button and a
 **Suspend for** picker: 5 minutes, 15 minutes, 30 minutes, 1 hour, or until you resume it.
@@ -497,7 +606,26 @@ Machine-wide collector settings are stored in `%ProgramData%\DiskActivityMonitor
 | `diskTbwRatingsUpper` | empty | Per-disk upper TBW values. |
 | `tbwProjectionWarnYears` | `2` | Projection warning threshold. |
 | `tbwProjectionCriticalYears` | `1` | Projection critical threshold. |
+| `highCoveragePercent` | `90` | Minimum monitoring coverage required for calendar-rate and endurance projection claims. |
 | `ssdWearWarnPercent` | `90` | SMART wear warning threshold. |
+| `trackFileTargets` | `true` | Master switch for per-file attribution. |
+| `fileTargetsPerProcessPerMinute` | `15` | Busiest files stored per process per minute. |
+| `fileTargetMinKbPerMinute` | `64` | Per-file size floor for a minute to be stored. |
+| `fileTargetRetentionDays` | `30` | Age at which per-file rows are pruned (1-365). |
+| `fileTargetTrackingLimit` | `20000` | Distinct files tracked in memory between samples. |
+| `databaseSizeWarnGb` | `1` | Warn when the database, WAL, and index together exceed this size. `0` disables. |
+| `databaseSizeAlertCooldownHours` | `12` | Minimum gap between repeat database-size warnings. |
+| `binaryExtensions` | see below | Extensions never opened as text by the live tail. |
+| `tailInitialLines` | `200` | Trailing lines seeded when a live tail opens. |
+| `tailMaxLines` | `5000` | Maximum lines the live tail retains. |
+| `tailMaxReadKb` | `512` | Maximum KiB decoded by one initial or incremental tail read. |
+| `tailMaxBufferKb` | `1024` | Approximate maximum KiB of decoded UTF-16 text retained in the viewer. |
+| `liveGraphRetentionMinutes` | `15` | Granular physical-disk samples retained for the live graph (1-120). |
+
+`binaryExtensions` is a semicolon-separated list seeded from Yagu's binary, skip, and archive
+extension defaults, so executables, media, fonts, documents, databases, dumps, and archives are all
+excluded from live tailing. Edit it in **Settings -> Live file tail**, where **Restore default
+extensions** returns the shipped list.
 
 Prefer the dashboard or CLI over hand-editing. If hand-editing JSON, keep valid JSON syntax and preserve numeric/boolean types.
 

@@ -470,6 +470,17 @@ to “System”</a></li>
 <li><a href="#which-files-a-process-wrote"
 id="toc-which-files-a-process-wrote">Which files a process
 wrote</a></li>
+<li><a href="#analytics-in-the-per-file-breakdown"
+id="toc-analytics-in-the-per-file-breakdown">Analytics in the per-file
+breakdown</a></li>
+<li><a href="#row-actions" id="toc-row-actions">Row actions</a></li>
+<li><a href="#sysinternals-handle"
+id="toc-sysinternals-handle">Sysinternals Handle</a></li>
+<li><a href="#live-tail-settings" id="toc-live-tail-settings">Live tail
+settings</a></li>
+<li><a href="#database-size-and-compaction"
+id="toc-database-size-and-compaction">Database size and
+compaction</a></li>
 </ul></li>
 <li><a href="#auto-suspend-rules"
 id="toc-auto-suspend-rules">Auto-suspend rules</a>
@@ -741,6 +752,13 @@ rate.</li>
 <h3 id="throughput">Throughput</h3>
 <p>The throughput card shows average, median, and busiest-minute MB/s
 for 1 hour, 24 hours, 7 days, or 30 days.</p>
+<p>Average and median use only minutes when the collector was actually
+monitoring. A monitored minute with no disk activity counts as zero; a
+minute missed because the service or computer was stopped does not. The
+card shows monitoring coverage for the selected period. When coverage
+reaches the configured high-coverage threshold, it also shows a
+calendar-time average. Below that threshold, the calendar average is
+withheld rather than treating missing time as idle.</p>
 <h3 id="processes-and-alert-center">Processes and Alert center</h3>
 <ul>
 <li><strong>Top application write requests</strong> ranks process-level
@@ -793,9 +811,12 @@ headline and the whole-percent SMART value is shown as supporting
 context. If lifetime writes are unavailable, the dashboard falls back to
 the drive’s SMART whole-percent wear value.</p>
 <h3 id="projection-caveats">Projection caveats</h3>
-<p>The projected years-to-TBW value assumes the recent average write
-rate continues. It is not a failure prediction or warranty calculation.
-Workload changes can materially change the projection.</p>
+<p>The projected years-to-TBW value uses the recent average per
+monitored time and is shown only when recent monitoring coverage reaches
+the configured high-coverage threshold. This prevents a long service
+shutdown from making drive life look artificially long. It is not a
+failure prediction or warranty calculation. Workload changes can
+materially change the projection.</p>
 <hr />
 <h2 id="rated-tbw-lookup">Rated-TBW lookup</h2>
 <h3 id="guided-setup">Guided setup</h3>
@@ -1007,13 +1028,16 @@ applications dirtied,</li>
 <p>So the process name cannot identify the work - the target file
 can.</p>
 <h3 id="which-files-a-process-wrote">Which files a process wrote</h3>
-<p>Hover over any bar or click any row in <strong>Top application write
-requests</strong> to open the per-file breakdown for that process. Each
-file shows its size share, a classification (NTFS metadata, paging file,
-registry hive, virtual disk, search index, Defender, event log, shadow
-copy, temporary, log, database, network path) and one line explaining
-what causes that kind of write. Opening it for <code>System</code> also
-shows the kernel explanation above.</p>
+<p>Hover over a process bar or click any row in <strong>Top application
+write requests</strong> to open the per-file breakdown for that process.
+Each file shows its size share, a classification (NTFS metadata, paging
+file, registry hive, virtual disk, search index, Defender, event log,
+shadow copy, temporary, log, database, network path) and one line
+explaining what causes that kind of write. Opening it for
+<code>System</code> also shows the kernel explanation above.</p>
+<p>After closing a hover-opened breakdown with Enter, Escape, or Close,
+it stays closed until the pointer leaves that bar. This prevents a
+stationary pointer from immediately reopening it.</p>
 <p>The same data is available from the CLI:</p>
 <div class="sourceCode" id="cb5"><pre
 class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>dam files System <span class="op">--</span>minutes <span class="dv">60</span> <span class="op">--</span>count <span class="dv">15</span></span></code></pre></div>
@@ -1050,9 +1074,9 @@ Settings:</p>
 </tr>
 <tr>
 <td>File history (days)</td>
-<td>7</td>
+<td>30</td>
 <td>Per-file rows are far more numerous, so they expire sooner than the
-process rollup.</td>
+process rollup. Configurable from 1 to 365 days.</td>
 </tr>
 <tr>
 <td>Files tracked in memory</td>
@@ -1064,6 +1088,227 @@ process rollup.</td>
 <p>Because of the size floor, the listed files usually account for most
 - not all - of a process’s logical writes; the modal states the exact
 share.</p>
+<h3 id="analytics-in-the-per-file-breakdown">Analytics in the per-file
+breakdown</h3>
+<p>The <strong>Analytics</strong> button in the breakdown header toggles
+a chart band above the file list:</p>
+<ul>
+<li><strong>Share of writes by process</strong> - a donut showing every
+process that wrote during the selected window, with the process you
+opened pulled out and highlighted. The centre shows the total, so you
+can see immediately whether this process is the main writer or a minor
+one.</li>
+<li><strong>Write volume over time</strong> - the process’s own writes
+bucketed across the window (at most 48 intervals). A single tall bar is
+a burst; an even row is sustained background writing. The busiest
+interval is highlighted.</li>
+<li><strong>Bytes written by file type</strong> - the tracked files
+grouped by extension. This answers “is this logs, databases, or
+temporary files?” without reading every path.</li>
+</ul>
+<h3 id="row-actions">Row actions</h3>
+<p>Each file row carries four actions on the right and the same copy
+command on its right-click menu:</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>Icon</th>
+<th>Action</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Copy</td>
+<td>Copy full path</td>
+<td>Copies the exact path to the clipboard. Also available as
+<strong>Copy full path</strong> on right-click.</td>
+</tr>
+<tr>
+<td>Eye</td>
+<td>Live tail</td>
+<td>Streams new lines as they are written. Disabled for binary
+extensions.</td>
+</tr>
+<tr>
+<td>Lock</td>
+<td>Find open handles</td>
+<td>Lists which processes currently hold that file open.</td>
+</tr>
+<tr>
+<td>Bin</td>
+<td>Delete</td>
+<td>Asks for confirmation, then reports exactly why a delete
+failed.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Live tail</strong> opens the file with shared
+read/write/delete access, so it never blocks the process that is
+writing. It seeds the view with the last lines, then polls once a
+second. <em>Follow</em> keeps the newest line in view and <em>Pause</em>
+freezes the display without stopping the writer. If the file is
+truncated or rotated, the view restarts and says so. Files whose
+extension is on the binary list are not opened as text; the viewer
+explains why instead.</p>
+<p>Tail safety is based on bounded work, not total file size. The reader
+seeks directly to the end and decodes only the configured trailing
+window, so a multi-gigabyte log does not require reading the whole file.
+Controlled sparse-file tests from 1 MiB through 8 GiB showed effectively
+constant read time at a 512 KiB window (about 1-5 ms after warm-up,
+roughly 3 MiB temporary managed allocation). A 4 MiB window allocated
+about 24 MiB per read, so 512 KiB remains the conservative default. The
+display has a separate 1 MiB decoded-text ceiling for minified files
+with extremely long lines.</p>
+<p><strong>Delete</strong> never uses the Recycle Bin. When it fails,
+the reason is classified rather than shown as a raw error:</p>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>Result</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Read-only</td>
+<td>The file carries the read-only attribute. Clear it and retry.</td>
+</tr>
+<tr>
+<td>Access denied</td>
+<td>Permission, ownership, or elevation problem.</td>
+</tr>
+<tr>
+<td>In use by another process</td>
+<td>Another process holds a conflicting handle.</td>
+</tr>
+</tbody>
+</table>
+<p>For the last two, a <strong>Find what is locking it</strong> button
+runs Sysinternals Handle and names the holding processes with their
+PIDs. Without administrator rights, handles owned by other accounts are
+invisible, and the app says so rather than reporting a misleading
+“nothing found”.</p>
+<h3 id="sysinternals-handle">Sysinternals Handle</h3>
+<p><strong>Trace open handles</strong> in the breakdown footer lists
+every file, key, and object the process currently has open. Both this
+and the per-file lock lookup need <code>handle.exe</code>, which the app
+finds in this order:</p>
+<ol type="1">
+<li>Beside the monitoring database in
+<code>%ProgramData%\DiskActivityMonitor</code>.</li>
+<li>Any directory on <code>PATH</code>.</li>
+</ol>
+<p>If it is not present, the app explains what it is and offers to
+download it. The download comes only from the official Sysinternals
+HTTPS endpoint
+(<code>https://download.sysinternals.com/files/Handle.zip</code>);
+redirects to any other host are rejected, only the Handle executables
+and EULA are extracted, and the result is stored next to the database.
+Nothing is installed system-wide and no elevation is required.</p>
+<p>Handle enumerates handles owned by other users only when Disk
+Activity Monitor itself runs elevated. Every trace states whether it ran
+elevated so an empty result is never misread.</p>
+<h3 id="live-tail-settings">Live tail settings</h3>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Binary file extensions</td>
+<td>Yagu’s binary, media, archive, and database defaults</td>
+<td>Extensions never opened as text by the eye icon.
+Semicolon-separated.</td>
+</tr>
+<tr>
+<td>Lines shown on open</td>
+<td>200</td>
+<td>Trailing lines seeded when the tail opens.</td>
+</tr>
+<tr>
+<td>Maximum lines buffered</td>
+<td>5000</td>
+<td>Ceiling on retained lines, so a busy log cannot grow without
+bound.</td>
+</tr>
+<tr>
+<td>Maximum decoded per poll (KiB)</td>
+<td>512</td>
+<td>Bounds each read regardless of total file size or append burst
+size.</td>
+</tr>
+<tr>
+<td>Maximum displayed text (KiB)</td>
+<td>1024</td>
+<td>Bounds retained decoded text even when lines are extremely
+long.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Restore default extensions</strong> puts the shipped list
+back. Clearing the box entirely keeps the previous list rather than
+making every file tailable.</p>
+<h3 id="database-size-and-compaction">Database size and compaction</h3>
+<p>Disk Activity Monitor watches its own database and warns when it
+grows past a threshold.</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Warn above (GB)</td>
+<td>1</td>
+<td>Total of the database, its write-ahead log, and index. Set to 0 to
+disable.</td>
+</tr>
+<tr>
+<td>Repeat warning after (hours)</td>
+<td>12</td>
+<td>Minimum gap between repeat warnings.</td>
+</tr>
+</tbody>
+</table>
+<p>The warning offers <strong>Compact now</strong>, which checkpoints
+the write-ahead log and runs a SQLite <code>VACUUM</code>. Deleting
+expired history only marks pages reusable, so a database that has pruned
+a lot of data stays large on disk until it is rebuilt; compaction
+returns that space. No history is lost, but the rebuild briefly blocks
+the collector and can take minutes on a large file.</p>
+<p>If the dashboard is minimised, in the tray, or not focused when the
+threshold is crossed, the warning also arrives as a Windows notification
+with a <strong>Compact now</strong> button. Compaction always runs in
+the dashboard rather than in the short-lived notification process. You
+can also compact at any time from <strong>Settings -&gt; Database size
+-&gt; Compact database now</strong>.</p>
 <hr />
 <h2 id="auto-suspend-rules">Auto-suspend rules</h2>
 <p>Auto-suspend freezes all threads in matching processes after their
@@ -1088,9 +1333,6 @@ notify afterward. Name-wide rules are confirmation-only.</li>
 <li>Save rules.</li>
 </ol>
 <h3 id="suspend-from-an-alert">Suspend from an alert</h3>
-<p>Process-heavy-write notifications include the top two attributed
-files and how much was written to each when per-file ETW data is
-available.</p>
 <p>An alert about a single heavy-writing process offers a
 <strong>Suspend <code>&lt;process&gt;</code></strong> button and a
 <strong>Suspend for</strong> picker: 5 minutes, 15 minutes, 30 minutes,
@@ -1251,12 +1493,92 @@ settings.</p>
 <td>Projection critical threshold.</td>
 </tr>
 <tr>
+<td><code>highCoveragePercent</code></td>
+<td style="text-align: right;"><code>90</code></td>
+<td>Minimum monitoring coverage required for calendar-rate and endurance
+projection claims.</td>
+</tr>
+<tr>
 <td><code>ssdWearWarnPercent</code></td>
 <td style="text-align: right;"><code>90</code></td>
 <td>SMART wear warning threshold.</td>
 </tr>
+<tr>
+<td><code>trackFileTargets</code></td>
+<td style="text-align: right;"><code>true</code></td>
+<td>Master switch for per-file attribution.</td>
+</tr>
+<tr>
+<td><code>fileTargetsPerProcessPerMinute</code></td>
+<td style="text-align: right;"><code>15</code></td>
+<td>Busiest files stored per process per minute.</td>
+</tr>
+<tr>
+<td><code>fileTargetMinKbPerMinute</code></td>
+<td style="text-align: right;"><code>64</code></td>
+<td>Per-file size floor for a minute to be stored.</td>
+</tr>
+<tr>
+<td><code>fileTargetRetentionDays</code></td>
+<td style="text-align: right;"><code>30</code></td>
+<td>Age at which per-file rows are pruned (1-365).</td>
+</tr>
+<tr>
+<td><code>fileTargetTrackingLimit</code></td>
+<td style="text-align: right;"><code>20000</code></td>
+<td>Distinct files tracked in memory between samples.</td>
+</tr>
+<tr>
+<td><code>databaseSizeWarnGb</code></td>
+<td style="text-align: right;"><code>1</code></td>
+<td>Warn when the database, WAL, and index together exceed this size.
+<code>0</code> disables.</td>
+</tr>
+<tr>
+<td><code>databaseSizeAlertCooldownHours</code></td>
+<td style="text-align: right;"><code>12</code></td>
+<td>Minimum gap between repeat database-size warnings.</td>
+</tr>
+<tr>
+<td><code>binaryExtensions</code></td>
+<td style="text-align: right;">see below</td>
+<td>Extensions never opened as text by the live tail.</td>
+</tr>
+<tr>
+<td><code>tailInitialLines</code></td>
+<td style="text-align: right;"><code>200</code></td>
+<td>Trailing lines seeded when a live tail opens.</td>
+</tr>
+<tr>
+<td><code>tailMaxLines</code></td>
+<td style="text-align: right;"><code>5000</code></td>
+<td>Maximum lines the live tail retains.</td>
+</tr>
+<tr>
+<td><code>tailMaxReadKb</code></td>
+<td style="text-align: right;"><code>512</code></td>
+<td>Maximum KiB decoded by one initial or incremental tail read.</td>
+</tr>
+<tr>
+<td><code>tailMaxBufferKb</code></td>
+<td style="text-align: right;"><code>1024</code></td>
+<td>Approximate maximum KiB of decoded UTF-16 text retained in the
+viewer.</td>
+</tr>
+<tr>
+<td><code>liveGraphRetentionMinutes</code></td>
+<td style="text-align: right;"><code>15</code></td>
+<td>Granular physical-disk samples retained for the live graph
+(1-120).</td>
+</tr>
 </tbody>
 </table>
+<p><code>binaryExtensions</code> is a semicolon-separated list seeded
+from Yagu’s binary, skip, and archive extension defaults, so
+executables, media, fonts, documents, databases, dumps, and archives are
+all excluded from live tailing. Edit it in <strong>Settings -&gt; Live
+file tail</strong>, where <strong>Restore default extensions</strong>
+returns the shipped list.</p>
 <p>Prefer the dashboard or CLI over hand-editing. If hand-editing JSON,
 keep valid JSON syntax and preserve numeric/boolean types.</p>
 <p>Session behavior and network-use preferences are stored per Windows
