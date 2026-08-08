@@ -408,6 +408,9 @@ cards</a></li>
 endurance panel</a></li>
 <li><a href="#trend-chart" id="toc-trend-chart">Trend chart</a></li>
 <li><a href="#throughput" id="toc-throughput">Throughput</a></li>
+<li><a href="#chart-appearance-and-collapsible-panels"
+id="toc-chart-appearance-and-collapsible-panels">Chart appearance and
+collapsible panels</a></li>
 <li><a href="#processes-and-alert-center"
 id="toc-processes-and-alert-center">Processes and Alert center</a></li>
 <li><a href="#tray-behavior" id="toc-tray-behavior">Tray
@@ -422,6 +425,8 @@ Used</a>
 id="toc-drive-life-used-precision">Drive Life Used precision</a></li>
 <li><a href="#projection-caveats" id="toc-projection-caveats">Projection
 caveats</a></li>
+<li><a href="#endurance-alerts" id="toc-endurance-alerts">Endurance
+alerts</a></li>
 </ul></li>
 <li><a href="#rated-tbw-lookup" id="toc-rated-tbw-lookup">Rated-TBW
 lookup</a>
@@ -716,9 +721,12 @@ adds a Startup shortcut, and opens the dashboard.</p>
 <h2 id="dashboard-tour">Dashboard tour</h2>
 <h3 id="header">Header</h3>
 <ul>
-<li><strong>Disk selector:</strong> chooses the physical disk displayed
-by summary, endurance, trends, and throughput sections. SSDs are listed
-first.</li>
+<li><strong>Disk selector:</strong> chooses one physical disk or
+<strong>All disks</strong>. SSDs are listed first. All-disk mode sums
+summary, trend, and throughput values; the live graph retains separate
+read/write series for every disk. SMART wear, TBW percentage, and
+lifespan stay per-drive because those health values cannot be safely
+combined.</li>
 <li><strong>Refresh:</strong> re-reads current data immediately.</li>
 <li><strong>Settings:</strong> switches between the dashboard and
 editable configuration.</li>
@@ -742,13 +750,30 @@ rate.</li>
 <li>Recent average writes per hour, day, and week.</li>
 </ul>
 <h3 id="trend-chart">Trend chart</h3>
-<p>Choose:</p>
+<p>The <strong>Total written over time</strong> line can show:</p>
 <ul>
-<li><strong>24h:</strong> hourly buckets.</li>
-<li><strong>30d:</strong> daily buckets.</li>
-<li><strong>12w:</strong> weekly buckets.</li>
+<li><strong>1h:</strong> the trailing hour.</li>
+<li><strong>24h:</strong> the trailing day.</li>
+<li><strong>7d:</strong> the trailing week.</li>
+<li><strong>30d:</strong> the trailing month.</li>
+<li><strong>Custom:</strong> start and through dates chosen by you. The
+through date is inclusive; choosing today ends at the current time.</li>
 </ul>
-<p>The current bucket is highlighted.</p>
+<p>The card reports the absolute increase over the range and an average
+rate per hour, day, or week. The chart automatically chooses minute,
+hour, or day-scale points so long ranges stay readable. Point at the
+chart and use a mouse-wheel or touchpad scroll gesture to move through
+shorter or longer time windows. The live activity graph supports the
+same gesture within its configured retention window. Hover a line vertex
+to see its exact local timestamp and numeric value. Bars and donut
+segments expose the same exact-value tooltip behavior.</p>
+<p>When the disk reports lifetime bytes written through SMART/NVMe, the
+current end of the line is anchored to that drive value. Earlier values
+are reconstructed by subtracting physical writes that the collector
+recorded. If lifetime writes are unavailable, the line is the cumulative
+physical write total recorded since monitoring began. A period when the
+service or computer was stopped is unknown; the chart does not invent
+writes or spread them across that gap.</p>
 <h3 id="throughput">Throughput</h3>
 <p>The throughput card shows average, median, and busiest-minute MB/s
 for 1 hour, 24 hours, 7 days, or 30 days.</p>
@@ -759,6 +784,17 @@ card shows monitoring coverage for the selected period. When coverage
 reaches the configured high-coverage threshold, it also shows a
 calendar-time average. Below that threshold, the calendar average is
 withheld rather than treating missing time as idle.</p>
+<h3 id="chart-appearance-and-collapsible-panels">Chart appearance and
+collapsible panels</h3>
+<p>Right-click a dashboard graph and choose <strong>Configure
+chart</strong> to edit its visible series colors. The live graph exposes
+one read and one write color for every selected disk; aggregate metrics
+expose their own color. Enter a six-digit hex color or use the Windows
+color picker. These overrides are stored for the current Windows
+user.</p>
+<p>Every top-level dashboard and settings card has a small chevron at
+its top right. Collapsing a card keeps its title visible and remembers
+the state for the current Windows user.</p>
 <h3 id="processes-and-alert-center">Processes and Alert center</h3>
 <ul>
 <li><strong>Top application write requests</strong> ranks process-level
@@ -817,6 +853,27 @@ the configured high-coverage threshold. This prevents a long service
 shutdown from making drive life look artificially long. It is not a
 failure prediction or warranty calculation. Workload changes can
 materially change the projection.</p>
+<h3 id="endurance-alerts">Endurance alerts</h3>
+<p>The default profile applies to every SSD and warns when either
+condition is true:</p>
+<ul>
+<li>Projected remaining life falls below <strong>1 year</strong>.</li>
+<li>Endurance remaining falls to <strong>20% or less</strong>,
+equivalent to more than 80% used.</li>
+</ul>
+<p>The remaining-life value accepts <strong>days</strong>,
+<strong>months</strong>, or <strong>years</strong>. Select <strong>All
+disks</strong> before opening Settings to edit the default profile.
+Select one disk and enable <strong>Override defaults for this
+disk</strong> to define different conditions for only that drive.
+Removing the override immediately returns it to the global profile.</p>
+<p>The projection subtracts lifetime writes when the drive exposes them,
+otherwise writes observed since monitoring began. It is evaluated only
+with sufficient monitoring coverage. A crossed condition creates an
+Alert center row and a native Windows notification. Both surfaces offer
+the same 5-minute, 30-minute, 1-hour, 1-day, and 1-week snooze choices.
+This snooze is scoped to that disk’s endurance rule; other disks and
+alert families continue normally.</p>
 <hr />
 <h2 id="rated-tbw-lookup">Rated-TBW lookup</h2>
 <h3 id="guided-setup">Guided setup</h3>
@@ -953,6 +1010,8 @@ removes them.</p>
 <li><strong>Dismiss</strong> hides recorded alert occurrences.</li>
 <li><strong>Snooze process</strong> suppresses new alerts for one
 process until a chosen time.</li>
+<li><strong>Snooze endurance warning</strong> suppresses only that
+disk’s endurance rule until the chosen time.</li>
 <li><strong>Snooze all</strong> suppresses all new alert evaluation
 until a chosen time.</li>
 </ul>
@@ -1483,25 +1542,22 @@ settings.</p>
 <td>Per-disk upper TBW values.</td>
 </tr>
 <tr>
-<td><code>tbwProjectionWarnYears</code></td>
-<td style="text-align: right;"><code>2</code></td>
-<td>Projection warning threshold.</td>
+<td><code>defaultEnduranceAlert</code></td>
+<td style="text-align: right;">1 year / 20%</td>
+<td>Global enabled conditions for projected remaining life and endurance
+remaining.</td>
 </tr>
 <tr>
-<td><code>tbwProjectionCriticalYears</code></td>
-<td style="text-align: right;"><code>1</code></td>
-<td>Projection critical threshold.</td>
+<td><code>diskEnduranceAlertOverrides</code></td>
+<td style="text-align: right;">empty</td>
+<td>Full per-disk profiles that replace the global endurance
+conditions.</td>
 </tr>
 <tr>
 <td><code>highCoveragePercent</code></td>
 <td style="text-align: right;"><code>90</code></td>
 <td>Minimum monitoring coverage required for calendar-rate and endurance
 projection claims.</td>
-</tr>
-<tr>
-<td><code>ssdWearWarnPercent</code></td>
-<td style="text-align: right;"><code>90</code></td>
-<td>SMART wear warning threshold.</td>
 </tr>
 <tr>
 <td><code>trackFileTargets</code></td>
@@ -1633,6 +1689,17 @@ user in
 <td><code>autoSuspendRules</code></td>
 <td style="text-align: right;">empty</td>
 <td>Rules allowed to suspend processes in this user’s session.</td>
+</tr>
+<tr>
+<td><code>chartColors</code></td>
+<td style="text-align: right;">empty</td>
+<td>Per-chart, per-disk/metric color overrides as
+<code>#RRGGBB</code>.</td>
+</tr>
+<tr>
+<td><code>collapsedPanels</code></td>
+<td style="text-align: right;">empty</td>
+<td>IDs of dashboard/settings panels this user collapsed.</td>
 </tr>
 </tbody>
 </table>

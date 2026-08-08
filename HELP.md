@@ -120,7 +120,10 @@ This publishes staging files under the repository's `publish` directory, copies 
 
 ### Header
 
-- **Disk selector:** chooses the physical disk displayed by summary, endurance, trends, and throughput sections. SSDs are listed first.
+- **Disk selector:** chooses one physical disk or **All disks**. SSDs are listed first. All-disk
+  mode sums summary, trend, and throughput values; the live graph retains separate read/write
+  series for every disk. SMART wear, TBW percentage, and lifespan stay per-drive because those
+  health values cannot be safely combined.
 - **Refresh:** re-reads current data immediately.
 - **Settings:** switches between the dashboard and editable configuration.
 
@@ -145,13 +148,27 @@ This panel displays:
 
 ### Trend chart
 
-Choose:
+The **Total written over time** line can show:
 
-- **24h:** hourly buckets.
-- **30d:** daily buckets.
-- **12w:** weekly buckets.
+- **1h:** the trailing hour.
+- **24h:** the trailing day.
+- **7d:** the trailing week.
+- **30d:** the trailing month.
+- **Custom:** start and through dates chosen by you. The through date is inclusive; choosing today
+  ends at the current time.
 
-The current bucket is highlighted.
+The card reports the absolute increase over the range and an average rate per hour, day, or week.
+The chart automatically chooses minute, hour, or day-scale points so long ranges stay readable.
+Point at the chart and use a mouse-wheel or touchpad scroll gesture to move through shorter or
+longer time windows. The live activity graph supports the same gesture within its configured
+retention window. Hover a line vertex to see its exact local timestamp and numeric value. Bars and
+donut segments expose the same exact-value tooltip behavior.
+
+When the disk reports lifetime bytes written through SMART/NVMe, the current end of the line is
+anchored to that drive value. Earlier values are reconstructed by subtracting physical writes that
+the collector recorded. If lifetime writes are unavailable, the line is the cumulative physical
+write total recorded since monitoring began. A period when the service or computer was stopped is
+unknown; the chart does not invent writes or spread them across that gap.
 
 ### Throughput
 
@@ -162,6 +179,16 @@ with no disk activity counts as zero; a minute missed because the service or com
 does not. The card shows monitoring coverage for the selected period. When coverage reaches the
 configured high-coverage threshold, it also shows a calendar-time average. Below that threshold,
 the calendar average is withheld rather than treating missing time as idle.
+
+### Chart appearance and collapsible panels
+
+Right-click a dashboard graph and choose **Configure chart** to edit its visible series colors.
+The live graph exposes one read and one write color for every selected disk; aggregate metrics expose
+their own color. Enter a six-digit hex color or use the Windows color picker. These overrides are
+stored for the current Windows user.
+
+Every top-level dashboard and settings card has a small chevron at its top right. Collapsing a card
+keeps its title visible and remembers the state for the current Windows user.
 
 ### Processes and Alert center
 
@@ -213,6 +240,24 @@ The projected years-to-TBW value uses the recent average per monitored time and 
 recent monitoring coverage reaches the configured high-coverage threshold. This prevents a long
 service shutdown from making drive life look artificially long. It is not a failure prediction or
 warranty calculation. Workload changes can materially change the projection.
+
+### Endurance alerts
+
+The default profile applies to every SSD and warns when either condition is true:
+
+- Projected remaining life falls below **1 year**.
+- Endurance remaining falls to **20% or less**, equivalent to more than 80% used.
+
+The remaining-life value accepts **days**, **months**, or **years**. Select **All disks** before
+opening Settings to edit the default profile. Select one disk and enable **Override defaults for
+this disk** to define different conditions for only that drive. Removing the override immediately
+returns it to the global profile.
+
+The projection subtracts lifetime writes when the drive exposes them, otherwise writes observed
+since monitoring began. It is evaluated only with sufficient monitoring coverage. A crossed
+condition creates an Alert center row and a native Windows notification. Both surfaces offer the
+same 5-minute, 30-minute, 1-hour, 1-day, and 1-week snooze choices. This snooze is scoped to that
+disk's endurance rule; other disks and alert families continue normally.
 
 ---
 
@@ -336,6 +381,7 @@ Dismissed records remain stored until normal retention pruning removes them.
 
 - **Dismiss** hides recorded alert occurrences.
 - **Snooze process** suppresses new alerts for one process until a chosen time.
+- **Snooze endurance warning** suppresses only that disk's endurance rule until the chosen time.
 - **Snooze all** suppresses all new alert evaluation until a chosen time.
 
 Use dismissal when you have reviewed a notification. Use snooze when you expect a known workload and temporarily do not want new alerts.
@@ -604,10 +650,9 @@ Machine-wide collector settings are stored in `%ProgramData%\DiskActivityMonitor
 | `defaultSsdTbwUpper` | `600` | Upper bound of the estimate used when TBW is unknown. |
 | `diskTbwRatings` | empty | Per-disk lower/exact TBW values. |
 | `diskTbwRatingsUpper` | empty | Per-disk upper TBW values. |
-| `tbwProjectionWarnYears` | `2` | Projection warning threshold. |
-| `tbwProjectionCriticalYears` | `1` | Projection critical threshold. |
+| `defaultEnduranceAlert` | 1 year / 20% | Global enabled conditions for projected remaining life and endurance remaining. |
+| `diskEnduranceAlertOverrides` | empty | Full per-disk profiles that replace the global endurance conditions. |
 | `highCoveragePercent` | `90` | Minimum monitoring coverage required for calendar-rate and endurance projection claims. |
-| `ssdWearWarnPercent` | `90` | SMART wear warning threshold. |
 | `trackFileTargets` | `true` | Master switch for per-file attribution. |
 | `fileTargetsPerProcessPerMinute` | `15` | Busiest files stored per process per minute. |
 | `fileTargetMinKbPerMinute` | `64` | Per-file size floor for a minute to be stored. |
@@ -640,6 +685,8 @@ Session behavior and network-use preferences are stored per Windows user in `%LO
 | `tbwLookupMethod` | `FoundryLocal` | `FoundryLocal` verification or degraded `SerperOnly` parsing. |
 | `tbwLookupModel` | automatic | Optional per-user Foundry Local model override. |
 | `autoSuspendRules` | empty | Rules allowed to suspend processes in this user's session. |
+| `chartColors` | empty | Per-chart, per-disk/metric color overrides as `#RRGGBB`. |
+| `collapsedPanels` | empty | IDs of dashboard/settings panels this user collapsed. |
 
 On the first launch after upgrading from a machine-wide settings version, notification and online-lookup preferences are copied to the current user's file. Legacy auto-suspend rules are not imported; recreate them deliberately in each user's dashboard.
 

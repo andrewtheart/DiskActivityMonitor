@@ -25,7 +25,7 @@ warns you when a drive or process crosses a threshold you set.
   <tr>
     <td width="33%" align="center">
       <h3>📊 Disk Trends</h3>
-      Track physical reads and writes per drive across 24 hours, 30 days, or 12 weeks.
+      Follow total physical bytes written across an hour, day, week, month, or custom date range.
     </td>
     <td width="33%" align="center">
       <h3>🔎 Process Attribution</h3>
@@ -180,8 +180,10 @@ keys remain under `%LOCALAPPDATA%\DiskActivityMonitor\`.
 
 ## Using the dashboard
 
-- **Disk selector** (top right): SSDs are listed first and tagged. Trends and endurance apply
-  to the selected disk.
+- **Disk selector** (top right): choose one tagged physical disk or **All disks**. Aggregate mode
+  sums physical totals, cumulative writes, and throughput across every disk. The live chart keeps
+  separate read/write lines and legend colors for each disk. SMART wear, TBW percentage, and
+  projected lifespan remain explicitly per-drive because combining them would be misleading.
 - **Summary cards**: written today, last 24h, last 7 days, and an endurance/projection card.
 - **Rated-TBW pill**: right-click the **TBW rated/estimated** badge in SSD endurance and choose
   **Look up rated TBW**. This forces a fresh lookup even if the drive already has a configured
@@ -196,163 +198,29 @@ keys remain under `%LOCALAPPDATA%\DiskActivityMonitor\`.
   Google's Custom Search JSON API is closed to new customers; its 100 free daily queries apply
   only to existing customers until the service is retired. New setups should select the supported
   **Serper** backend in Settings.
-- **Trend chart**: toggle **24h / 30d / 12w**. Bars are bytes written to the device in each
-  bucket; the current bucket is highlighted.
+- **Total written over time**: toggle **1h / 24h / 7d / 30d**, or choose **Custom** start and
+  through dates. The through date is inclusive; selecting today ends the range at the current
+  time. The line shows the cumulative total, while the header reports both the range increase and
+  its average rate per hour, day, or week. When the drive exposes lifetime writes, the current
+  value is anchored to that SMART total and the historical movement is reconstructed from physical
+  writes recorded by the collector. Otherwise the graph starts with writes recorded since
+  monitoring began. Time when the service was not monitoring is not invented or distributed into
+  the line.
+- **Chart controls**: point at the live activity or total-written graph and use the mouse wheel or
+  touchpad scroll gesture to shorten or lengthen its time span. Right-click any dashboard chart and
+  choose **Configure chart** to set colors per visible disk/metric (or per aggregate metric). Colors
+  are saved for the current Windows user. Hover any line vertex, bar, or donut segment to see its
+  exact timestamp/label and numeric value.
+- **Endurance alerts**: the all-disks default warns when any SSD has less than **1 year** of projected
+  remaining life or at most **20% endurance remaining** (more than 80% used). Remaining-life units
+  can be days, months, or years, and each disk can override both conditions. Alerts appear in Alert
+  center and as native Windows notifications; snoozing one suppresses only that disk's endurance
+  rule for the selected duration.
+- **Collapsible panels**: use the quiet chevron at the top right of any dashboard or settings card
+  to collapse or restore it. Panel state is remembered for the current Windows user.
 - **Top application write requests**: logical file-write bytes requested by each process over
   the selected window. This identifies software generating write pressure, but is not a physical
-  SSD-wear figure. Service-host processes are labeled with the hosted service when known (for
-  example, `svchost (SDRSVC: Windows Backup)`).
-- **Alert center**: a rolling one-hour view of non-dismissed alerts. Repeated controller errors
-  appear here alongside write/endurance alerts and can also raise desktop notifications. Click the
-  **x** on a row (or use its context menu) to dismiss that occurrence permanently from the main
-  view. **All alerts** opens the complete retained history, includes dismissed records, and lets
-  you restore them. A future occurrence of the same condition can still appear. The tray icon
-  color resets to green when no non-dismissed alerts remain in the window.
-- **Live SMART scan**: right-click a controller-error alert and choose **Run live SMART scan**.
-  The result panel shows Windows health/operational status, SMART access, alert-window controller
-  errors, temperature, model/firmware/serial, lifetime I/O, and actionable findings. The scan is
-  read-only and does not start a destructive or long-running ATA/NVMe self-test.
-- **Settings**: thresholds (in GB), sample interval, desktop notifications, and the selected
-  drive's explicit **Single TBW** or **TBW Range**. Unknown drives use a clearly labeled
-  **150 to 600 TBW estimate** until a per-drive rating is saved. Click **Save settings**; the
-  collector applies changes live.
-- **Online lookup setup**: the startup prompt explains what is sent online, links to Serper signup,
-  accepts the API key, and stores it with Windows DPAPI. Choosing **Not now** shows the prompt again
-  at the next startup unless **Don't show this again** is checked. Guided setup can be reopened from
-  Settings at any time.
-
-The tray icon's right-click menu offers *Open dashboard*,
-*Open data folder*, and *Exit*. Closing the dashboard window hides it to the tray; use *Exit*
-to quit the app.
-
-### Auto-suspending heavy writers
-
-The **Auto-suspend rules** card lets you stop a runaway writer before it wears the disk:
-
-- **Add a rule** for a process already seen by the monitor (pick it from the dropdown) to match
-  all processes with that executable image name, or **Browse for an `.exe`** to bind the rule
-  to that exact executable path.
-- Set a **limit** in GB written per rolling hour. When a process exceeds it, the app reacts.
-- Each rule is either **confirm** (a toast asks before suspending - the default for every new
-  rule) or **Auto** (suspend immediately, then notify with a *Resume* button).
-- Alert toasts for a heavy-writing process carry a **Suspend `<process>`** button plus a
-  **Suspend for** picker (5 minutes / 15 minutes / 30 minutes / 1 hour / until you resume it).
-  The default is 30 minutes and is configurable as **Suspend for (minutes)** in Settings;
-  `0` means the suspension lasts until you resume it. When the interval elapses the app resumes
-  the process itself and notifies you.
-- Every suspension the app performs - by rule or from a toast - is recorded and listed on the
-  dashboard's **Suspended processes** card with its origin, when it was suspended, when it
-  resumes, and per-process **Resume** and **Resume all** buttons. Resume validates the recorded
-  process ID, creation time, and executable path before acting.
-
-Name-wide rules always require confirmation; automatic suspension is available only to rules
-bound to an exact executable path. If exact resume identity is unavailable, the app leaves the
-suspended record in place instead of guessing by process name.
-
-Suspending freezes every thread in the target. The dashboard runs in your user session, so it
-can suspend your own processes; suspending an elevated/other-user process requires the app to
-run elevated and otherwise reports “access denied”.
-
----
-
-## Command-line interface (`dam`)
-
-A full CLI (`dam.exe`) reads and writes the same database and `config.json` as the service and
-tray, so you can inspect activity, manage alerts/snoozes, and change settings from a terminal.
-
-```powershell
-# From the repo root (builds on first run):
-.\dam.ps1 status
-.\dam.ps1 top --minutes 30 --count 15
-
-# Or run the built exe directly:
-src\DiskActivityMonitor.Cli\bin\Debug\net10.0-windows\dam.exe status
-```
-
-| Command | What it does |
-|---------|--------------|
-| `status` | Service/DB status, disk count, non-dismissed alerts, snoozes |
-| `disks` | List monitored disks (media, size, SMART wear) |
-| `summary [--disk ID] [--all]` | Writes today / last 24h / last 7d |
-| `top [--minutes N] [--count N]` | Top processes by writes in a window (default 60m, 10) |
-| `process <name>` | Writes for a process across 1m/5m/15m/30m/1h/24h |
-| `trends [--range hour\|day\|week] [--count N] [--disk ID]` | Write trend with bar chart |
-| `endurance [--disk ID] [--all]` | SSD TBW usage, SMART wear, projection |
-| `watch [--interval N]` | Live auto-refreshing dashboard (Ctrl+C to exit) |
-| `alerts [--all] [--count N] [--full]` | List alerts (unacknowledged by default) |
-| `ack <id>... ` / `ack --all` | Acknowledge alerts |
-| `snooze list` | Show active snoozes |
-| `snooze process <name> <dur>` | Snooze a process (e.g. `30m`, `1h`, `1d`, `1w`) |
-| `snooze all <dur>` | Snooze every alert for a duration |
-| `snooze clear <name>\|--global\|--all` | Clear snoozes |
-| `config get [key]` | Print all config, or one key |
-| `config set <key> <value>` | Change a threshold/setting (the service reloads live) |
-| `help` / `version` | Usage / version |
-
----
-
-## How it works
-
-Disk Activity Monitor has two cooperating components:
-
-| Component | What it does |
-|-----------|--------------|
-| **Collector service** (`DiskActivityMonitor.Service`) | A background worker that samples Windows performance counters, aggregates them into one-minute buckets, stores them in SQLite, and raises alerts. It runs as a Windows Service or console app. |
-| **Tray app** (`DiskActivityMonitor.Tray`) | A WPF system-tray dashboard that visualizes trends, ranks noisy processes, shows alerts, and manages thresholds. |
-
-Both share a database under `%ProgramData%\DiskActivityMonitor\`.
-
-```mermaid
-flowchart LR
-    PC["PhysicalDisk\nperf counters"] --> COL
-    PIO["ETW kernel\nFileIO writes"] --> COL
-    WMI["MSFT_PhysicalDisk\n(SSD/HDD)"] --> COL
-    EVT["Windows System log\nDisk event 11"] --> COL
-    COL["Collector service\n(1-min aggregation)"] --> DB[("SQLite\n%ProgramData%")]
-    COL --> AL["Alert engine"]
-    AL --> DB
-    DB --> TRAY["Tray dashboard"]
-    CFG["config.json"] <--> COL
-    CFG <--> TRAY
-```
-
-- **Disk volume** is read from the `PhysicalDisk\Disk Read/Write Bytes/sec` counters and
-  integrated over each sampling interval. These reflect bytes that actually reached the
-  device, which is what matters for SSD wear.
-- **Per-process** numbers come from the Windows kernel ETW `FileIO` provider: the byte size of
-  every logical file read/write request is attributed to the process that issued it, aggregated
-  by process/service name. `svchost` PIDs are resolved to their hosted Windows service(s) when
-  known. Because only genuine file-system writes raise these events, named-pipe, device-ioctl
-  and other non-disk I/O are excluded — so a process stuck in an IPC/UI loop no longer shows up
-  as a heavy disk writer. The ETW session needs elevation; the collector runs as LocalSystem.
-  When ETW is unavailable (e.g. run un-elevated during development) it falls back to cumulative
-  `GetProcessIoCounters` deltas, which are an *upper bound* that mixes file, pipe and device I/O.
-- **Per-file** attribution records the busiest files behind each process's writes. This is what
-  explains the kernel `System` process (PID 4), which writes for the whole machine — cache-manager
-  flushes of other applications' pages, NTFS metadata and journal updates, and the paging file.
-  Click a process row in the dashboard, or run `dam files System`, to see the individual files
-  with a classification and an explanation of each kind.
-- Samples are aggregated into **one-minute buckets** and rolled up to hour/day/week for
-  charting in local time.
-- Once per minute, the collector reads System log provider `disk`, event ID `11`, counts records
-  by `\Device\HarddiskN` across the configured window, and maps that disk number to the currently
-  detected volume/model. USB/removable disk numbers can change after reconnecting hardware, so
-  each alert retains the original Windows device path and describes the volume mapping as current.
-
-### Accuracy notes
-
-- Per-process numbers are *logical file-write requests*: bytes an application asked Windows to
-  write above the cache/storage stack. Windows may cache, coalesce, overwrite or eliminate some
-  requests before they become physical I/O, and the requests may target several disks. Therefore
-  these numbers identify the software creating pressure but can be higher than actual device
-  writes. The per-disk physical totals remain authoritative for SSD endurance. (Under the
-  un-elevated fallback reader, per-process numbers over-count further because they also include
-  pipe/device I/O.)
-- Average/median throughput and endurance write rates use only minutes when the collector was
-  monitoring. The dashboard reports coverage and withholds calendar-rate/projection claims below
-  the configurable high-coverage threshold (90% by default), rather than treating gaps as idle.
-- TBW projections assume your recent monitored average write rate continues; they are estimates,
-  not guarantees. Consumed endurance uses drive-reported lifetime writes when available and falls
+  SSD-wear figure. Service-host processes are labeled (in)e writes when available and falls
   back to writes observed since monitoring started when lifetime telemetry is unavailable.
 - Reading some processes owned by other accounts requires the collector to run with
   sufficient privileges (the Windows Service runs as LocalSystem and sees everything).
@@ -387,8 +255,8 @@ replacements are ignored in favor of the last known-good settings. Thresholds ar
 | `defaultSsdTbw` / `defaultSsdTbwUpper` | Estimated SSD TBW range when the rating is unknown | 150 / 600 |
 | `diskTbwRatings` | Per-disk TBW endurance rating (TB) | none |
 | `diskTbwRatingsUpper` | Optional per-disk upper TBW; when set, endurance %/projection are shown as a range | none |
-| `tbwProjectionWarnYears` / `tbwProjectionCriticalYears` | Projected-years warning / critical thresholds | 2 / 1 |
-| `ssdWearWarnPercent` | SMART wear warning threshold | 90 |
+| `defaultEnduranceAlert` | All-disks profile: enabled remaining-life value/unit and remaining-% conditions | 1 year / 20% remaining |
+| `diskEnduranceAlertOverrides` | Optional full endurance-alert profile keyed by disk ID | none |
 | `tailMaxReadKb` | Maximum decoded data per live-tail poll; total file size is unrestricted | 512 |
 | `tailMaxBufferKb` | Maximum decoded text retained by the live-tail viewer | 1024 |
 
@@ -404,6 +272,8 @@ Action-bearing preferences are isolated per Windows user in
 | `tbwLookupMethod` | Evidence analysis (`FoundryLocal` or degraded `SerperOnly`) | FoundryLocal |
 | `tbwLookupModel` | Optional Foundry Local model override | automatic |
 | `autoSuspendRules` | Per-process confirm/automatic suspension rules | none |
+| `chartColors` | Per-chart, per-disk/metric color overrides (`#RRGGBB`) | none |
+| `collapsedPanels` | Dashboard/settings panel IDs currently collapsed | none |
 
 Upgrades copy legacy notification and online-lookup preferences into the current user's file,
 but do not import legacy machine-wide auto-suspend rules.
