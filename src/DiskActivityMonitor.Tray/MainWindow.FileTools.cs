@@ -163,7 +163,7 @@ public partial class MainWindow
         }
 
         // Long windows need a date; short ones only need the time of day.
-        string format = totalMinutes > 60 * 36 ? "MMM d" : "HH:mm";
+        string format = totalMinutes > 60 * 36 ? "MMM d" : "h:mm tt";
         long peak = totals.Max();
 
         var bars = new List<ChartBar>(buckets);

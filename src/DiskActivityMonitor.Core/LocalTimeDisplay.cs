@@ -23,7 +23,29 @@ public static class LocalTimeDisplay
             _ => DateTime.SpecifyKind(timestampUtc, DateTimeKind.Utc),
         };
         DateTime local = TimeZoneInfo.ConvertTimeFromUtc(utc, timeZone ?? TimeZoneInfo.Local);
-        return local.ToString(format, culture ?? CultureInfo.CurrentCulture);
+        var displayCulture = (CultureInfo)(culture ?? CultureInfo.CurrentCulture).Clone();
+        displayCulture.DateTimeFormat.AMDesignator = "AM";
+        displayCulture.DateTimeFormat.PMDesignator = "PM";
+        return local.ToString(ToStandardTimeFormat(format, displayCulture), displayCulture);
+    }
+
+    private static string ToStandardTimeFormat(string format, CultureInfo culture)
+    {
+        string normalized = format switch
+        {
+            "t" => "h:mm tt",
+            "T" => "h:mm:ss tt",
+            "g" => $"{culture.DateTimeFormat.ShortDatePattern} h:mm tt",
+            "G" => $"{culture.DateTimeFormat.ShortDatePattern} h:mm:ss tt",
+            "f" => $"{culture.DateTimeFormat.LongDatePattern} h:mm tt",
+            "F" => $"{culture.DateTimeFormat.LongDatePattern} h:mm:ss tt",
+            _ => format.Replace("HH", "h", StringComparison.Ordinal)
+                       .Replace("H", "h", StringComparison.Ordinal),
+        };
+
+        bool hasHour = format.Contains('H') || format.Contains('h')
+            || format is "t" or "T" or "g" or "G" or "f" or "F";
+        return hasHour && !normalized.Contains('t') ? normalized + " tt" : normalized;
     }
 
     public static string FormatUtcWithZone(

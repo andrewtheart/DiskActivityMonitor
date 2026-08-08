@@ -3,6 +3,30 @@ using System.Text.Json.Serialization;
 
 namespace DiskActivityMonitor.Core.Configuration;
 
+public enum EnduranceAlertTimeUnit
+{
+    Days,
+    Months,
+    Years,
+}
+
+public sealed class EnduranceAlertThreshold
+{
+    public bool EnableProjectedLife { get; set; } = true;
+    public double RemainingLifeValue { get; set; } = 1;
+    public EnduranceAlertTimeUnit RemainingLifeUnit { get; set; } = EnduranceAlertTimeUnit.Years;
+    public bool EnableRemainingPercent { get; set; } = true;
+    public double RemainingPercent { get; set; } = 20;
+
+    [JsonIgnore]
+    public double RemainingLifeDays => RemainingLifeUnit switch
+    {
+        EnduranceAlertTimeUnit.Days => RemainingLifeValue,
+        EnduranceAlertTimeUnit.Months => RemainingLifeValue * (365.25 / 12.0),
+        _ => RemainingLifeValue * 365.25,
+    };
+}
+
 /// <summary>
 /// User-tunable settings shared by the collector and tray app. Persisted as JSON at
 /// <see cref="Paths.ConfigPath"/>. All byte thresholds are expressed in gigabytes in the
@@ -146,6 +170,37 @@ public sealed class AppConfig
 
     /// <summary>Warn when a drive's SMART-reported endurance used (percentage) reaches this level.</summary>
     public double SsdWearWarnPercent { get; set; } = 90;
+
+    /// <summary>Default endurance warning applied to every SSD without a per-disk override.</summary>
+    public EnduranceAlertThreshold DefaultEnduranceAlert { get; set; } = new();
+
+    /// <summary>Per-disk endurance warning profiles keyed by physical disk id.</summary>
+    public Dictionary<string, EnduranceAlertThreshold> DiskEnduranceAlertOverrides { get; set; } = new();
+
+    public EnduranceAlertThreshold EffectiveEnduranceAlert(string diskId)
+        => CloneEnduranceAlert(
+            DiskEnduranceAlertOverrides.TryGetValue(diskId, out EnduranceAlertThreshold? threshold)
+                ? threshold
+                : DefaultEnduranceAlert);
+
+    public static EnduranceAlertThreshold CloneEnduranceAlert(EnduranceAlertThreshold? source)
+    {
+        source ??= new EnduranceAlertThreshold();
+        return new EnduranceAlertThreshold
+        {
+            EnableProjectedLife = source.EnableProjectedLife,
+            RemainingLifeValue = double.IsFinite(source.RemainingLifeValue)
+                ? Math.Max(0, source.RemainingLifeValue)
+                : 1,
+            RemainingLifeUnit = Enum.IsDefined(source.RemainingLifeUnit)
+                ? source.RemainingLifeUnit
+                : EnduranceAlertTimeUnit.Years,
+            EnableRemainingPercent = source.EnableRemainingPercent,
+            RemainingPercent = double.IsFinite(source.RemainingPercent)
+                ? Math.Clamp(source.RemainingPercent, 0, 100)
+                : 20,
+        };
+    }
 
     /// <summary>Returns the effective TBW rating for a disk: its per-disk override, else the default.</summary>
     public double EffectiveTbw(string diskId)

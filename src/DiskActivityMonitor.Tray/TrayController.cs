@@ -315,6 +315,14 @@ internal sealed class TrayController : IDisposable
                     .AddArgument("process", process));
             }
 
+                    if (a.RuleKey.StartsWith("endurance-health:", StringComparison.Ordinal))
+                    {
+                    builder.AddButton(new ToastButton()
+                        .SetContent("Snooze this disk")
+                        .AddArgument("action", "snooze-rule")
+                        .AddArgument("rule", a.RuleKey));
+                    }
+
             builder.AddButton(new ToastButton()
                     .SetContent("Snooze all alerts")
                     .AddArgument("action", "snooze-all"))

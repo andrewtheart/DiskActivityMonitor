@@ -1,3 +1,4 @@
+using System.Globalization;
 using DiskActivityMonitor.Core.Models;
 
 namespace DiskActivityMonitor.Core;
@@ -10,6 +11,46 @@ namespace DiskActivityMonitor.Core;
 public static class Trends
 {
     public enum Bucket { Hour, Day, Week }
+
+    public sealed record TotalWrittenPoint(DateTime TimestampUtc, long TotalBytes);
+
+    /// <summary>
+    /// Builds a cumulative total-written series from write totals whose timestamps mark the end
+    /// of each bucket. The selected range boundaries are always represented so idle periods draw
+    /// as a flat line instead of disappearing.
+    /// </summary>
+    public static IReadOnlyList<TotalWrittenPoint> BuildCumulative(
+        IEnumerable<(DateTime BucketEndUtc, long WriteBytes)> writes,
+        DateTime fromUtc,
+        DateTime toUtc,
+        long totalAtStart)
+    {
+        if (toUtc <= fromUtc)
+            return [];
+
+        long total = Math.Max(0, totalAtStart);
+        var points = new List<TotalWrittenPoint> { new(fromUtc, total) };
+
+        foreach (var (bucketEndUtc, writeBytes) in writes.OrderBy(item => item.BucketEndUtc))
+        {
+            if (bucketEndUtc <= fromUtc || bucketEndUtc > toUtc)
+                continue;
+
+            long increment = Math.Max(0, writeBytes);
+            total = increment > long.MaxValue - total ? long.MaxValue : total + increment;
+
+            var point = new TotalWrittenPoint(bucketEndUtc, total);
+            if (points[^1].TimestampUtc == bucketEndUtc)
+                points[^1] = point;
+            else
+                points.Add(point);
+        }
+
+        if (points[^1].TimestampUtc < toUtc)
+            points.Add(new TotalWrittenPoint(toUtc, total));
+
+        return points;
+    }
 
     public static IReadOnlyList<TrendBucket> Build(
         IEnumerable<(DateTime HourStartUtc, long Read, long Write)> hourly,
@@ -66,7 +107,7 @@ public static class Trends
 
     public static string Label(DateTime start, Bucket bucket) => bucket switch
     {
-        Bucket.Hour => start.ToString("HH:00"),
+        Bucket.Hour => start.ToString("h:00 tt", CultureInfo.InvariantCulture),
         Bucket.Day => start.ToString("MM/dd"),
         Bucket.Week => start.ToString("MMM dd"),
         _ => start.ToString(),

@@ -15,6 +15,11 @@ internal static class CliRunner
 {
     internal static Func<MonitorRepository> RepositoryFactory { get; set; } = () => new MonitorRepository();
     internal static Func<AppConfig> ConfigFactory { get; set; } = () => new ConfigStore().Current;
+    internal static Func<(bool Exists, long Length, DateTime LastWriteTimeUtc)> DatabaseStatusProvider { get; set; }
+        = ReadDatabaseStatus;
+    internal static Func<bool> WatchIterationRequested { get; set; } = () => true;
+    internal static Action<int> WatchDelay { get; set; } = Thread.Sleep;
+    internal static Action WatchClear { get; set; } = Console.Clear;
 
     public static int Run(string[] args)
     {
@@ -135,10 +140,10 @@ internal static class CliRunner
         Console.WriteLine($"  Collector service : {(svc ? "running" : "NOT running")}");
         Console.WriteLine($"  Tray app          : {(tray ? "running" : "not running")}");
         Console.WriteLine($"  Data directory    : {Paths.BaseDirectory}");
-        if (File.Exists(Paths.DatabasePath))
+        var database = DatabaseStatusProvider();
+        if (database.Exists)
         {
-            var fi = new FileInfo(Paths.DatabasePath);
-            Console.WriteLine($"  Database          : {fi.Length / 1024.0 / 1024.0:0.0} MB, updated {fi.LastWriteTime:g} ({LocalTimeDisplay.ZoneId()})");
+            Console.WriteLine($"  Database          : {database.Length / 1024.0 / 1024.0:0.0} MB, updated {LocalTimeDisplay.FormatUtcWithZone(database.LastWriteTimeUtc, "g")}");
         }
         else
         {
@@ -149,6 +154,16 @@ internal static class CliRunner
         Console.WriteLine($"  Unacked alerts    : {unacked}");
         Console.WriteLine($"  Snoozes           : {(globalUntil is null ? "no global" : $"GLOBAL until {LocalTimeDisplay.FormatUtcWithZone(globalUntil.Value, "g")}")}, {procSnoozes} process(es)");
         return 0;
+    }
+
+    internal static (bool Exists, long Length, DateTime LastWriteTimeUtc) ReadDatabaseStatus()
+        => ReadDatabaseStatus(Paths.DatabasePath);
+
+    internal static (bool Exists, long Length, DateTime LastWriteTimeUtc) ReadDatabaseStatus(string databasePath)
+    {
+        if (!File.Exists(databasePath)) return default;
+        var file = new FileInfo(databasePath);
+        return (true, file.Length, file.LastWriteTimeUtc);
     }
 
     private static int Disks()
@@ -389,7 +404,7 @@ internal static class CliRunner
         {
             var prev = Console.ForegroundColor;
             Console.ForegroundColor = SevColor(al.Severity);
-            Console.Write($"  #{al.Id,-4} {LocalTimeDisplay.FormatUtcWithZone(al.TimestampUtc, "MMM d HH:mm")}  {SevText(al.Severity),-4} ");
+            Console.Write($"  #{al.Id,-4} {LocalTimeDisplay.FormatUtcWithZone(al.TimestampUtc, "MMM d h:mm tt")}  {SevText(al.Severity),-4} ");
             Console.ForegroundColor = prev;
             Console.WriteLine($"{(al.Acknowledged ? "[ack] " : "")}{al.Title}");
             if (full) Out.Dim($"        {al.Message}");
@@ -541,13 +556,13 @@ internal static class CliRunner
         bool stop = false;
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; stop = true; };
 
-        while (!stop)
+        while (ShouldContinueWatch(stop, WatchIterationRequested))
         {
             try
             {
-                Console.Clear();
+                WatchClear();
                 var nowUtc = DateTime.UtcNow;
-                Out.Header($"Disk Activity Monitor — live  ({LocalTimeDisplay.FormatUtcWithZone(nowUtc, "HH:mm:ss")}, every {interval}s, Ctrl+C to exit)");
+                Out.Header($"Disk Activity Monitor — live  ({LocalTimeDisplay.FormatUtcWithZone(nowUtc, "h:mm:ss tt")}, every {interval}s, Ctrl+C to exit)");
                 Console.WriteLine();
 
                 var disk = repo.GetDisks().FirstOrDefault(d => d.IsSsd) ?? repo.GetDisks().FirstOrDefault();
@@ -569,10 +584,13 @@ internal static class CliRunner
             }
             catch { /* transient DB lock — try again next tick */ }
 
-            for (int i = 0; i < interval * 10 && !stop; i++) Thread.Sleep(100);
+            for (int i = 0; i < interval * 10 && !stop; i++) WatchDelay(100);
         }
         return 0;
     }
+
+    internal static bool ShouldContinueWatch(bool stop, Func<bool> iterationRequested)
+        => !stop && iterationRequested();
 
     private static int Help(CliArgs a) { PrintUsage(); return 0; }
 

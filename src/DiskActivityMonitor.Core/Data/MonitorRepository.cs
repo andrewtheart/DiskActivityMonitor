@@ -148,6 +148,11 @@ public sealed class MonitorRepository
                 until_utc INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS alert_snoozes(
+                rule_key TEXT PRIMARY KEY,
+                until_utc INTEGER NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS suspended_processes(
                 name TEXT PRIMARY KEY,
                 suspended_utc INTEGER NOT NULL
@@ -494,6 +499,47 @@ public sealed class MonitorRepository
         return list;
     }
 
+    /// <summary>
+    /// Returns physical write totals in fixed buckets relative to <paramref name="fromUtc"/>.
+    /// Each timestamp marks the end of its bucket, ready for cumulative trend plotting.
+    /// </summary>
+    public List<(DateTime BucketEndUtc, long WriteBytes)> GetDiskWriteBuckets(
+        string diskId,
+        DateTime fromUtc,
+        DateTime toUtc,
+        TimeSpan bucketSize)
+    {
+        long from = ToUnix(fromUtc);
+        long to = ToUnix(toUtc);
+        if (to <= from)
+            return [];
+
+        long bucketSeconds = Math.Max(60, (long)Math.Ceiling(bucketSize.TotalSeconds));
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT CAST((ts_min - $from) / $bucket AS INTEGER) AS bucket_index,
+                   SUM(write_bytes)
+            FROM disk_minute
+            WHERE disk_id = $id AND ts_min >= $from AND ts_min < $to
+            GROUP BY bucket_index
+            ORDER BY bucket_index;
+            """;
+        cmd.Parameters.AddWithValue("$id", diskId);
+        cmd.Parameters.AddWithValue("$from", from);
+        cmd.Parameters.AddWithValue("$to", to);
+        cmd.Parameters.AddWithValue("$bucket", bucketSeconds);
+
+        var list = new List<(DateTime, long)>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            long bucketEnd = Math.Min(to, from + ((reader.GetInt64(0) + 1) * bucketSeconds));
+            list.Add((FromUnix(bucketEnd), reader.GetInt64(1)));
+        }
+        return list;
+    }
+
     public (long Read, long Write) GetDiskTotals(string diskId, DateTime fromUtc, DateTime toUtc)
     {
         using var conn = Open();
@@ -516,15 +562,39 @@ public sealed class MonitorRepository
     /// minute; minutes with no activity are simply absent (callers treat them as zero).
     /// </summary>
     public List<long> GetDiskMinuteTotals(string diskId, DateTime fromUtc, DateTime toUtc)
+        => GetDiskMinuteTotals([diskId], fromUtc, toUtc);
+
+    /// <summary>
+    /// Per-minute total I/O across selected disks. Activity from disks in the same minute is
+    /// summed before the values are returned, so aggregate rate statistics represent the whole
+    /// machine rather than treating each disk-minute as a separate minute.
+    /// </summary>
+    public List<long> GetDiskMinuteTotals(
+        IReadOnlyCollection<string> diskIds,
+        DateTime fromUtc,
+        DateTime toUtc)
     {
+        if (diskIds.Count == 0)
+            return [];
+
         using var conn = Open();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT read_bytes + write_bytes
+        var parameterNames = new List<string>(diskIds.Count);
+        int index = 0;
+        foreach (string diskId in diskIds.Distinct(StringComparer.Ordinal))
+        {
+            string parameterName = $"$id{index++}";
+            parameterNames.Add(parameterName);
+            cmd.Parameters.AddWithValue(parameterName, diskId);
+        }
+        cmd.CommandText = $"""
+            SELECT SUM(read_bytes + write_bytes)
             FROM disk_minute
-            WHERE disk_id = $id AND ts_min >= $from AND ts_min < $to;
+            WHERE disk_id IN ({string.Join(", ", parameterNames)})
+              AND ts_min >= $from AND ts_min < $to
+            GROUP BY ts_min
+            ORDER BY ts_min;
             """;
-        cmd.Parameters.AddWithValue("$id", diskId);
         cmd.Parameters.AddWithValue("$from", ToUnix(fromUtc));
         cmd.Parameters.AddWithValue("$to", ToUnix(toUtc));
         var list = new List<long>();
@@ -882,6 +952,42 @@ public sealed class MonitorRepository
         cmd.Parameters.AddWithValue("$now", ToUnix(nowUtc));
         var val = cmd.ExecuteScalar();
         return val is null or DBNull ? null : FromUnix(Convert.ToInt64(val));
+    }
+
+    /// <summary>Suppresses one alert rule, such as one disk's endurance warning.</summary>
+    public void SnoozeAlertRule(string ruleKey, DateTime untilUtc)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(ruleKey);
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO alert_snoozes(rule_key, until_utc) VALUES($rule, $until)
+            ON CONFLICT(rule_key) DO UPDATE SET until_utc = excluded.until_utc;
+            """;
+        cmd.Parameters.AddWithValue("$rule", ruleKey);
+        cmd.Parameters.AddWithValue("$until", ToUnix(untilUtc));
+        cmd.ExecuteNonQuery();
+    }
+
+    public bool IsAlertRuleSnoozed(string ruleKey, DateTime nowUtc)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT 1 FROM alert_snoozes WHERE rule_key = $rule AND until_utc > $now;";
+        cmd.Parameters.AddWithValue("$rule", ruleKey);
+        cmd.Parameters.AddWithValue("$now", ToUnix(nowUtc));
+        return cmd.ExecuteScalar() is not null;
+    }
+
+    public DateTime? GetAlertRuleSnoozeUntil(string ruleKey, DateTime nowUtc)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT until_utc FROM alert_snoozes WHERE rule_key = $rule AND until_utc > $now;";
+        cmd.Parameters.AddWithValue("$rule", ruleKey);
+        cmd.Parameters.AddWithValue("$now", ToUnix(nowUtc));
+        object? value = cmd.ExecuteScalar();
+        return value is null or DBNull ? null : FromUnix(Convert.ToInt64(value));
     }
 
     // ---------------------------------------------------------------- Auto-suspend

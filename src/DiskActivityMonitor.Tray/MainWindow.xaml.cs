@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Net;
@@ -51,11 +52,77 @@ public partial class MainWindow : Window
     internal Action<string> TbwSetupUrlLauncher { get; set; } = url =>
         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
     internal Action<AiSecrets> TbwSetupSecretsSaver { get; set; } = AiSecretsStore.Save;
+    internal Func<Color, Color?> ChartColorPicker { get; set; } = ShowChartColorPicker;
+    internal Action<System.Windows.Controls.ContextMenu, System.Windows.Controls.Button> AlertSnoozeMenuPresenter { get; set; }
+        = ShowAlertSnoozeMenu;
 
-    private enum RangeKind { H24, D30, W12 }
-    private RangeKind _range = RangeKind.H24;
+    private enum TrendRangeKind { H1, H24, D7, D30, Custom, Zoom }
+    private TrendRangeKind _trendRange = TrendRangeKind.H1;
+    private TimeSpan? _trendZoomWindow;
+    private int _liveGraphWindowMinutes;
 
-    private sealed record DiskChoice(DiskInfo Disk, string Display);
+    private sealed record DiskChoice(DiskInfo? Disk, string Display)
+    {
+        public bool IsAll => Disk is null;
+    }
+    private sealed record ChartLegendItem(string Label, Brush Brush);
+    private sealed record CollapsibleCard(
+        FrameworkElement Body,
+        System.Windows.Controls.TextBlock CollapsedTitle,
+        System.Windows.Shapes.Path Chevron);
+    private sealed class ChartColorRow : INotifyPropertyChanged
+    {
+        private string _hex;
+        private Brush _previewBrush;
+
+        public ChartColorRow(string key, string label, Color defaultColor, string? configured)
+        {
+            Key = key;
+            Label = label;
+            DefaultColor = defaultColor;
+            _hex = TryParseChartColor(configured, out Color parsed)
+                ? FormatChartColor(parsed)
+                : FormatChartColor(defaultColor);
+            _previewBrush = Preview(_hex, defaultColor);
+        }
+
+        public string Key { get; }
+        public string Label { get; }
+        public Color DefaultColor { get; }
+        public string ChooseAutomationName => $"Choose color for {Label}";
+
+        public string Hex
+        {
+            get => _hex;
+            set
+            {
+                if (_hex == value) return;
+                _hex = value;
+                OnPropertyChanged(nameof(Hex));
+                if (TryParseChartColor(value, out Color color))
+                {
+                    _previewBrush = Preview(FormatChartColor(color), DefaultColor);
+                    OnPropertyChanged(nameof(PreviewBrush));
+                }
+            }
+        }
+
+        public Brush PreviewBrush => _previewBrush;
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        public void Reset() => Hex = FormatChartColor(DefaultColor);
+
+        private static Brush Preview(string value, Color fallback)
+        {
+            Color color = TryParseChartColor(value, out Color parsed) ? parsed : fallback;
+            var brush = new SolidColorBrush(color);
+            brush.Freeze();
+            return brush;
+        }
+
+        private void OnPropertyChanged(string propertyName)
+            => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
     private sealed record ProcessRow(string Name, string WriteText, string ReadText, double BarWidth)
     {
         public string AutomationName => $"{Name}, {WriteText} written. Show files";
@@ -88,10 +155,12 @@ public partial class MainWindow : Window
         string Message,
         string TimeText,
         Brush SeverityBrush,
+        string RuleKey,
         string? DiskId,
         int ControllerErrorCount,
         bool CanRunSmartScan,
         Visibility SmartActionVisibility,
+        Visibility SnoozeVisibility,
         long[] AlertIds);
     private sealed record AlertHistoryRow(
         long Id,
@@ -164,10 +233,27 @@ public partial class MainWindow : Window
     private sealed record SuspendedProcessRow(string Name, string SourceLabel, string Detail, string ResumeAutomationName);
 
     private readonly ObservableCollection<SuspendRuleVm> _suspendRules = new();
+    private readonly ObservableCollection<ChartColorRow> _chartColorRows = new();
+    private readonly Dictionary<string, CollapsibleCard> _collapsibleCards = new(StringComparer.OrdinalIgnoreCase);
 
     private static readonly Brush CriticalBrush = Frozen(0xE0, 0x4A, 0x4A);
     private static readonly Brush WarningBrush = Frozen(0xF0, 0xA0, 0x20);
     private static readonly Brush InfoBrush = Frozen(0x3F, 0xB9, 0x50);
+    private static readonly Color[] SeriesPalette =
+    [
+        Color.FromRgb(0x4F, 0xC3, 0xF7),
+        Color.FromRgb(0xFF, 0xA7, 0x26),
+        Color.FromRgb(0xEF, 0x53, 0x50),
+        Color.FromRgb(0x66, 0xBB, 0x6A),
+        Color.FromRgb(0xFF, 0xCA, 0x28),
+        Color.FromRgb(0xAB, 0x47, 0xBC),
+        Color.FromRgb(0x26, 0xC6, 0xDA),
+        Color.FromRgb(0xEC, 0x40, 0x7A),
+        Color.FromRgb(0x7E, 0x57, 0xC2),
+        Color.FromRgb(0x9C, 0xCC, 0x65),
+        Color.FromRgb(0x8D, 0x6E, 0x63),
+        Color.FromRgb(0x78, 0x90, 0x9C),
+    ];
 
     public MainWindow(MonitorRepository repo, ConfigStore config, UserSettingsStore userSettings)
     {
@@ -181,16 +267,21 @@ public partial class MainWindow : Window
             force: _tbwLookupForceRequested,
             userInitiated: true);
         InitializeComponent();
+        _liveGraphWindowMinutes = Math.Clamp(_config.Current.LiveGraphRetentionMinutes, 1, 120);
+        InitializeCollapsiblePanels();
 
         // Taskbar/window icon uses the exact same glyph as the system-tray icon.
         Icon = TrayIconFactory.CreateImageSource(TrayIconFactory.Ok);
 
-        Btn24h.IsChecked = true;
+        Btn1h.IsChecked = true;
+        TrendStartDate.SelectedDate = DateTime.Today.AddDays(-30);
+        TrendEndDate.SelectedDate = DateTime.Today;
         TpBtn24h.IsChecked = true;
         ProcessRangeSelector.ItemsSource = ProcessRanges;
         ProcessRangeSelector.SelectedItem = ProcessRanges.First(r => r.Span == _processWindow);
         TrendTimeZoneText.Text = LocalTimeDisplay.ZoneLabel();
         AlertSearchBox.TextChanged += AlertSearch_TextChanged;
+        ChartColorList.ItemsSource = _chartColorRows;
         SuspendRuleList.ItemsSource = _suspendRules;
         _suspendRules.CollectionChanged += (_, _) =>
             SuspendRuleEmpty.Visibility = _suspendRules.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -257,6 +348,137 @@ public partial class MainWindow : Window
         base.OnClosing(e);
     }
 
+    private void InitializeCollapsiblePanels()
+    {
+        HashSet<string> collapsed = _userSettings.Current.CollapsedPanels;
+        List<System.Windows.Controls.Border> cards = FindLogicalChildren<System.Windows.Controls.Border>(this)
+            .Where(border => border.Tag is string key && PanelTitles.ContainsKey(key))
+            .ToList();
+        foreach (System.Windows.Controls.Border card in cards)
+            InitializeCollapsiblePanel(card, collapsed);
+    }
+
+    internal void InitializeCollapsiblePanel(
+        System.Windows.Controls.Border card,
+        IReadOnlySet<string> collapsed)
+    {
+        string key = card.Tag as string ?? "";
+        if (!PanelTitles.ContainsKey(key) || card.Child is not FrameworkElement body)
+            return;
+
+        card.VerticalAlignment = System.Windows.VerticalAlignment.Top;
+        card.HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch;
+        card.Child = null;
+        var container = new System.Windows.Controls.Grid();
+        container.RowDefinitions.Add(new System.Windows.Controls.RowDefinition { Height = GridLength.Auto });
+        container.RowDefinitions.Add(new System.Windows.Controls.RowDefinition { Height = GridLength.Auto });
+
+        var header = new System.Windows.Controls.Grid { Height = 20 };
+        var title = new System.Windows.Controls.TextBlock
+        {
+            Text = PanelTitles[key],
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = Visibility.Collapsed,
+        };
+        title.SetResourceReference(StyleProperty, "H2");
+        var chevron = new System.Windows.Shapes.Path
+        {
+            Data = System.Windows.Media.Geometry.Parse("M 1 6 L 5 2 L 9 6"),
+            Stroke = FindResource("TextSecondary") as Brush ?? Brushes.Gray,
+            StrokeThickness = 1.4,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            VerticalAlignment = System.Windows.VerticalAlignment.Center,
+        };
+        var button = new System.Windows.Controls.Button
+        {
+            Width = 24,
+            Height = 20,
+            Padding = new Thickness(0),
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+            VerticalAlignment = System.Windows.VerticalAlignment.Top,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Content = chevron,
+            ToolTip = $"Collapse {PanelTitles[key]}",
+        };
+        AutomationProperties.SetName(button, $"Collapse {PanelTitles[key]}");
+        button.Click += (_, _) => SetPanelCollapsed(key, !IsPanelCollapsed(key));
+
+        header.Children.Add(title);
+        header.Children.Add(button);
+        System.Windows.Controls.Grid.SetRow(header, 0);
+        System.Windows.Controls.Grid.SetRow(body, 1);
+        container.Children.Add(header);
+        container.Children.Add(body);
+        card.Child = container;
+
+        _collapsibleCards[key] = new CollapsibleCard(body, title, chevron);
+        ApplyPanelCollapsed(key, collapsed.Contains(key));
+    }
+
+    private static readonly IReadOnlyDictionary<string, string> PanelTitles =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["summary-today"] = "Written today",
+            ["summary-24h"] = "Last 24 hours",
+            ["summary-7d"] = "Last 7 days",
+            ["summary-endurance"] = "SSD endurance",
+            ["endurance"] = "SSD endurance",
+            ["live-activity"] = "Live disk activity",
+            ["total-written"] = "Total written over time",
+            ["throughput"] = "Disk throughput",
+            ["processes"] = "Top application write requests",
+            ["alerts"] = "Alert center",
+            ["suspended"] = "Suspended processes",
+            ["auto-suspend"] = "Auto-suspend rules",
+            ["settings"] = "Settings & thresholds",
+        };
+
+    private static IEnumerable<T> FindLogicalChildren<T>(DependencyObject root) where T : DependencyObject
+    {
+        foreach (object childObject in LogicalTreeHelper.GetChildren(root))
+        {
+            if (childObject is not DependencyObject child)
+                continue;
+            if (child is T match)
+                yield return match;
+            foreach (T descendant in FindLogicalChildren<T>(child))
+                yield return descendant;
+        }
+    }
+
+    internal bool IsPanelCollapsed(string key)
+        => _collapsibleCards.TryGetValue(key, out CollapsibleCard? card)
+            && card.Body.Visibility == Visibility.Collapsed;
+
+    internal void SetPanelCollapsed(string key, bool collapsed)
+    {
+        if (!_collapsibleCards.ContainsKey(key)) return;
+        ApplyPanelCollapsed(key, collapsed);
+        _userSettings.Update(settings =>
+        {
+            if (collapsed) settings.CollapsedPanels.Add(key);
+            else settings.CollapsedPanels.Remove(key);
+        });
+    }
+
+    private void ApplyPanelCollapsed(string key, bool collapsed)
+    {
+        if (!_collapsibleCards.TryGetValue(key, out CollapsibleCard? card)) return;
+        card.Body.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+        card.CollapsedTitle.Visibility = collapsed ? Visibility.Visible : Visibility.Collapsed;
+        card.Chevron.Data = System.Windows.Media.Geometry.Parse(
+            collapsed ? "M 1 2 L 5 6 L 9 2" : "M 1 6 L 5 2 L 9 6");
+        if (card.Chevron.Parent is System.Windows.Controls.Button button)
+        {
+            string action = collapsed ? "Expand" : "Collapse";
+            button.ToolTip = $"{action} {PanelTitles[key]}";
+            AutomationProperties.SetName(button, $"{action} {PanelTitles[key]}");
+        }
+    }
+
     // ----------------------------------------------------------- Data loading
 
     private void LoadDisks()
@@ -268,17 +490,24 @@ public partial class MainWindow : Window
             .Select(d => new DiskChoice(d, $"{d.DisplayName}  -  {MediaTag(d)}"))
             .ToList();
 
-        var previous = (DiskSelector.SelectedItem as DiskChoice)?.Disk.DiskId;
+        var previousChoice = DiskSelector.SelectedItem as DiskChoice;
+        string? previous = previousChoice?.Disk?.DiskId;
+        bool keepAll = previousChoice?.IsAll == true;
+        choices.Insert(0, new DiskChoice(null, "All disks"));
         DiskSelector.ItemsSource = choices;
 
-        if (choices.Count == 0)
+        if (disks.Count == 0)
         {
             SubtitleText.Text = "No disks detected yet - start the collector service.";
             return;
         }
 
-        var keep = choices.FirstOrDefault(c => c.Disk.DiskId == previous);
-        DiskSelector.SelectedItem = keep ?? choices.First();
+        var keep = keepAll
+            ? choices[0]
+            : previous is null
+                ? null
+                : choices.FirstOrDefault(c => c.Disk?.DiskId == previous);
+        DiskSelector.SelectedItem = keep ?? choices[1];
     }
 
     private static string MediaTag(DiskInfo d) => d.MediaType switch
@@ -291,15 +520,25 @@ public partial class MainWindow : Window
 
     private DiskInfo? SelectedDisk => (DiskSelector.SelectedItem as DiskChoice)?.Disk;
 
+    private IReadOnlyList<DiskInfo> SelectedDisks
+    {
+        get
+        {
+            if (DiskSelector.SelectedItem is not DiskChoice choice)
+                return [];
+            return choice.Disk is DiskInfo disk ? [disk] : _repo.GetDisks();
+        }
+    }
+
     private void RefreshAll()
     {
-        var disk = SelectedDisk;
-        if (disk is null) return;
+        IReadOnlyList<DiskInfo> disks = SelectedDisks;
+        if (disks.Count == 0) return;
 
-        UpdateSummary(disk);
-        UpdateLiveDiskActivity(disk);
-        UpdateChart(disk);
-        UpdateThroughput(disk);
+        UpdateSummary(disks);
+        UpdateLiveDiskActivity(disks);
+        UpdateChart(disks);
+        UpdateThroughput(disks);
         UpdateProcesses();
         UpdateAlerts();
         RefreshSuspended();
@@ -428,16 +667,16 @@ public partial class MainWindow : Window
         TpBtn24h.IsChecked = sender == TpBtn24h;
         TpBtn7d.IsChecked = sender == TpBtn7d;
         TpBtn30d.IsChecked = sender == TpBtn30d;
-        var disk = SelectedDisk;
-        if (disk is not null) UpdateThroughput(disk);
+        IReadOnlyList<DiskInfo> disks = SelectedDisks;
+        if (disks.Count > 0) UpdateThroughput(disks);
     }
 
     /// <summary>Computes and renders average / median / peak I/O throughput (MB/s) for the selected window.</summary>
-    private void UpdateThroughput(DiskInfo disk)
+    private void UpdateThroughput(IReadOnlyList<DiskInfo> disks)
     {
         var nowUtc = DateTime.UtcNow;
         var fromUtc = nowUtc - _throughputWindow;
-        var perMinute = _repo.GetDiskMinuteTotals(disk.DiskId, fromUtc, nowUtc);
+        var perMinute = _repo.GetDiskMinuteTotals(disks.Select(disk => disk.DiskId).ToArray(), fromUtc, nowUtc);
         MonitoringCoverage coverage = _repo.GetMonitoringCoverage(fromUtc, nowUtc);
         var stats = ThroughputStats.Compute(perMinute, coverage.MonitoredMinutes);
         double totalBytes = perMinute.Sum(value => (double)value);
@@ -453,9 +692,9 @@ public partial class MainWindow : Window
 
         var bars = new List<ChartBar>
         {
-            new("Average", stats.AverageMbps),
-            new("Median", stats.MedianMbps),
-            new("Peak", stats.PeakMbps, Highlight: true),
+            new("Average", stats.AverageMbps, Brush: ChartBrush("throughput:average", SeriesPalette[0])),
+            new("Median", stats.MedianMbps, Brush: ChartBrush("throughput:median", SeriesPalette[6])),
+            new("Peak", stats.PeakMbps, Highlight: true, Brush: ChartBrush("throughput:peak", SeriesPalette[1])),
         };
         ThroughputChart.SetData(bars, v => $"{FormatMbps(v)} MB/s");
         ThroughputCoverageText.Text = FormatCoverageSummary(rates);
@@ -482,27 +721,59 @@ public partial class MainWindow : Window
 
     private void RefreshLiveDiskActivity()
     {
-        var disk = SelectedDisk;
-        if (disk is not null) UpdateLiveDiskActivity(disk);
+        IReadOnlyList<DiskInfo> disks = SelectedDisks;
+        if (disks.Count > 0) UpdateLiveDiskActivity(disks);
     }
 
-    private void UpdateLiveDiskActivity(DiskInfo disk)
+    private void UpdateLiveDiskActivity(IReadOnlyList<DiskInfo> disks)
     {
         int retentionMinutes = Math.Clamp(_config.Current.LiveGraphRetentionMinutes, 1, 120);
-        IReadOnlyList<LiveDiskPoint> points = BuildLiveDiskPoints(
-            _repo.GetLiveDiskSamples(disk.DiskId, DateTime.UtcNow.AddMinutes(-retentionMinutes)),
-            maxPoints: 120);
-        LiveDiskActivityChart.SetData(points);
-        LiveDiskCaption.Text = $"Physical read/write throughput from the last {retentionMinutes:N0} min of granular collector samples";
+        _liveGraphWindowMinutes = Math.Clamp(_liveGraphWindowMinutes, 1, retentionMinutes);
+        DateTime fromUtc = DateTime.UtcNow.AddMinutes(-_liveGraphWindowMinutes);
+        var series = new List<ChartSeries>();
+        var latest = new List<string>();
+        LiveDiskPoint? singleCurrent = null;
+        int diskIndex = 0;
+        foreach (DiskInfo disk in disks.OrderBy(item => item.DiskId, StringComparer.Ordinal))
+        {
+            IReadOnlyList<LiveDiskPoint> points = BuildLiveDiskPoints(
+                _repo.GetLiveDiskSamples(disk.DiskId, fromUtc),
+                maxPoints: 120);
+            string label = DiskChartLabel(disk);
+            Brush readBrush = ChartBrush(LiveColorKey(disk.DiskId, "read"), SeriesPalette[(diskIndex * 2) % SeriesPalette.Length]);
+            Brush writeBrush = ChartBrush(LiveColorKey(disk.DiskId, "write"), SeriesPalette[((diskIndex * 2) + 1) % SeriesPalette.Length]);
+            series.Add(new ChartSeries(
+                LiveColorKey(disk.DiskId, "read"),
+                $"{label} read",
+                readBrush,
+                points.Select(point => new TimeValuePoint(point.TimestampUtc, point.ReadMbps)).ToList()));
+            series.Add(new ChartSeries(
+                LiveColorKey(disk.DiskId, "write"),
+                $"{label} write",
+                writeBrush,
+                points.Select(point => new TimeValuePoint(point.TimestampUtc, point.WriteMbps)).ToList()));
+            if (points.Count > 0)
+            {
+                LiveDiskPoint current = points[^1];
+                if (disks.Count == 1)
+                    singleCurrent = current;
+                latest.Add($"{label}  R {FormatMbps(current.ReadMbps)}  W {FormatMbps(current.WriteMbps)} MB/s");
+            }
+            diskIndex++;
+        }
+        LiveDiskActivityChart.SetSeries(series);
+        LiveDiskLegend.ItemsSource = series.Select(item => new ChartLegendItem(item.Label, item.Brush)).ToList();
+        LiveDiskCaption.Text = $"Physical read/write throughput from the last {_liveGraphWindowMinutes:N0} min of granular collector samples";
 
-        if (points.Count == 0)
+        if (latest.Count == 0)
         {
             LiveDiskCurrent.Text = "Waiting for the collector's next granular sample.";
             return;
         }
 
-        LiveDiskPoint current = points[^1];
-        LiveDiskCurrent.Text = $"Now  Read {FormatMbps(current.ReadMbps)} MB/s   Write {FormatMbps(current.WriteMbps)} MB/s";
+        LiveDiskCurrent.Text = singleCurrent is LiveDiskPoint one
+            ? $"Now  Read {FormatMbps(one.ReadMbps)} MB/s   Write {FormatMbps(one.WriteMbps)} MB/s"
+            : "Now  " + string.Join("   |   ", latest);
     }
 
     internal static IReadOnlyList<LiveDiskPoint> BuildLiveDiskPoints(
@@ -525,14 +796,14 @@ public partial class MainWindow : Window
         return points;
     }
 
-    private void UpdateSummary(DiskInfo disk)
+    private void UpdateSummary(IReadOnlyList<DiskInfo> disks)
     {
         var nowUtc = DateTime.UtcNow;
         var midnightUtc = DateTime.Today.ToUniversalTime();
 
-        var today = _repo.GetDiskTotals(disk.DiskId, midnightUtc, nowUtc);
-        var day24 = _repo.GetDiskTotals(disk.DiskId, nowUtc.AddHours(-24), nowUtc);
-        var week7 = _repo.GetDiskTotals(disk.DiskId, nowUtc.AddDays(-7), nowUtc);
+        var today = SumDiskTotals(disks, midnightUtc, nowUtc);
+        var day24 = SumDiskTotals(disks, nowUtc.AddHours(-24), nowUtc);
+        var week7 = SumDiskTotals(disks, nowUtc.AddDays(-7), nowUtc);
 
         TodayMetric.Text = ByteFormat.Humanize(today.Write);
         TodayReadSub.Text = $"read {ByteFormat.Humanize(today.Read)}";
@@ -541,11 +812,117 @@ public partial class MainWindow : Window
         Week7Metric.Text = ByteFormat.Humanize(week7.Write);
         Week7AvgSub.Text = $"avg {ByteFormat.Humanize(week7.Write / 7.0)}/day";
 
-        UpdateEndurance(disk, nowUtc);
+        if (disks.Count == 1)
+        {
+            UpdateEndurance(disks[0], nowUtc);
+        }
+        else
+        {
+            UpdateAggregateEndurance(disks, nowUtc);
+        }
     }
+
+    private void UpdateAggregateEndurance(IReadOnlyList<DiskInfo> disks, DateTime nowUtc)
+    {
+        DateTime fromUtc = nowUtc.AddDays(-7);
+        List<DateTime> earliestSamples = disks.Select(disk => _repo.GetEarliestSample(disk.DiskId))
+            .Where(value => value.HasValue)
+            .Select(value => value!.Value)
+            .ToList();
+        if (earliestSamples.Count > 0 && earliestSamples.Min() > fromUtc)
+        {
+            DateTime first = earliestSamples.Min();
+            fromUtc = first;
+        }
+
+        var recent = SumDiskTotals(disks, fromUtc, nowUtc);
+        MonitoringCoverage coverage = _repo.GetMonitoringCoverage(fromUtc, nowUtc);
+        MonitoringRateStats rates = MonitoringRateStats.Compute(
+            recent.Write,
+            coverage.MonitoredMinutes,
+            coverage.RequestedMinutes,
+            _config.Current.HighCoveragePercent);
+        double perHour = rates.MonitoredBytesPerHour;
+        double perDay = perHour * 24;
+
+        WearMetric.Text = $"{disks.Count:N0} disks";
+        WearSub.Text = perDay > 0
+            ? $"combined {ByteFormat.Humanize(perDay)}/day; lifespan remains drive-specific"
+            : "Combined physical activity; lifespan remains drive-specific.";
+        EnduranceDiskText.Text = "All disks selected";
+        EnduranceRatedText.Text = "Per-disk ratings";
+        EnduranceRatedBadge.IsEnabled = false;
+        SmartWearValue.Text = "Per drive";
+        SmartWearFillCol.Width = new GridLength(0, GridUnitType.Star);
+        SmartWearRestCol.Width = new GridLength(100, GridUnitType.Star);
+        SmartWearText.Text = "SMART wear and TBW cannot be safely combined; select a disk for its endurance percentage.";
+
+        long lifetimeWrite = 0;
+        long lifetimeRead = 0;
+        int lifetimeWriteCount = 0;
+        int lifetimeReadCount = 0;
+        foreach (DiskInfo disk in disks)
+        {
+            if (disk.LifetimeBytesWritten is long write)
+            {
+                lifetimeWrite = SaturatingAdd(lifetimeWrite, write);
+                lifetimeWriteCount++;
+            }
+            if (disk.LifetimeBytesRead is long read)
+            {
+                lifetimeRead = SaturatingAdd(lifetimeRead, read);
+                lifetimeReadCount++;
+            }
+        }
+        SmartWearLifeText.Text = FormatAggregateLifetime(
+            lifetimeWrite,
+            lifetimeWriteCount,
+            lifetimeRead,
+            lifetimeReadCount);
+        SmartWearLifeText.Visibility = Visibility.Visible;
+        EnduranceProjValue.Text = "Per drive";
+        EnduranceProjSub.Text = "select a disk for its projected lifespan";
+        EnduranceAvgHour.Text = perHour > 0 ? ByteFormat.Humanize(perHour) : "-";
+        EnduranceAvgDay.Text = perDay > 0 ? ByteFormat.Humanize(perDay) : "-";
+        EnduranceAvgWeek.Text = perDay > 0 ? ByteFormat.Humanize(perDay * 7) : "-";
+        EnduranceConsumedText.Text = $"Combined recent monitoring coverage: {rates.CoveragePercent:0.#}%. "
+            + "Lifetime totals include only disks that expose them; per-drive wear remains available by selecting that disk.";
+    }
+
+    private (long Read, long Write) SumDiskTotals(
+        IEnumerable<DiskInfo> disks,
+        DateTime fromUtc,
+        DateTime toUtc)
+    {
+        long read = 0;
+        long write = 0;
+        foreach (DiskInfo disk in disks)
+        {
+            var totals = _repo.GetDiskTotals(disk.DiskId, fromUtc, toUtc);
+            read = SaturatingAdd(read, totals.Read);
+            write = SaturatingAdd(write, totals.Write);
+        }
+        return (read, write);
+    }
+
+    internal static long SaturatingAdd(long left, long right)
+        => right > 0 && left > long.MaxValue - right ? long.MaxValue
+            : right < 0 && left < long.MinValue - right ? long.MinValue
+            : left + right;
+
+        internal static string FormatAggregateLifetime(
+                long lifetimeWrite,
+                int lifetimeWriteCount,
+                long lifetimeRead,
+                int lifetimeReadCount)
+                => lifetimeWriteCount == 0
+                        ? "No drives expose lifetime-write totals."
+                        : $"{ByteFormat.Humanize(lifetimeWrite)} written across {lifetimeWriteCount:N0} reporting disk(s)"
+                            + (lifetimeReadCount > 0 ? $" · {ByteFormat.Humanize(lifetimeRead)} read across {lifetimeReadCount:N0}" : "");
 
     private void UpdateEndurance(DiskInfo disk, DateTime nowUtc)
     {
+        EnduranceRatedBadge.IsEnabled = true;
         var cfg = _config.Current;
         var earliest = _repo.GetEarliestSample(disk.DiskId);
         double observedBytes = 0;
@@ -691,35 +1068,325 @@ public partial class MainWindow : Window
 
     internal static string FormatPercent(double value) => $"{value:0.##}%";
 
-    private void UpdateChart(DiskInfo disk)
+    private void UpdateChart(IReadOnlyList<DiskInfo> disks)
     {
         var nowUtc = DateTime.UtcNow;
-        Trends.Bucket bucket;
-        int count;
-        DateTime fromUtc;
-        switch (_range)
+        if (!TryGetTrendRange(nowUtc, out DateTime fromUtc, out DateTime toUtc))
         {
-            case RangeKind.D30:
-                bucket = Trends.Bucket.Day; count = 30; fromUtc = nowUtc.AddDays(-31);
-                TrendTitle.Text = "Write volume per day";
-                break;
-            case RangeKind.W12:
-                bucket = Trends.Bucket.Week; count = 12; fromUtc = nowUtc.AddDays(-7 * 13);
-                TrendTitle.Text = "Write volume per week";
-                break;
-            default:
-                bucket = Trends.Bucket.Hour; count = 24; fromUtc = nowUtc.AddHours(-25);
-                TrendTitle.Text = "Write volume per hour";
-                break;
+            TotalWrittenTrendChart.SetData([], ByteFormat.Humanize);
+            TrendRangeText.Text = "Choose a valid date range.";
+            TrendChangeText.Text = "";
+            return;
         }
 
-        var hourly = _repo.GetHourlyDiskTotals(disk.DiskId, fromUtc, nowUtc);
-        var buckets = Trends.Build(hourly, bucket, count, DateTime.Now);
-        var bars = new List<ChartBar>(buckets.Count);
-        for (int i = 0; i < buckets.Count; i++)
-            bars.Add(new ChartBar(Trends.Label(buckets[i].BucketStartLocal, bucket), buckets[i].WriteBytes, i == buckets.Count - 1));
+        TimeSpan bucketSize = SelectTrendBucket(toUtc - fromUtc);
+        var writesByBucket = new SortedDictionary<DateTime, long>();
+        long totalAtStart = 0;
+        bool hasRecordedHistory = false;
+        bool allLifetimeAnchored = true;
+        foreach (DiskInfo disk in disks)
+        {
+            foreach (var (bucketEndUtc, writeBytes) in _repo.GetDiskWriteBuckets(disk.DiskId, fromUtc, toUtc, bucketSize))
+            {
+                writesByBucket.TryGetValue(bucketEndUtc, out long existing);
+                writesByBucket[bucketEndUtc] = SaturatingAdd(existing, writeBytes);
+            }
 
-        Chart.SetData(bars, ByteFormat.Humanize);
+            DateTime? earliest = _repo.GetEarliestSample(disk.DiskId);
+            long recordedAfterStart = disk.LifetimeBytesWritten is null
+                ? 0
+                : _repo.GetDiskTotals(disk.DiskId, fromUtc, nowUtc).Write;
+            long recordedBeforeStart = disk.LifetimeBytesWritten is not null || earliest is not DateTime first || first >= fromUtc
+                ? 0
+                : _repo.GetDiskTotals(disk.DiskId, first, fromUtc).Write;
+            totalAtStart = SaturatingAdd(totalAtStart, CalculateTrendStartTotal(
+                disk.LifetimeBytesWritten,
+                recordedAfterStart,
+                recordedBeforeStart));
+            hasRecordedHistory |= earliest is DateTime recordedAt && recordedAt < toUtc;
+            allLifetimeAnchored &= disk.LifetimeBytesWritten is not null;
+        }
+
+        if (!hasRecordedHistory && disks.All(disk => disk.LifetimeBytesWritten is null))
+        {
+            TotalWrittenTrendChart.SetData([], ByteFormat.Humanize);
+            TrendCaption.Text = "Cumulative physical writes recorded by this app; no samples exist in this range.";
+            TrendRangeText.Text = FormatTrendRange(fromUtc, toUtc);
+            TrendChangeText.Text = "No samples";
+            return;
+        }
+
+        IReadOnlyList<Trends.TotalWrittenPoint> points = Trends.BuildCumulative(
+            writesByBucket.Select(item => (item.Key, item.Value)),
+            fromUtc,
+            toUtc,
+            totalAtStart);
+        TotalWrittenTrendChart.LineBrush = ChartBrush(
+            disks.Count == 1 ? $"total:{disks[0].DiskId}" : "total:all",
+            SeriesPalette[1]);
+        TotalWrittenTrendChart.SetData(points, ByteFormat.Humanize);
+
+        long increase = Math.Max(0, points[^1].TotalBytes - points[0].TotalBytes);
+        TrendTitle.Text = disks.Count == 1 ? "Total written over time" : "Total written over time · All disks";
+        TrendCaption.Text = disks.Count > 1
+            ? allLifetimeAnchored
+                ? "Combined drive lifetime totals anchored to SMART; changes use recorded physical writes."
+                : "Combined cumulative physical writes; SMART lifetime anchors are used where available."
+            : allLifetimeAnchored
+                ? "Drive lifetime total anchored to SMART; changes use recorded physical writes."
+                : "Cumulative physical writes recorded since monitoring began; lifetime SMART total is unavailable.";
+        TrendRangeText.Text = FormatTrendRange(fromUtc, toUtc);
+        TrendChangeText.Text = FormatTrendChange(increase, toUtc - fromUtc);
+    }
+
+    internal static TimeSpan SelectTrendBucket(TimeSpan duration)
+    {
+        if (duration <= TimeSpan.FromHours(2)) return TimeSpan.FromMinutes(1);
+        if (duration <= TimeSpan.FromDays(2)) return TimeSpan.FromMinutes(15);
+        if (duration <= TimeSpan.FromDays(14)) return TimeSpan.FromHours(2);
+        if (duration <= TimeSpan.FromDays(62)) return TimeSpan.FromHours(12);
+        return TimeSpan.FromDays(Math.Max(1, Math.Ceiling(duration.TotalDays / 96.0)));
+    }
+
+    internal static long CalculateTrendStartTotal(
+        long? lifetimeWritten,
+        long recordedAfterStart,
+        long recordedBeforeStart)
+        => lifetimeWritten is long lifetime
+            ? Math.Max(0, lifetime - Math.Max(0, recordedAfterStart))
+            : Math.Max(0, recordedBeforeStart);
+
+    internal static (DateTime FromUtc, DateTime ToUtc)? ResolveCustomTrendRange(
+        DateTime? startDate,
+        DateTime? endDate,
+        DateTime nowUtc)
+    {
+        if (startDate is null || endDate is null || endDate.Value.Date < startDate.Value.Date)
+            return null;
+
+        DateTime todayLocal = nowUtc.ToLocalTime().Date;
+        DateTime startLocal = DateTime.SpecifyKind(startDate.Value.Date, DateTimeKind.Local);
+        if (startLocal.Date > todayLocal)
+            return null;
+
+        DateTime endLocal = DateTime.SpecifyKind(endDate.Value.Date, DateTimeKind.Local);
+        DateTime fromUtc = startLocal.ToUniversalTime();
+        DateTime toUtc = endLocal.Date >= todayLocal
+            ? nowUtc
+            : endLocal.AddDays(1).ToUniversalTime();
+        return (fromUtc, toUtc);
+    }
+
+    private bool TryGetTrendRange(DateTime nowUtc, out DateTime fromUtc, out DateTime toUtc)
+    {
+        toUtc = nowUtc;
+        fromUtc = _trendRange switch
+        {
+            TrendRangeKind.H1 => nowUtc.AddHours(-1),
+            TrendRangeKind.H24 => nowUtc.AddHours(-24),
+            TrendRangeKind.D7 => nowUtc.AddDays(-7),
+            TrendRangeKind.D30 => nowUtc.AddDays(-30),
+            _ when _trendZoomWindow is TimeSpan zoomWindow => nowUtc - zoomWindow,
+            _ => nowUtc,
+        };
+
+        if (_trendRange == TrendRangeKind.Custom)
+        {
+            var custom = ResolveCustomTrendRange(
+                TrendStartDate.SelectedDate,
+                TrendEndDate.SelectedDate,
+                nowUtc);
+            if (custom is null)
+            {
+                TrendCustomError.Text = "Start must be on or before the end date and cannot be in the future.";
+                TrendCustomError.Visibility = Visibility.Visible;
+                return false;
+            }
+
+            (fromUtc, toUtc) = custom.Value;
+        }
+
+        TrendCustomError.Visibility = Visibility.Collapsed;
+        return true;
+    }
+
+    private static string DiskChartLabel(DiskInfo disk)
+        => !string.IsNullOrWhiteSpace(disk.Volumes) ? disk.Volumes.Trim()
+            : !string.IsNullOrWhiteSpace(disk.FriendlyName) ? disk.FriendlyName.Trim()
+            : $"Disk {disk.DiskId}";
+
+    private static string LiveColorKey(string diskId, string metric) => $"live:{diskId}:{metric}";
+
+    private Brush ChartBrush(string key, Color fallback)
+    {
+        string? configured = _userSettings.Current.ChartColors.GetValueOrDefault(key);
+        Color color = TryParseChartColor(configured, out Color parsed) ? parsed : fallback;
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        return brush;
+    }
+
+    internal static bool TryParseChartColor(string? value, out Color color)
+    {
+        color = default;
+        string hex = value?.Trim().TrimStart('#') ?? "";
+        if (hex.Length != 6
+            || !byte.TryParse(hex[..2], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out byte red)
+            || !byte.TryParse(hex.Substring(2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out byte green)
+            || !byte.TryParse(hex.Substring(4, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out byte blue))
+            return false;
+        color = Color.FromRgb(red, green, blue);
+        return true;
+    }
+
+    internal static string FormatChartColor(Color color) => $"#{color.R:X2}{color.G:X2}{color.B:X2}";
+
+    private void ConfigureChart_Click(object sender, RoutedEventArgs e)
+    {
+        string chart = (sender as FrameworkElement)?.Tag?.ToString() ?? "";
+        IReadOnlyList<DiskInfo> disks = SelectedDisks;
+        if (disks.Count == 0) return;
+
+        _chartColorRows.Clear();
+        UserSettings settings = _userSettings.Current;
+        switch (chart)
+        {
+            case "live":
+                int diskIndex = 0;
+                foreach (DiskInfo disk in disks.OrderBy(item => item.DiskId, StringComparer.Ordinal))
+                {
+                    string label = DiskChartLabel(disk);
+                    AddChartColorRow(
+                        LiveColorKey(disk.DiskId, "read"),
+                        $"{label} read",
+                        SeriesPalette[(diskIndex * 2) % SeriesPalette.Length],
+                        settings);
+                    AddChartColorRow(
+                        LiveColorKey(disk.DiskId, "write"),
+                        $"{label} write",
+                        SeriesPalette[((diskIndex * 2) + 1) % SeriesPalette.Length],
+                        settings);
+                    diskIndex++;
+                }
+                ChartConfigTitle.Text = "Configure live disk activity";
+                break;
+            case "total":
+                string totalKey = disks.Count == 1 ? $"total:{disks[0].DiskId}" : "total:all";
+                string totalLabel = disks.Count == 1
+                    ? $"{DiskChartLabel(disks[0])} total written"
+                    : "All disks total written";
+                AddChartColorRow(totalKey, totalLabel, SeriesPalette[1], settings);
+                ChartConfigTitle.Text = "Configure total written";
+                break;
+            case "throughput":
+                AddChartColorRow("throughput:average", "Average", SeriesPalette[0], settings);
+                AddChartColorRow("throughput:median", "Median", SeriesPalette[6], settings);
+                AddChartColorRow("throughput:peak", "Peak", SeriesPalette[1], settings);
+                ChartConfigTitle.Text = "Configure disk throughput";
+                break;
+            default:
+                return;
+        }
+
+        ChartConfigError.Visibility = Visibility.Collapsed;
+        ChartConfigOverlay.Visibility = Visibility.Visible;
+        ChartConfigOverlay.Focus();
+    }
+
+    private void AddChartColorRow(string key, string label, Color fallback, UserSettings settings)
+        => _chartColorRows.Add(new ChartColorRow(
+            key,
+            label,
+            fallback,
+            settings.ChartColors.GetValueOrDefault(key)));
+
+    private void ChartColorChoose_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not ChartColorRow row)
+            return;
+        TryParseChartColor(row.Hex, out Color current);
+        Color? selected = ChartColorPicker(current);
+        if (selected is Color color)
+            row.Hex = FormatChartColor(color);
+    }
+
+    [ExcludeFromCodeCoverage]
+    private static Color? ShowChartColorPicker(Color current)
+    {
+        using var dialog = new System.Windows.Forms.ColorDialog
+        {
+            AllowFullOpen = true,
+            FullOpen = true,
+            Color = System.Drawing.Color.FromArgb(current.R, current.G, current.B),
+        };
+        return dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK
+            ? Color.FromRgb(dialog.Color.R, dialog.Color.G, dialog.Color.B)
+            : null;
+    }
+
+    private void ChartConfigReset_Click(object sender, RoutedEventArgs e)
+    {
+        foreach (ChartColorRow row in _chartColorRows)
+            row.Reset();
+        ChartConfigError.Visibility = Visibility.Collapsed;
+    }
+
+    private void ChartConfigSave_Click(object sender, RoutedEventArgs e)
+    {
+        ChartColorRow? invalid = _chartColorRows.FirstOrDefault(row => !TryParseChartColor(row.Hex, out _));
+        if (invalid is not null)
+        {
+            ChartConfigError.Text = $"Enter a six-digit hex color for {invalid.Label}.";
+            ChartConfigError.Visibility = Visibility.Visible;
+            return;
+        }
+
+        _userSettings.Update(settings =>
+        {
+            foreach (ChartColorRow row in _chartColorRows)
+                settings.ChartColors[row.Key] = row.Hex.ToUpperInvariant();
+        });
+        ChartConfigOverlay.Visibility = Visibility.Collapsed;
+        RefreshAll();
+    }
+
+    private void ChartConfigClose_Click(object sender, RoutedEventArgs e)
+        => ChartConfigOverlay.Visibility = Visibility.Collapsed;
+
+    private void ChartConfigOverlay_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != System.Windows.Input.Key.Escape) return;
+        e.Handled = true;
+        ChartConfigOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private static string FormatTrendRange(DateTime fromUtc, DateTime toUtc)
+    {
+        string format = toUtc - fromUtc <= TimeSpan.FromDays(2) ? "MMM d, h:mm tt" : "MMM d, yyyy";
+        return $"{LocalTimeDisplay.FormatUtc(fromUtc, format)} to {LocalTimeDisplay.FormatUtc(toUtc, format)}";
+    }
+
+    internal static string FormatTrendChange(long increase, TimeSpan duration)
+    {
+        double units;
+        string unit;
+        if (duration <= TimeSpan.FromDays(2))
+        {
+            units = Math.Max(duration.TotalHours, 1.0 / 60);
+            unit = "hour";
+        }
+        else if (duration <= TimeSpan.FromDays(90))
+        {
+            units = Math.Max(duration.TotalDays, 1.0 / 24);
+            unit = "day";
+        }
+        else
+        {
+            units = Math.Max(duration.TotalDays / 7.0, 1.0 / (24 * 7));
+            unit = "week";
+        }
+
+        return $"Increase: +{ByteFormat.Humanize(increase)}  |  Avg {ByteFormat.HumanizeRate(increase / units, unit)}";
     }
 
     private void UpdateProcesses()
@@ -883,9 +1550,10 @@ public partial class MainWindow : Window
             {
                 var latest = g.OrderByDescending(a => a.Id).First();
                 int count = g.Count();
-                var time = LocalTimeDisplay.FormatUtc(latest.TimestampUtc, "MMM d, HH:mm");
+                var time = LocalTimeDisplay.FormatUtc(latest.TimestampUtc, "MMM d, h:mm tt");
                 const string controllerPrefix = "disk-controller:";
                 bool canScan = latest.RuleKey.StartsWith(controllerPrefix, StringComparison.OrdinalIgnoreCase);
+                bool canSnoozeRule = latest.RuleKey.StartsWith("endurance-health:", StringComparison.OrdinalIgnoreCase);
                 string? diskId = canScan ? latest.RuleKey[controllerPrefix.Length..] : null;
                 int controllerErrors = canScan
                     ? (int)Math.Clamp(Math.Round(latest.Value), 0, int.MaxValue)
@@ -893,17 +1561,19 @@ public partial class MainWindow : Window
                 return new AlertRow(
                     latest.Title,
                     latest.Message,
-                    $"{(count > 1 ? $"{time}  \u00b7  \u00d7{count} since {LocalTimeDisplay.FormatUtc(g.Min(a => a.TimestampUtc), "HH:mm")}" : time)} ({LocalTimeDisplay.ZoneId()})",
+                    $"{(count > 1 ? $"{time}  \u00b7  \u00d7{count} since {LocalTimeDisplay.FormatUtc(g.Min(a => a.TimestampUtc), "h:mm tt")}" : time)} ({LocalTimeDisplay.ZoneId()})",
                     latest.Severity switch
                     {
                         AlertSeverity.Critical => CriticalBrush,
                         AlertSeverity.Warning => WarningBrush,
                         _ => InfoBrush,
                     },
+                    latest.RuleKey,
                     diskId,
                     controllerErrors,
                     canScan,
                         canScan ? Visibility.Visible : Visibility.Collapsed,
+                        canSnoozeRule ? Visibility.Visible : Visibility.Collapsed,
                         g.Select(a => a.Id).ToArray());
             })
             .ToList();
@@ -918,6 +1588,42 @@ public partial class MainWindow : Window
     {
         AlertSearchBox.Clear();
         AlertSearchBox.Focus();
+    }
+
+    private void SnoozeEnduranceAlert_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button button
+            || button.CommandParameter is not AlertRow row
+            || !row.RuleKey.StartsWith("endurance-health:", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var menu = new System.Windows.Controls.ContextMenu();
+        foreach (var (id, label) in SnoozeOptions.Choices)
+        {
+            var item = new System.Windows.Controls.MenuItem
+            {
+                Header = label,
+                Tag = id,
+            };
+            item.Click += (_, _) =>
+            {
+                _repo.SnoozeAlertRule(row.RuleKey, DateTime.UtcNow + SnoozeOptions.ToTimeSpan(id));
+                _repo.AcknowledgeAlertsByRule(row.RuleKey);
+                UpdateAlerts();
+            };
+            menu.Items.Add(item);
+        }
+        AlertSnoozeMenuPresenter(menu, button);
+    }
+
+    [ExcludeFromCodeCoverage]
+    private static void ShowAlertSnoozeMenu(
+        System.Windows.Controls.ContextMenu menu,
+        System.Windows.Controls.Button button)
+    {
+        menu.PlacementTarget = button;
+        menu.Placement = PlacementMode.Bottom;
+        menu.IsOpen = true;
     }
 
     private void ApplyAlertFilter()
@@ -943,7 +1649,7 @@ public partial class MainWindow : Window
             a.Id,
             a.Title,
             a.Message,
-            LocalTimeDisplay.FormatUtcWithZone(a.TimestampUtc, "MMM d, yyyy  HH:mm"),
+            LocalTimeDisplay.FormatUtcWithZone(a.TimestampUtc, "MMM d, yyyy  h:mm tt"),
             a.Severity switch
             {
                 AlertSeverity.Critical => CriticalBrush,
@@ -1097,7 +1803,7 @@ public partial class MainWindow : Window
         SmartScanSerialValue.Text = BlankAsDash(result.SerialNumber);
         SmartScanPathValue.Text = result.DevicePath;
         SmartScanLifetimeValue.Text = FormatLifetime(result.LifetimeBytesWritten, result.LifetimeBytesRead);
-        SmartScanTimeValue.Text = LocalTimeDisplay.FormatUtcWithZone(result.ScannedUtc, "HH:mm:ss");
+        SmartScanTimeValue.Text = LocalTimeDisplay.FormatUtcWithZone(result.ScannedUtc, "h:mm:ss tt");
         SmartScanFindings.ItemsSource = result.Findings;
 
         SmartScanProgressPanel.Visibility = Visibility.Collapsed;
@@ -1165,7 +1871,6 @@ public partial class MainWindow : Window
         TxtInterval.Text = cfg.SampleIntervalSeconds.ToString(CultureInfo.InvariantCulture);
         TxtRefresh.Text = cfg.DashboardRefreshSeconds.ToString(CultureInfo.InvariantCulture);
         TxtLiveGraphRetention.Text = cfg.LiveGraphRetentionMinutes.ToString(CultureInfo.InvariantCulture);
-        TxtEnduranceWarnYears.Text = cfg.TbwProjectionWarnYears.ToString(CultureInfo.InvariantCulture);
         TxtHighCoveragePercent.Text = cfg.HighCoveragePercent.ToString(CultureInfo.InvariantCulture);
         ChkControllerErrors.IsChecked = cfg.EnableControllerErrorAlerts;
         ChkNotify.IsChecked = userSettings.EnableNotifications;
@@ -1196,6 +1901,7 @@ public partial class MainWindow : Window
         LoadAppUpdateSettings(userSettings);
 
         LoadTbwField();
+        LoadEnduranceAlertFields();
     }
 
     private void LoadTbwField()
@@ -1203,6 +1909,7 @@ public partial class MainWindow : Window
         var disk = SelectedDisk;
         if (disk is null)
         {
+            TbwSettingsSection.Visibility = Visibility.Collapsed;
             TxtTbw.Text = "";
             TxtTbwUpper.Text = "";
             _loadedTbwDiskId = null;
@@ -1212,6 +1919,7 @@ public partial class MainWindow : Window
             RadTbwRange.IsChecked = true;
             return;
         }
+        TbwSettingsSection.Visibility = Visibility.Visible;
         var cfg = _config.Current;
         var label = string.IsNullOrWhiteSpace(disk.Volumes) ? $"Disk {disk.DiskId}" : disk.Volumes.Trim();
         TbwLabel.Text = $"TBW setting for {label}";
@@ -1226,6 +1934,121 @@ public partial class MainWindow : Window
         RadTbwRange.IsChecked = upper.HasValue;
         RadTbwSingle.IsChecked = !upper.HasValue;
     }
+
+    private void LoadEnduranceAlertFields()
+    {
+        AppConfig config = _config.Current;
+        DiskInfo? disk = SelectedDisk;
+        bool hasOverride = disk is not null
+            && config.DiskEnduranceAlertOverrides.ContainsKey(disk.DiskId);
+        EnduranceAlertThreshold threshold = disk is null
+            ? AppConfig.CloneEnduranceAlert(config.DefaultEnduranceAlert)
+            : config.EffectiveEnduranceAlert(disk.DiskId);
+
+        EnduranceAlertScopeText.Text = disk is null
+            ? "Default for every SSD unless that disk has an override."
+            : $"{disk.DisplayName}. Uses the all-disks default unless overridden here.";
+        ChkEnduranceAlertOverride.Visibility = disk is null ? Visibility.Collapsed : Visibility.Visible;
+        ChkEnduranceAlertOverride.IsChecked = hasOverride;
+        ChkEnduranceLife.IsChecked = threshold.EnableProjectedLife;
+        TxtEnduranceLifeValue.Text = threshold.RemainingLifeValue.ToString(CultureInfo.InvariantCulture);
+        ChkEndurancePercent.IsChecked = threshold.EnableRemainingPercent;
+        TxtEnduranceRemainingPercent.Text = threshold.RemainingPercent.ToString(CultureInfo.InvariantCulture);
+        SelectEnduranceUnit(threshold.RemainingLifeUnit);
+
+        bool editable = disk is null || hasOverride;
+        SetEnduranceAlertEditorEnabled(editable);
+        EnduranceAlertInheritanceText.Text = disk is null
+            ? "Default: warn below 1 year projected remaining life or at/below 20% endurance remaining (above 80% used)."
+            : hasOverride
+                ? "This disk uses the values above instead of the all-disks default."
+                : "Inherited from the all-disks default. Enable the override to set different thresholds for this disk.";
+    }
+
+    private void SelectEnduranceUnit(EnduranceAlertTimeUnit unit)
+    {
+        foreach (object itemObject in EnduranceLifeUnitSelector.Items)
+        {
+            if (itemObject is System.Windows.Controls.ComboBoxItem item
+                && string.Equals(item.Tag?.ToString(), unit.ToString(), StringComparison.OrdinalIgnoreCase))
+            {
+                EnduranceLifeUnitSelector.SelectedItem = item;
+                return;
+            }
+        }
+        EnduranceLifeUnitSelector.SelectedIndex = 2;
+    }
+
+    private void SetEnduranceAlertEditorEnabled(bool enabled)
+    {
+        ChkEnduranceLife.IsEnabled = enabled;
+        TxtEnduranceLifeValue.IsEnabled = enabled;
+        EnduranceLifeUnitSelector.IsEnabled = enabled;
+        ChkEndurancePercent.IsEnabled = enabled;
+        TxtEnduranceRemainingPercent.IsEnabled = enabled;
+    }
+
+    private void EnduranceAlertOverride_Changed(object sender, RoutedEventArgs e)
+    {
+        if (SelectedDisk is null)
+            return;
+        bool enabled = ChkEnduranceAlertOverride.IsChecked == true;
+        SetEnduranceAlertEditorEnabled(enabled);
+        EnduranceAlertInheritanceText.Text = enabled
+            ? "This disk will use the values above instead of the all-disks default after you save."
+            : "Inherited from the all-disks default. Save to remove this disk's override.";
+    }
+
+    internal static bool TryParseEnduranceAlert(
+        bool enableLife,
+        string lifeValueText,
+        EnduranceAlertTimeUnit unit,
+        bool enablePercent,
+        string percentText,
+        out EnduranceAlertThreshold threshold,
+        out string error)
+    {
+        threshold = new EnduranceAlertThreshold
+        {
+            EnableProjectedLife = enableLife,
+            RemainingLifeUnit = unit,
+            EnableRemainingPercent = enablePercent,
+        };
+        if (!enableLife && !enablePercent)
+        {
+            error = "Enable at least one endurance alert condition.";
+            return false;
+        }
+        if (!double.TryParse(lifeValueText, NumberStyles.Float, CultureInfo.InvariantCulture, out double lifeValue)
+            || !double.IsFinite(lifeValue)
+            || (enableLife && lifeValue <= 0))
+        {
+            error = "Projected remaining life must be greater than 0.";
+            return false;
+        }
+        if (!double.TryParse(percentText, NumberStyles.Float, CultureInfo.InvariantCulture, out double percent)
+            || !double.IsFinite(percent)
+            || (enablePercent && percent is < 0 or > 100))
+        {
+            error = "Endurance remaining must be between 0 and 100%.";
+            return false;
+        }
+        threshold.RemainingLifeValue = Math.Max(0, lifeValue);
+        threshold.RemainingPercent = Math.Clamp(percent, 0, 100);
+        error = "";
+        return true;
+    }
+
+    private EnduranceAlertTimeUnit SelectedEnduranceUnit()
+        => ParseEnduranceUnit(EnduranceLifeUnitSelector.SelectedItem);
+
+    internal static EnduranceAlertTimeUnit ParseEnduranceUnit(object? selectedItem)
+        => Enum.TryParse(
+            (selectedItem as System.Windows.Controls.ComboBoxItem)?.Tag?.ToString(),
+            ignoreCase: true,
+            out EnduranceAlertTimeUnit unit)
+            ? unit
+            : EnduranceAlertTimeUnit.Years;
 
     internal void TbwMode_Checked(object sender, RoutedEventArgs e)
     {
@@ -1344,6 +2167,22 @@ public partial class MainWindow : Window
             tbwUpper = upper;
         }
 
+        EnduranceAlertThreshold? enduranceAlert = null;
+        bool writeEnduranceAlert = disk is null || ChkEnduranceAlertOverride.IsChecked == true;
+        if (writeEnduranceAlert
+            && !TryParseEnduranceAlert(
+                ChkEnduranceLife.IsChecked == true,
+                TxtEnduranceLifeValue.Text,
+                SelectedEnduranceUnit(),
+                ChkEndurancePercent.IsChecked == true,
+                TxtEnduranceRemainingPercent.Text,
+                out enduranceAlert,
+                out string enduranceError))
+        {
+            SaveStatus.Text = enduranceError;
+            return;
+        }
+
         AiSecretsStore.Save(new AiSecrets
         {
             GoogleApiKey = NullIfBlank(TxtGoogleKey.Text),
@@ -1368,7 +2207,6 @@ public partial class MainWindow : Window
             cfg.SampleIntervalSeconds = (int)Math.Clamp(ParseOr(TxtInterval.Text, cfg.SampleIntervalSeconds), 1, 60);
             cfg.DashboardRefreshSeconds = (int)Math.Clamp(ParseOr(TxtRefresh.Text, cfg.DashboardRefreshSeconds), 1, 600);
             cfg.LiveGraphRetentionMinutes = (int)Math.Clamp(ParseOr(TxtLiveGraphRetention.Text, cfg.LiveGraphRetentionMinutes), 1, 120);
-            cfg.TbwProjectionWarnYears = ParseOr(TxtEnduranceWarnYears.Text, cfg.TbwProjectionWarnYears);
             cfg.HighCoveragePercent = highCoveragePercent;
             cfg.EnableControllerErrorAlerts = ChkControllerErrors.IsChecked == true;
 
@@ -1388,7 +2226,15 @@ public partial class MainWindow : Window
             cfg.TailMaxBufferKb = (int)Math.Clamp(ParseOr(TxtTailMaxBufferKb.Text, cfg.TailMaxBufferKb), 128, 32768);
 
             if (disk is null)
+            {
+                cfg.DefaultEnduranceAlert = enduranceAlert!;
                 return;
+            }
+
+            if (ChkEnduranceAlertOverride.IsChecked == true)
+                cfg.DiskEnduranceAlertOverrides[disk.DiskId] = enduranceAlert!;
+            else
+                cfg.DiskEnduranceAlertOverrides.Remove(disk.DiskId);
 
             bool unchangedInheritedEstimate = !_loadedTbwHadOverride
                 && _loadedTbwDiskId == disk.DiskId
@@ -1460,7 +2306,7 @@ public partial class MainWindow : Window
         var nowUtc = DateTime.UtcNow;
 
         SuspendedList.ItemsSource = states
-            .Select(s => new SuspendedRow(s.Name, $"{s.Name}  \u00b7  suspended {LocalTimeDisplay.FormatUtcWithZone(s.SuspendedUtc, "HH:mm")}"))
+            .Select(s => new SuspendedRow(s.Name, $"{s.Name}  \u00b7  suspended {LocalTimeDisplay.FormatUtcWithZone(s.SuspendedUtc, "h:mm tt")}"))
             .ToList();
         SuspendedHeader.Visibility = states.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
 
@@ -1481,11 +2327,11 @@ public partial class MainWindow : Window
     /// <summary>Describes when a process was suspended and when (or whether) it comes back.</summary>
     internal static string FormatSuspensionDetail(SuspendedProcessState state, DateTime nowUtc)
     {
-        string suspended = $"Suspended {LocalTimeDisplay.FormatUtcWithZone(state.SuspendedUtc, "HH:mm")}";
+        string suspended = $"Suspended {LocalTimeDisplay.FormatUtcWithZone(state.SuspendedUtc, "h:mm tt")}";
         if (state.ResumeAtUtc is not DateTime resumeAt)
             return $"{suspended}. Stays suspended until you resume it.";
 
-        string at = LocalTimeDisplay.FormatUtcWithZone(resumeAt, "HH:mm");
+        string at = LocalTimeDisplay.FormatUtcWithZone(resumeAt, "h:mm tt");
         double minutesLeft = (resumeAt - nowUtc).TotalMinutes;
         if (minutesLeft <= 0)
             return $"{suspended}. Interval elapsed - resuming now.";
@@ -2449,6 +3295,7 @@ public partial class MainWindow : Window
     private void DiskSelector_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         LoadTbwField();
+        LoadEnduranceAlertFields();
         RefreshAll();
         _ = StartTbwLookupAsync(SelectedDisk);
     }
@@ -2465,14 +3312,81 @@ public partial class MainWindow : Window
     private void Range_Click(object sender, RoutedEventArgs e)
     {
         var clicked = (ToggleButton)sender;
-        _range = clicked == Btn30d ? RangeKind.D30 : clicked == Btn12w ? RangeKind.W12 : RangeKind.H24;
+        _trendZoomWindow = null;
+        _trendRange = clicked == Btn24h ? TrendRangeKind.H24
+            : clicked == Btn7d ? TrendRangeKind.D7
+            : clicked == Btn30d ? TrendRangeKind.D30
+            : clicked == BtnCustom ? TrendRangeKind.Custom
+            : TrendRangeKind.H1;
 
-        Btn24h.IsChecked = _range == RangeKind.H24;
-        Btn30d.IsChecked = _range == RangeKind.D30;
-        Btn12w.IsChecked = _range == RangeKind.W12;
+        Btn1h.IsChecked = _trendRange == TrendRangeKind.H1;
+        Btn24h.IsChecked = _trendRange == TrendRangeKind.H24;
+        Btn7d.IsChecked = _trendRange == TrendRangeKind.D7;
+        Btn30d.IsChecked = _trendRange == TrendRangeKind.D30;
+        BtnCustom.IsChecked = _trendRange == TrendRangeKind.Custom;
+        TrendCustomRangePanel.Visibility = _trendRange == TrendRangeKind.Custom
+            ? Visibility.Visible
+            : Visibility.Collapsed;
 
-        var disk = SelectedDisk;
-        if (disk is not null) UpdateChart(disk);
+        IReadOnlyList<DiskInfo> disks = SelectedDisks;
+        if (disks.Count > 0) UpdateChart(disks);
+    }
+
+    private void CustomTrendApply_Click(object sender, RoutedEventArgs e)
+    {
+        _trendZoomWindow = null;
+        IReadOnlyList<DiskInfo> disks = SelectedDisks;
+        if (disks.Count > 0) UpdateChart(disks);
+    }
+
+    private void LiveDiskChart_MouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
+    {
+        int maximum = Math.Clamp(_config.Current.LiveGraphRetentionMinutes, 1, 120);
+        int[] steps = [1, 2, 5, 10, 15, 30, 60, 120];
+        int[] available = steps.Where(value => value <= maximum).Append(maximum).Distinct().Order().ToArray();
+        int current = Array.FindIndex(available, value => value >= _liveGraphWindowMinutes);
+        if (current < 0) current = available.Length - 1;
+        int next = Math.Clamp(current + (e.Delta > 0 ? -1 : 1), 0, available.Length - 1);
+        if (available[next] == _liveGraphWindowMinutes) return;
+        _liveGraphWindowMinutes = available[next];
+        RefreshLiveDiskActivity();
+        e.Handled = true;
+    }
+
+    private void TotalWrittenChart_MouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
+    {
+        TimeSpan[] steps =
+        [
+            TimeSpan.FromHours(1),
+            TimeSpan.FromHours(6),
+            TimeSpan.FromHours(24),
+            TimeSpan.FromDays(3),
+            TimeSpan.FromDays(7),
+            TimeSpan.FromDays(14),
+            TimeSpan.FromDays(30),
+            TimeSpan.FromDays(90),
+            TimeSpan.FromDays(180),
+            TimeSpan.FromDays(365),
+        ];
+        if (!TryGetTrendRange(DateTime.UtcNow, out DateTime fromUtc, out DateTime toUtc))
+            return;
+        TimeSpan currentWindow = toUtc - fromUtc;
+        int current = Array.FindIndex(steps, value => value >= currentWindow);
+        if (current < 0) current = steps.Length - 1;
+        int next = Math.Clamp(current + (e.Delta > 0 ? -1 : 1), 0, steps.Length - 1);
+        if (steps[next] == currentWindow) return;
+
+        _trendRange = TrendRangeKind.Zoom;
+        _trendZoomWindow = steps[next];
+        Btn1h.IsChecked = steps[next] == TimeSpan.FromHours(1);
+        Btn24h.IsChecked = steps[next] == TimeSpan.FromHours(24);
+        Btn7d.IsChecked = steps[next] == TimeSpan.FromDays(7);
+        Btn30d.IsChecked = steps[next] == TimeSpan.FromDays(30);
+        BtnCustom.IsChecked = false;
+        TrendCustomRangePanel.Visibility = Visibility.Collapsed;
+        IReadOnlyList<DiskInfo> disks = SelectedDisks;
+        if (disks.Count > 0) UpdateChart(disks);
+        e.Handled = true;
     }
 
     private System.Windows.Rect? _restoreBounds;

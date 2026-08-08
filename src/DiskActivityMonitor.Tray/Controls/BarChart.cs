@@ -5,7 +5,7 @@ using System.Windows.Media;
 namespace DiskActivityMonitor.Tray.Controls;
 
 /// <summary>One column in a <see cref="BarChart"/>.</summary>
-public sealed record ChartBar(string Label, double Value, bool Highlight = false);
+public sealed record ChartBar(string Label, double Value, bool Highlight = false, Brush? Brush = null);
 
 /// <summary>
 /// A lightweight, dependency-free bar chart drawn directly via <see cref="OnRender"/>.
@@ -16,6 +16,8 @@ public sealed class BarChart : FrameworkElement
 {
     private IReadOnlyList<ChartBar> _bars = Array.Empty<ChartBar>();
     private Func<double, string> _valueFormatter = v => v.ToString(CultureInfo.InvariantCulture);
+    private readonly List<(Rect Rect, string Text)> _hits = [];
+    private readonly ChartHoverTooltip _hoverTooltip = new();
 
     public Brush BarBrush { get; set; } = new LinearGradientBrush(
         Color.FromRgb(0x4F, 0xC3, 0xF7), Color.FromRgb(0x29, 0x79, 0xFF), 90);
@@ -27,12 +29,14 @@ public sealed class BarChart : FrameworkElement
     {
         _bars = bars ?? Array.Empty<ChartBar>();
         _valueFormatter = valueFormatter;
+        _hoverTooltip.Hide();
         InvalidateVisual();
     }
 
     protected override void OnRender(DrawingContext dc)
     {
         double w = ActualWidth, h = ActualHeight;
+        _hits.Clear();
         if (w <= 0 || h <= 0) return;
 
         // Background.
@@ -79,8 +83,10 @@ public sealed class BarChart : FrameworkElement
 
             if (barH > 0)
             {
-                var brush = bar.Highlight ? HighlightBrush : BarBrush;
-                dc.DrawRectangle(brush, null, new Rect(x, y, barW, barH));
+                var brush = bar.Brush ?? (bar.Highlight ? HighlightBrush : BarBrush);
+                var barRect = new Rect(x, y, barW, barH);
+                dc.DrawRectangle(brush, null, barRect);
+                _hits.Add((barRect, $"{bar.Label}\n{_valueFormatter(bar.Value)}"));
             }
 
             // X-axis label (sparse to avoid crowding).
@@ -100,6 +106,30 @@ public sealed class BarChart : FrameworkElement
             }
         }
     }
+
+    protected override void OnMouseMove(System.Windows.Input.MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        UpdateHover(e.GetPosition(this));
+    }
+
+    internal void UpdateHover(Point pointer)
+    {
+        string? text = HitTextAt(pointer);
+        if (text is null) _hoverTooltip.Hide();
+        else _hoverTooltip.Show(this, text);
+    }
+
+    public string? HitTextAt(Point pointer)
+        => _hits.LastOrDefault(hit => hit.Rect.Contains(pointer)).Text;
+
+    protected override void OnMouseLeave(System.Windows.Input.MouseEventArgs e)
+    {
+        ClearHover();
+        base.OnMouseLeave(e);
+    }
+
+    internal void ClearHover() => _hoverTooltip.Hide();
 
     private void DrawCenteredText(DrawingContext dc, string text, Typeface tf, double dpi, double w, double h)
     {

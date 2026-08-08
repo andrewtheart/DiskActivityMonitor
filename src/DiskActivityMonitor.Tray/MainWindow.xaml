@@ -26,13 +26,43 @@
             <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
             <Setter Property="BorderBrush" Value="{StaticResource CardBorder}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Padding" Value="6,4" />
+            <Setter Property="Padding" Value="9,6" />
             <Setter Property="CaretBrush" Value="{StaticResource TextPrimary}" />
-            <Setter Property="Width" Value="90" />
+            <Setter Property="MinHeight" Value="34" />
+            <Setter Property="Width" Value="110" />
             <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="InputBorder" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="5">
+                            <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="InputBorder" Property="BorderBrush" Value="{StaticResource Accent}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.48" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
         <Style x:Key="FieldLabel" TargetType="TextBlock" BasedOn="{StaticResource Caption}">
             <Setter Property="Margin" Value="0,0,0,3" />
+        </Style>
+        <Style x:Key="SettingsSection" TargetType="Border">
+            <Setter Property="BorderBrush" Value="#343A42" />
+            <Setter Property="BorderThickness" Value="0,1,0,0" />
+            <Setter Property="Padding" Value="0,16,0,10" />
+            <Setter Property="Margin" Value="0,8,0,0" />
+        </Style>
+        <Style x:Key="SettingsField" TargetType="StackPanel">
+            <Setter Property="Margin" Value="0,0,18,14" />
         </Style>
 
         <!-- Compact square icon button used for the per-file row actions (tail, trace, delete).
@@ -128,6 +158,7 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
@@ -184,7 +215,9 @@
                     AutomationProperties.Name="Back to dashboard" />
         </Grid>
 
-        <ScrollViewer x:Name="BodyScroller" Grid.Row="2" VerticalScrollBarVisibility="Auto">
+        <Border x:Name="HeaderSeparator" Grid.Row="2" Height="1" Background="#3A4048" Margin="0,0,0,12" />
+
+        <ScrollViewer x:Name="BodyScroller" Grid.Row="3" VerticalScrollBarVisibility="Auto">
             <Grid>
             <StackPanel x:Name="DashboardPanel">
 
@@ -197,7 +230,7 @@
                         <ColumnDefinition Width="1.4*" />
                     </Grid.ColumnDefinitions>
 
-                    <Border Style="{StaticResource Card}" Grid.Column="0" Margin="0,0,7,0">
+                    <Border Style="{StaticResource Card}" Grid.Column="0" Margin="0,0,7,0" Tag="summary-today">
                         <StackPanel>
                             <TextBlock Text="WRITTEN TODAY" Style="{StaticResource Caption}" />
                             <TextBlock x:Name="TodayMetric" Style="{StaticResource Metric}" Text="-" Margin="0,4,0,0" />
@@ -205,7 +238,7 @@
                         </StackPanel>
                     </Border>
 
-                    <Border Style="{StaticResource Card}" Grid.Column="1" Margin="7,0,7,0">
+                    <Border Style="{StaticResource Card}" Grid.Column="1" Margin="7,0,7,0" Tag="summary-24h">
                         <StackPanel>
                             <TextBlock Text="LAST 24 HOURS" Style="{StaticResource Caption}" />
                             <TextBlock x:Name="Day24Metric" Style="{StaticResource Metric}" Text="-" Margin="0,4,0,0" />
@@ -213,7 +246,7 @@
                         </StackPanel>
                     </Border>
 
-                    <Border Style="{StaticResource Card}" Grid.Column="2" Margin="7,0,7,0">
+                    <Border Style="{StaticResource Card}" Grid.Column="2" Margin="7,0,7,0" Tag="summary-7d">
                         <StackPanel>
                             <TextBlock Text="LAST 7 DAYS" Style="{StaticResource Caption}" />
                             <TextBlock x:Name="Week7Metric" Style="{StaticResource Metric}" Text="-" Margin="0,4,0,0" />
@@ -221,7 +254,7 @@
                         </StackPanel>
                     </Border>
 
-                    <Border Style="{StaticResource Card}" Grid.Column="3" Margin="7,0,0,0">
+                    <Border Style="{StaticResource Card}" Grid.Column="3" Margin="7,0,0,0" Tag="summary-endurance">
                         <StackPanel>
                             <TextBlock Text="SSD ENDURANCE" Style="{StaticResource Caption}" />
                             <TextBlock x:Name="WearMetric" Style="{StaticResource Metric}" Text="-" Margin="0,4,0,0" />
@@ -232,7 +265,7 @@
                 </Grid>
 
                 <!-- SSD endurance detail -->
-                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14" Tag="endurance">
                     <StackPanel>
                         <!-- Header: title + rated-TBW badge -->
                         <Grid>
@@ -375,7 +408,7 @@
                 </Border>
 
                 <!-- Live physical-disk activity from the collector's granular sample stream -->
-                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14" Tag="live-activity">
                     <StackPanel>
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -387,12 +420,22 @@
                                 <TextBlock x:Name="LiveDiskCaption" Style="{StaticResource Caption}"
                                            Margin="0,2,0,0" Text="Physical read/write throughput from granular collector samples" />
                             </StackPanel>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                <Border Width="10" Height="3" Background="#4FC3F7" Margin="0,0,6,0" />
-                                <TextBlock Text="Read" Style="{StaticResource Caption}" Margin="0,0,14,0" />
-                                <Border Width="10" Height="3" Background="#FFA726" Margin="0,0,6,0" />
-                                <TextBlock Text="Write" Style="{StaticResource Caption}" />
-                            </StackPanel>
+                            <ItemsControl x:Name="LiveDiskLegend" Grid.Column="1" MaxWidth="620"
+                                          HorizontalAlignment="Right" VerticalAlignment="Center">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel HorizontalAlignment="Right" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal" Margin="10,1,0,1">
+                                            <Border Width="10" Height="3" Background="{Binding Brush}" Margin="0,0,5,0" />
+                                            <TextBlock Text="{Binding Label}" Style="{StaticResource Caption}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
                         </Grid>
                         <Grid Margin="0,12,0,0">
                             <Grid.RowDefinitions>
@@ -400,13 +443,20 @@
                                 <RowDefinition Height="170" />
                             </Grid.RowDefinitions>
                             <TextBlock x:Name="LiveDiskCurrent" Style="{StaticResource Caption}" />
-                            <ctl:LiveDiskChart x:Name="LiveDiskActivityChart" Grid.Row="1" Margin="0,6,0,0" />
+                            <ctl:LiveDiskChart x:Name="LiveDiskActivityChart" Grid.Row="1" Margin="0,6,0,0"
+                                               PreviewMouseWheel="LiveDiskChart_MouseWheel" Focusable="True">
+                                <ctl:LiveDiskChart.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Configure chart" Tag="live" Click="ConfigureChart_Click" />
+                                    </ContextMenu>
+                                </ctl:LiveDiskChart.ContextMenu>
+                            </ctl:LiveDiskChart>
                         </Grid>
                     </StackPanel>
                 </Border>
 
                 <!-- Trend chart -->
-                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14" Tag="total-written">
                     <StackPanel>
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -414,22 +464,56 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel>
-                                <TextBlock x:Name="TrendTitle" Style="{StaticResource H2}" Text="Write volume per hour" />
-                                <TextBlock Style="{StaticResource Caption}" Text="Bars show bytes written to the device in each bucket" Margin="0,2,0,0" />
+                                <TextBlock x:Name="TrendTitle" Style="{StaticResource H2}" Text="Total written over time" />
+                                <TextBlock x:Name="TrendCaption" Style="{StaticResource Caption}" TextWrapping="Wrap"
+                                           Text="Cumulative physical writes recorded by this app" Margin="0,2,0,0" />
                                 <TextBlock x:Name="TrendTimeZoneText" Style="{StaticResource Caption}" Margin="0,2,0,0" />
                             </StackPanel>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal">
-                                <ToggleButton x:Name="Btn24h" Style="{StaticResource ToggleTool}" Content="24h" Click="Range_Click" />
+                            <WrapPanel Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Top">
+                                <ToggleButton x:Name="Btn1h" Style="{StaticResource ToggleTool}" Content="1h" Click="Range_Click" />
+                                <ToggleButton x:Name="Btn24h" Style="{StaticResource ToggleTool}" Content="24h" Margin="6,0,0,0" Click="Range_Click" />
+                                <ToggleButton x:Name="Btn7d" Style="{StaticResource ToggleTool}" Content="7d" Margin="6,0,0,0" Click="Range_Click" />
                                 <ToggleButton x:Name="Btn30d" Style="{StaticResource ToggleTool}" Content="30d" Margin="6,0,0,0" Click="Range_Click" />
-                                <ToggleButton x:Name="Btn12w" Style="{StaticResource ToggleTool}" Content="12w" Margin="6,0,0,0" Click="Range_Click" />
-                            </StackPanel>
+                                <ToggleButton x:Name="BtnCustom" Style="{StaticResource ToggleTool}" Content="Custom" Margin="6,0,0,0" Click="Range_Click" />
+                            </WrapPanel>
                         </Grid>
-                        <ctl:BarChart x:Name="Chart" Height="230" Margin="0,12,0,0" />
+                        <StackPanel x:Name="TrendCustomRangePanel" Orientation="Horizontal" HorizontalAlignment="Right"
+                                    Margin="0,12,0,0" Visibility="Collapsed">
+                            <TextBlock Text="From" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <DatePicker x:Name="TrendStartDate" Width="132" Height="28" SelectedDateFormat="Short"
+                                        Background="#2A2E34" Foreground="{StaticResource TextPrimary}"
+                                        BorderBrush="{StaticResource CardBorder}" />
+                            <TextBlock Text="Through" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="10,0,6,0" />
+                            <DatePicker x:Name="TrendEndDate" Width="132" Height="28" SelectedDateFormat="Short"
+                                        Background="#2A2E34" Foreground="{StaticResource TextPrimary}"
+                                        BorderBrush="{StaticResource CardBorder}" />
+                            <Button x:Name="TrendApplyCustomButton" Style="{StaticResource ToolButton}" Content="Apply"
+                                    Margin="8,0,0,0" Padding="12,4" Click="CustomTrendApply_Click" />
+                        </StackPanel>
+                        <TextBlock x:Name="TrendCustomError" Foreground="{StaticResource Critical}" FontSize="11.5"
+                                   HorizontalAlignment="Right" Margin="0,6,0,0" Visibility="Collapsed" />
+                        <Grid Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="TrendRangeText" Style="{StaticResource Caption}" />
+                            <TextBlock x:Name="TrendChangeText" Grid.Column="1" Style="{StaticResource Caption}"
+                                       FontWeight="SemiBold" Margin="12,0,0,0" />
+                        </Grid>
+                        <ctl:TotalWrittenChart x:Name="TotalWrittenTrendChart" Height="230" Margin="0,8,0,0"
+                                               PreviewMouseWheel="TotalWrittenChart_MouseWheel" Focusable="True">
+                            <ctl:TotalWrittenChart.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Configure chart" Tag="total" Click="ConfigureChart_Click" />
+                                </ContextMenu>
+                            </ctl:TotalWrittenChart.ContextMenu>
+                        </ctl:TotalWrittenChart>
                     </StackPanel>
                 </Border>
 
                 <!-- Throughput (MB/s): average / median / peak over a period -->
-                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14" Tag="throughput">
                     <StackPanel>
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -472,7 +556,13 @@
                             </StackPanel>
                         </Grid>
 
-                        <ctl:BarChart x:Name="ThroughputChart" Height="150" Margin="0,16,0,0" />
+                        <ctl:BarChart x:Name="ThroughputChart" Height="150" Margin="0,16,0,0">
+                            <ctl:BarChart.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Configure chart" Tag="throughput" Click="ConfigureChart_Click" />
+                                </ContextMenu>
+                            </ctl:BarChart.ContextMenu>
+                        </ctl:BarChart>
                         <TextBlock x:Name="ThroughputCoverageText" Style="{StaticResource Caption}"
                                    TextWrapping="Wrap" Margin="0,8,0,0" />
                     </StackPanel>
@@ -485,7 +575,7 @@
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
 
-                    <Border Style="{StaticResource Card}" Grid.Column="0" Margin="0,0,7,0">
+                    <Border Style="{StaticResource Card}" Grid.Column="0" Margin="0,0,7,0" Tag="processes">
                         <StackPanel>
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -537,7 +627,7 @@
                         </StackPanel>
                     </Border>
 
-                    <Border Style="{StaticResource Card}" Grid.Column="1" Margin="7,0,0,0">
+                    <Border Style="{StaticResource Card}" Grid.Column="1" Margin="7,0,0,0" Tag="alerts">
                         <StackPanel>
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -617,12 +707,19 @@
                                                             <ColumnDefinition Width="*" />
                                                             <ColumnDefinition Width="Auto" />
                                                             <ColumnDefinition Width="Auto" />
+                                                            <ColumnDefinition Width="Auto" />
                                                         </Grid.ColumnDefinitions>
                                                         <TextBlock Grid.Column="0" Text="{Binding Title}" FontWeight="SemiBold"
                                                                    TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
                                                         <TextBlock Grid.Column="1" Text="{Binding TimeText}" VerticalAlignment="Center"
                                                                    Foreground="{StaticResource TextSecondary}" FontSize="11" />
-                                                        <Button x:Name="AlertDismissButton" Grid.Column="2"
+                                                        <Button Grid.Column="2" Content="Snooze" Style="{StaticResource ToolButton}"
+                                                            Padding="7,2" Margin="7,-3,0,-3"
+                                                            Visibility="{Binding SnoozeVisibility}"
+                                                            CommandParameter="{Binding}" Click="SnoozeEnduranceAlert_Click"
+                                                            ToolTip="Temporarily suppress this disk's endurance warning"
+                                                            AutomationProperties.Name="Snooze endurance warning" />
+                                                        <Button x:Name="AlertDismissButton" Grid.Column="3"
                                                             Style="{StaticResource AlertDismissButton}" Content="&#x2715;"
                                                                 Margin="6,-3,-4,-3" ToolTip="Dismiss from Alert center"
                                                                 AutomationProperties.Name="Dismiss alert"
@@ -645,7 +742,7 @@
                 </Grid>
 
                 <!-- Suspended processes: every suspension this app made, always resumable here -->
-                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14" Tag="suspended">
                     <StackPanel>
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -703,7 +800,7 @@
 
             <StackPanel x:Name="SettingsPanel" Visibility="Collapsed">
                 <!-- Auto-suspend rules -->
-                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14" Tag="auto-suspend">
                     <StackPanel>
                         <TextBlock Style="{StaticResource H2}" Text="Auto-suspend rules" />
                         <TextBlock Style="{StaticResource Caption}" Margin="0,2,0,12" TextWrapping="Wrap"
@@ -789,91 +886,176 @@
                 </Border>
 
                 <!-- Settings -->
-                <Border Style="{StaticResource Card}" Margin="0,0,0,4">
+                <Border Style="{StaticResource Card}" Margin="0,0,0,4" Tag="settings">
                     <StackPanel>
                         <TextBlock Style="{StaticResource H2}" Text="Settings &amp; thresholds" />
                         <TextBlock Style="{StaticResource Caption}" Margin="0,2,0,12"
                                    Text="Write thresholds are in GB; controller-error thresholds are Windows event counts." />
-                        <WrapPanel>
-                            <StackPanel Margin="0,0,24,12">
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="SSD warn / hour (GB)" />
-                                <TextBox x:Name="TxtWarnHour" Style="{StaticResource DarkTextBox}" />
+                        <Border Style="{StaticResource SettingsSection}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="Write activity alerts" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,3,0,12" TextWrapping="Wrap"
+                                           Text="Physical-drive and process thresholds. Set a write-volume threshold to 0 to disable that rule." />
+                                <UniformGrid Columns="3">
+                                    <StackPanel Style="{StaticResource SettingsField}">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="SSD warning · rolling hour" />
+                                        <DockPanel LastChildFill="False">
+                                            <TextBox x:Name="TxtWarnHour" Style="{StaticResource DarkTextBox}" />
+                                            <TextBlock Text="GB" Style="{StaticResource Caption}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                                        </DockPanel>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SettingsField}">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="SSD warning · rolling day" />
+                                        <DockPanel LastChildFill="False">
+                                            <TextBox x:Name="TxtWarnDay" Style="{StaticResource DarkTextBox}" />
+                                            <TextBlock Text="GB" Style="{StaticResource Caption}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                                        </DockPanel>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SettingsField}">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="SSD critical · rolling day" />
+                                        <DockPanel LastChildFill="False">
+                                            <TextBox x:Name="TxtCritDay" Style="{StaticResource DarkTextBox}" />
+                                            <TextBlock Text="GB" Style="{StaticResource Caption}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                                        </DockPanel>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SettingsField}">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="One process · rolling hour" />
+                                        <DockPanel LastChildFill="False">
+                                            <TextBox x:Name="TxtProcHour" Style="{StaticResource DarkTextBox}" />
+                                            <TextBlock Text="GB" Style="{StaticResource Caption}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                                        </DockPanel>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SettingsField}">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="All processes · rolling hour" />
+                                        <DockPanel LastChildFill="False">
+                                            <TextBox x:Name="TxtAllProcHour" Style="{StaticResource DarkTextBox}" />
+                                            <TextBlock Text="GB" Style="{StaticResource Caption}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                                        </DockPanel>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SettingsField}">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="Repeat alert after" />
+                                        <DockPanel LastChildFill="False">
+                                            <TextBox x:Name="TxtCooldown" Style="{StaticResource DarkTextBox}" />
+                                            <TextBlock Text="min" Style="{StaticResource Caption}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                                        </DockPanel>
+                                    </StackPanel>
+                                </UniformGrid>
+                                <CheckBox x:Name="ChkNotify" Content="Show Windows desktop notifications"
+                                          Foreground="{StaticResource TextPrimary}" Margin="0,2,0,0" />
                             </StackPanel>
-                            <StackPanel Margin="0,0,24,12">
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="SSD warn / day (GB)" />
-                                <TextBox x:Name="TxtWarnDay" Style="{StaticResource DarkTextBox}" />
+                        </Border>
+
+                        <Border Style="{StaticResource SettingsSection}">
+                            <StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource H2}" Text="Drive endurance alerts" />
+                                        <TextBlock x:Name="EnduranceAlertScopeText" Style="{StaticResource Caption}"
+                                                   Margin="0,3,0,0" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <CheckBox x:Name="ChkEnduranceAlertOverride" Grid.Column="1"
+                                              Content="Override defaults for this disk"
+                                              Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"
+                                              Checked="EnduranceAlertOverride_Changed"
+                                              Unchecked="EnduranceAlertOverride_Changed" />
+                                </Grid>
+                                <UniformGrid Columns="2" Margin="0,14,0,0">
+                                    <StackPanel Style="{StaticResource SettingsField}">
+                                        <CheckBox x:Name="ChkEnduranceLife" Content="Projected remaining life falls below"
+                                                  Foreground="{StaticResource TextPrimary}" />
+                                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                            <TextBox x:Name="TxtEnduranceLifeValue" Style="{StaticResource DarkTextBox}" />
+                                            <ComboBox x:Name="EnduranceLifeUnitSelector" Width="120" Margin="8,0,0,0">
+                                                <ComboBoxItem Content="days" Tag="Days" />
+                                                <ComboBoxItem Content="months" Tag="Months" />
+                                                <ComboBoxItem Content="years" Tag="Years" />
+                                            </ComboBox>
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SettingsField}">
+                                        <CheckBox x:Name="ChkEndurancePercent" Content="Drive endurance remaining falls below"
+                                                  Foreground="{StaticResource TextPrimary}" />
+                                        <DockPanel LastChildFill="False" Margin="0,8,0,0">
+                                            <TextBox x:Name="TxtEnduranceRemainingPercent" Style="{StaticResource DarkTextBox}" />
+                                            <TextBlock Text="% remaining" Style="{StaticResource Caption}"
+                                                       Margin="8,0,0,0" VerticalAlignment="Center" />
+                                        </DockPanel>
+                                    </StackPanel>
+                                </UniformGrid>
+                                <TextBlock x:Name="EnduranceAlertInheritanceText" Style="{StaticResource Caption}"
+                                           TextWrapping="Wrap" Margin="0,0,0,2" />
                             </StackPanel>
-                            <StackPanel Margin="0,0,24,12">
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="SSD critical / day (GB)" />
-                                <TextBox x:Name="TxtCritDay" Style="{StaticResource DarkTextBox}" />
+                        </Border>
+
+                        <Border Style="{StaticResource SettingsSection}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="Collection and controller health" />
+                                <UniformGrid Columns="3" Margin="0,12,0,0">
+                                    <StackPanel Style="{StaticResource SettingsField}">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="Counter sample interval" />
+                                        <DockPanel LastChildFill="False"><TextBox x:Name="TxtInterval" Style="{StaticResource DarkTextBox}" /><TextBlock Text="sec" Style="{StaticResource Caption}" Margin="8,0,0,0" VerticalAlignment="Center" /></DockPanel>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SettingsField}">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="Dashboard refresh" />
+                                        <DockPanel LastChildFill="False"><TextBox x:Name="TxtRefresh" Style="{StaticResource DarkTextBox}" /><TextBlock Text="sec" Style="{StaticResource Caption}" Margin="8,0,0,0" VerticalAlignment="Center" /></DockPanel>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SettingsField}">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="Live graph history" />
+                                        <DockPanel LastChildFill="False"><TextBox x:Name="TxtLiveGraphRetention" Style="{StaticResource DarkTextBox}" /><TextBlock Text="min" Style="{StaticResource Caption}" Margin="8,0,0,0" VerticalAlignment="Center" /></DockPanel>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SettingsField}">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="High coverage requirement" />
+                                        <DockPanel LastChildFill="False"><TextBox x:Name="TxtHighCoveragePercent" Style="{StaticResource DarkTextBox}" ToolTip="Calendar-rate and endurance projections require this monitoring coverage." /><TextBlock Text="%" Style="{StaticResource Caption}" Margin="8,0,0,0" VerticalAlignment="Center" /></DockPanel>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SettingsField}">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="Controller event window" />
+                                        <DockPanel LastChildFill="False"><TextBox x:Name="TxtControllerWindow" Style="{StaticResource DarkTextBox}" /><TextBlock Text="days" Style="{StaticResource Caption}" Margin="8,0,0,0" VerticalAlignment="Center" /></DockPanel>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SettingsField}">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="Controller warning / critical" />
+                                        <StackPanel Orientation="Horizontal"><TextBox x:Name="TxtControllerWarn" Style="{StaticResource DarkTextBox}" Width="72" /><TextBlock Text="/" Margin="8,0" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" /><TextBox x:Name="TxtControllerCritical" Style="{StaticResource DarkTextBox}" Width="72" /></StackPanel>
+                                    </StackPanel>
+                                </UniformGrid>
+                                <CheckBox x:Name="ChkControllerErrors" Content="Monitor Windows Disk event 11 controller errors"
+                                          Foreground="{StaticResource TextPrimary}" />
                             </StackPanel>
-                            <StackPanel Margin="0,0,24,12">
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="Process warn / hour (GB)" />
-                                <TextBox x:Name="TxtProcHour" Style="{StaticResource DarkTextBox}" />
+                        </Border>
+
+                        <Border x:Name="TbwSettingsSection" Style="{StaticResource SettingsSection}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="Per-drive TBW rating" />
+                                <TextBlock x:Name="TbwLabel" Style="{StaticResource Caption}" Margin="0,3,0,12" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <RadioButton x:Name="RadTbwSingle" GroupName="TbwRatingMode" Content="Single rating"
+                                                     Foreground="{StaticResource TextPrimary}" Checked="TbwMode_Checked" />
+                                        <RadioButton x:Name="RadTbwRange" GroupName="TbwRatingMode" Content="Rating range"
+                                                     Foreground="{StaticResource TextPrimary}" Margin="0,8,0,0"
+                                                     Checked="TbwMode_Checked" />
+                                    </StackPanel>
+                                    <StackPanel x:Name="TbwLowerPanel" Grid.Column="1" Margin="28,0,0,0">
+                                        <TextBlock x:Name="TbwLowerLabel" Style="{StaticResource FieldLabel}" Text="TBW rating" />
+                                        <DockPanel LastChildFill="False"><TextBox x:Name="TxtTbw" Style="{StaticResource DarkTextBox}" /><TextBlock Text="TB" Style="{StaticResource Caption}" Margin="8,0,0,0" VerticalAlignment="Center" /></DockPanel>
+                                    </StackPanel>
+                                    <StackPanel x:Name="TbwUpperPanel" Grid.Column="2" Margin="28,0,0,0" Visibility="Collapsed">
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="Maximum TBW" />
+                                        <DockPanel LastChildFill="False"><TextBox x:Name="TxtTbwUpper" Style="{StaticResource DarkTextBox}" /><TextBlock Text="TB" Style="{StaticResource Caption}" Margin="8,0,0,0" VerticalAlignment="Center" /></DockPanel>
+                                    </StackPanel>
+                                </Grid>
                             </StackPanel>
-                            <StackPanel Margin="0,0,24,12">
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="All processes warn / hour (GB)" />
-                                <TextBox x:Name="TxtAllProcHour" Style="{StaticResource DarkTextBox}" />
-                            </StackPanel>
-                            <StackPanel Margin="0,0,24,12">
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="Alert cooldown (min)" />
-                                <TextBox x:Name="TxtCooldown" Style="{StaticResource DarkTextBox}" />
-                            </StackPanel>
-                            <StackPanel Margin="0,0,24,12">
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="Controller window (days)" />
-                                <TextBox x:Name="TxtControllerWindow" Style="{StaticResource DarkTextBox}" />
-                            </StackPanel>
-                            <StackPanel Margin="0,0,24,12">
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="Controller warning (events)" />
-                                <TextBox x:Name="TxtControllerWarn" Style="{StaticResource DarkTextBox}" />
-                            </StackPanel>
-                            <StackPanel Margin="0,0,24,12">
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="Controller critical (events)" />
-                                <TextBox x:Name="TxtControllerCritical" Style="{StaticResource DarkTextBox}" />
-                            </StackPanel>
-                            <StackPanel Margin="0,0,24,12">
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="Sample interval (s)" />
-                                <TextBox x:Name="TxtInterval" Style="{StaticResource DarkTextBox}" />
-                            </StackPanel>
-                            <StackPanel Margin="0,0,24,12">
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="Dashboard refresh (s)" />
-                                <TextBox x:Name="TxtRefresh" Style="{StaticResource DarkTextBox}" />
-                            </StackPanel>
-                            <StackPanel Margin="0,0,24,12">
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="Live graph history (min)" />
-                                <TextBox x:Name="TxtLiveGraphRetention" Style="{StaticResource DarkTextBox}" />
-                            </StackPanel>
-                            <StackPanel Margin="0,0,24,12">
-                                <TextBlock x:Name="TbwLabel" Style="{StaticResource FieldLabel}" Text="TBW setting for this disk" />
-                                <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
-                                    <RadioButton x:Name="RadTbwSingle" GroupName="TbwRatingMode" Content="Single TBW"
-                                                 Foreground="{StaticResource TextPrimary}" Checked="TbwMode_Checked" />
-                                    <RadioButton x:Name="RadTbwRange" GroupName="TbwRatingMode" Content="TBW Range"
-                                                 Foreground="{StaticResource TextPrimary}" Margin="16,0,0,0"
-                                                 Checked="TbwMode_Checked" />
-                                </StackPanel>
-                            </StackPanel>
-                            <StackPanel x:Name="TbwLowerPanel" Margin="0,0,24,12">
-                                <TextBlock x:Name="TbwLowerLabel" Style="{StaticResource FieldLabel}" Text="TBW rating (TB)" />
-                                <TextBox x:Name="TxtTbw" Style="{StaticResource DarkTextBox}" />
-                            </StackPanel>
-                            <StackPanel x:Name="TbwUpperPanel" Margin="0,0,24,12" Visibility="Collapsed">
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="Maximum TBW (TB)" />
-                                <TextBox x:Name="TxtTbwUpper" Style="{StaticResource DarkTextBox}" />
-                            </StackPanel>
-                            <StackPanel Margin="0,0,24,12">
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="Endurance warn (years left)" />
-                                <TextBox x:Name="TxtEnduranceWarnYears" Style="{StaticResource DarkTextBox}" />
-                            </StackPanel>
-                            <StackPanel Margin="0,0,24,12">
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="High monitoring coverage (%)" />
-                                <TextBox x:Name="TxtHighCoveragePercent" Width="150" Style="{StaticResource DarkTextBox}"
-                                         ToolTip="Calendar-rate and endurance projections are shown only when recent monitoring coverage reaches this percentage." />
-                            </StackPanel>
-                        </WrapPanel>
+                        </Border>
 
                         <!-- Per-file attribution: what turns an opaque writer such as System into an explanation -->
-                        <Border Background="#15181B" CornerRadius="8" Padding="14,11" Margin="0,6,0,4">
+                        <Border Style="{StaticResource SettingsSection}">
                             <StackPanel>
                                 <CheckBox x:Name="ChkTrackFileTargets" Foreground="{StaticResource TextPrimary}"
                                           Content="Record which files each process writes" />
@@ -901,7 +1083,7 @@
                         </Border>
 
                         <!-- Database growth: warn before the monitoring history fills the disk -->
-                        <Border Background="#15181B" CornerRadius="8" Padding="14,11" Margin="0,6,0,4">
+                        <Border Style="{StaticResource SettingsSection}">
                             <StackPanel>
                                 <TextBlock Text="Database size" FontWeight="SemiBold" />
                                 <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,5,0,0"
@@ -928,7 +1110,7 @@
                         </Border>
 
                         <!-- Live tail: which files the eye icon will open as text -->
-                        <Border Background="#15181B" CornerRadius="8" Padding="14,11" Margin="0,6,0,4">
+                        <Border Style="{StaticResource SettingsSection}">
                             <StackPanel>
                                 <TextBlock Text="Live file tail" FontWeight="SemiBold" />
                                 <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,5,0,0"
@@ -967,7 +1149,7 @@
                         </Border>
 
                         <!-- Web TBW lookup (on-device AI) -->
-                        <Border Background="#15181B" CornerRadius="8" Padding="14,11" Margin="0,6,0,4">
+                        <Border Style="{StaticResource SettingsSection}">
                             <StackPanel>
                                 <CheckBox x:Name="ChkTbwLookup" Foreground="{StaticResource TextPrimary}"
                                           Content="Search the web for each SSD's rated TBW on startup" />
@@ -1016,7 +1198,7 @@
                         </Border>
 
                         <!-- Application updates -->
-                        <Border Background="#15181B" CornerRadius="8" Padding="14,11" Margin="0,6,0,4">
+                        <Border Style="{StaticResource SettingsSection}">
                             <StackPanel>
                                 <TextBlock Style="{StaticResource H2}" Text="Updates" />
                                 <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,3,0,10"
@@ -1047,12 +1229,8 @@
                             </StackPanel>
                         </Border>
 
-                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                            <CheckBox x:Name="ChkControllerErrors" Content="Monitor System log Disk event 11 controller errors"
-                                      Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" />
-                            <CheckBox x:Name="ChkNotify" Content="Show desktop notifications" Foreground="{StaticResource TextPrimary}"
-                                      VerticalAlignment="Center" Margin="20,0,0,0" />
-                            <Button Content="Save settings" Style="{StaticResource ToolButton}" Margin="20,0,0,0" Click="Save_Click" />
+                        <StackPanel Orientation="Horizontal" Margin="0,16,0,0" HorizontalAlignment="Right">
+                            <Button Content="Save settings" Style="{StaticResource ToolButton}" Padding="16,7" Click="Save_Click" />
                             <TextBlock x:Name="SaveStatus" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="12,0,0,0" />
                         </StackPanel>
                     </StackPanel>
@@ -1060,6 +1238,83 @@
             </StackPanel>
             </Grid>
         </ScrollViewer>
+        </Grid>
+
+        <!-- Shared chart appearance editor, opened from a chart's context menu. -->
+        <Grid x:Name="ChartConfigOverlay" Grid.RowSpan="2" Panel.ZIndex="1260"
+              Background="#E815181B" Visibility="Collapsed" Focusable="True"
+              PreviewKeyDown="ChartConfigOverlay_PreviewKeyDown">
+            <Border Width="520" MaxHeight="650" HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Background="#1E2228" BorderBrush="#3A414A" BorderThickness="1"
+                    CornerRadius="10" Padding="20">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock x:Name="ChartConfigTitle" Style="{StaticResource H2}" Text="Configure chart" />
+                            <TextBlock Style="{StaticResource Caption}" Margin="0,3,0,0"
+                                       Text="Choose a color for each visible metric." />
+                        </StackPanel>
+                        <Button Grid.Column="1" Style="{StaticResource DismissButton}" Width="30" Height="30"
+                                Content="&#x2715;" ToolTip="Close" AutomationProperties.Name="Close chart configuration"
+                                Click="ChartConfigClose_Click" />
+                    </Grid>
+
+                    <ScrollViewer Grid.Row="1" MaxHeight="480" Margin="0,16,0,16"
+                                  VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="ChartColorList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,0,0,9">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="96" />
+                                            <ColumnDefinition Width="42" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding Label}" VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis" Margin="0,0,12,0" />
+                                        <TextBox Grid.Column="1" Text="{Binding Hex, UpdateSourceTrigger=PropertyChanged}"
+                                                 Style="{StaticResource DarkTextBox}" Width="90"
+                                                 AutomationProperties.Name="{Binding Label}" />
+                                        <Button Grid.Column="2" Width="30" Height="26" Margin="10,0,0,0"
+                                                Background="{Binding PreviewBrush}" BorderBrush="#68717C"
+                                                BorderThickness="1" ToolTip="Choose color"
+                                                AutomationProperties.Name="{Binding ChooseAutomationName}"
+                                                Click="ChartColorChoose_Click" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+
+                    <Grid Grid.Row="2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <Button Content="Reset defaults" Style="{StaticResource ToolButton}"
+                                    HorizontalAlignment="Left" Click="ChartConfigReset_Click" />
+                            <TextBlock x:Name="ChartConfigError" Style="{StaticResource Caption}"
+                                       Foreground="{StaticResource Critical}" Margin="0,6,0,0"
+                                       Visibility="Collapsed" />
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="Cancel" Style="{StaticResource ToolButton}"
+                                Margin="10,0,0,0" VerticalAlignment="Top" Click="ChartConfigClose_Click" />
+                        <Button Grid.Column="2" Content="Save" Style="{StaticResource ToolButton}"
+                                Margin="8,0,0,0" VerticalAlignment="Top" Click="ChartConfigSave_Click" />
+                    </Grid>
+                </Grid>
+            </Border>
         </Grid>
 
         <!-- Compiled HELP.md rendered in-app. WebView2 is initialized lazily on first open. -->

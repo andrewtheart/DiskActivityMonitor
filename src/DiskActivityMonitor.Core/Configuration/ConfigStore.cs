@@ -170,6 +170,13 @@ public sealed class ConfigStore : IDisposable
             ? Math.Clamp(source.HighCoveragePercent, 1, 100)
             : 90,
         SsdWearWarnPercent = source.SsdWearWarnPercent,
+        DefaultEnduranceAlert = AppConfig.CloneEnduranceAlert(source.DefaultEnduranceAlert),
+        DiskEnduranceAlertOverrides = source.DiskEnduranceAlertOverrides is null
+            ? new()
+            : source.DiskEnduranceAlertOverrides.ToDictionary(
+                pair => pair.Key,
+                pair => AppConfig.CloneEnduranceAlert(pair.Value),
+                StringComparer.OrdinalIgnoreCase),
     };
 
     public void Dispose()

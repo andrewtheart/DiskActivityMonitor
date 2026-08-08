@@ -51,7 +51,7 @@ internal static class ServiceProgramEntry
         builder.Logging.AddSimpleConsole(o =>
         {
             o.SingleLine = true;
-            o.TimestampFormat = "HH:mm:ss ";
+            o.TimestampFormat = "h:mm:ss tt ";
         });
 
         return builder.Build();

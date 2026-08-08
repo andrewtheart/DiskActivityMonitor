@@ -177,6 +177,13 @@ public partial class App : System.Windows.Application
                 _repo?.SnoozeAllAlerts(DateTime.UtcNow + GetSnoozeDuration(e));
                 _repo?.AcknowledgeAlerts(); // clear the outstanding list/tray icon
             }
+            else if (action == "snooze-rule"
+                && args.TryGetValue("rule", out var ruleKey)
+                && !string.IsNullOrWhiteSpace(ruleKey))
+            {
+                _repo?.SnoozeAlertRule(ruleKey, DateTime.UtcNow + GetSnoozeDuration(e));
+                _repo?.AcknowledgeAlertsByRule(ruleKey);
+            }
             else if (action == "dismiss" && args.TryGetValue("alertId", out var idText) && long.TryParse(idText, out var alertId))
             {
                 _repo?.AcknowledgeAlerts(new[] { alertId });

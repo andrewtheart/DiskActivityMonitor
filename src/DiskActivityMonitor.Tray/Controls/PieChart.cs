@@ -23,6 +23,8 @@ public sealed class PieChart : FrameworkElement
     private IReadOnlyList<PieSlice> _slices = Array.Empty<PieSlice>();
     private Func<double, string> _valueFormatter = v => v.ToString(CultureInfo.InvariantCulture);
     private string _centerCaption = "";
+    private readonly List<(Geometry Geometry, string Text)> _hits = [];
+    private readonly ChartHoverTooltip _hoverTooltip = new();
 
     /// <summary>Categorical palette; wedges cycle through it in order.</summary>
     public static IReadOnlyList<Color> Palette { get; } =
@@ -49,12 +51,14 @@ public sealed class PieChart : FrameworkElement
         _slices = slices ?? Array.Empty<PieSlice>();
         _valueFormatter = valueFormatter;
         _centerCaption = centerCaption ?? "";
+        _hoverTooltip.Hide();
         InvalidateVisual();
     }
 
     protected override void OnRender(DrawingContext dc)
     {
         double w = ActualWidth, h = ActualHeight;
+        _hits.Clear();
         if (!HasRenderArea(w, h)) return;
 
         dc.DrawRectangle(BackgroundBrush, null, new Rect(0, 0, w, h));
@@ -93,7 +97,9 @@ public sealed class PieChart : FrameworkElement
                     center.X + Math.Cos(angle + sweep / 2) * offset,
                     center.Y + Math.Sin(angle + sweep / 2) * offset);
 
-            dc.DrawGeometry(brush, null, BuildWedge(wedgeCenter, radius, innerRadius, angle, sweep));
+            Geometry geometry = BuildWedge(wedgeCenter, radius, innerRadius, angle, sweep);
+            dc.DrawGeometry(brush, null, geometry);
+            _hits.Add((geometry, $"{visible[i].Label}\n{_valueFormatter(visible[i].Value)} · {visible[i].Value / total:P1}"));
             angle += sweep;
         }
 
@@ -107,6 +113,30 @@ public sealed class PieChart : FrameworkElement
 
         DrawLegend(dc, visible, total, typeface, dpi, chartWidth + 8, legendWidth - 16, h);
     }
+
+    protected override void OnMouseMove(System.Windows.Input.MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        UpdateHover(e.GetPosition(this));
+    }
+
+    internal void UpdateHover(Point pointer)
+    {
+        string? text = HitTextAt(pointer);
+        if (text is null) _hoverTooltip.Hide();
+        else _hoverTooltip.Show(this, text);
+    }
+
+    public string? HitTextAt(Point pointer)
+        => _hits.LastOrDefault(hit => hit.Geometry.FillContains(pointer)).Text;
+
+    protected override void OnMouseLeave(System.Windows.Input.MouseEventArgs e)
+    {
+        ClearHover();
+        base.OnMouseLeave(e);
+    }
+
+    internal void ClearHover() => _hoverTooltip.Hide();
 
     internal static bool HasRenderArea(double width, double height) => width > 0 && height > 0;
 

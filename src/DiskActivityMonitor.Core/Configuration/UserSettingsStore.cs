@@ -30,6 +30,8 @@ public sealed class UserSettings
     public DateTimeOffset? LastAppUpdateCheckUtc { get; set; }
     public string? LastAppUpdateAlertedVersion { get; set; }
     public int MaxInstallerSizeMb { get; set; } = AppUpdateDownloader.DefaultMaxInstallerSizeMb;
+    public Dictionary<string, string> ChartColors { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public HashSet<string> CollapsedPanels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>Persists action-bearing settings beneath the current user's LocalAppData directory.</summary>
@@ -179,6 +181,12 @@ public sealed class UserSettingsStore
         MaxInstallerSizeMb = source.MaxInstallerSizeMb > 0
             ? source.MaxInstallerSizeMb
             : AppUpdateDownloader.DefaultMaxInstallerSizeMb,
+        ChartColors = source.ChartColors is null
+            ? new(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string>(source.ChartColors, StringComparer.OrdinalIgnoreCase),
+        CollapsedPanels = source.CollapsedPanels is null
+            ? new(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(source.CollapsedPanels, StringComparer.OrdinalIgnoreCase),
         AutoSuspendRules = source.AutoSuspendRules?.Select(rule => new AutoSuspendRule
         {
             ProcessName = rule.ProcessName,

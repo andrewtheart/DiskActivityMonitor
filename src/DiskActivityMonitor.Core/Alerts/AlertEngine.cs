@@ -36,17 +36,7 @@ public sealed class AlertEngine
 
         foreach (var disk in diskList.Where(d => d.IsSsd))
         {
-            // SMART-reported lifetime endurance used - the most accurate "how close to the limit" signal.
-            if (disk.WearPercent is int wearPct && cfg.SsdWearWarnPercent > 0 && wearPct >= cfg.SsdWearWarnPercent)
-            {
-                Emit(raised, cooldown, nowUtc,
-                    ruleKey: $"ssd-wear:{disk.DiskId}",
-                    severity: wearPct >= 95 ? AlertSeverity.Critical : AlertSeverity.Warning,
-                    title: $"{disk.DisplayName} SSD is nearing end of life",
-                    message: $"SMART reports {wearPct}% of rated write endurance used on {disk.DisplayName}. Back up important data and plan a replacement.",
-                    value: wearPct,
-                    threshold: cfg.SsdWearWarnPercent);
-            }
+            EvaluateEndurance(raised, disk, cfg, cooldown, nowUtc, highCoveragePercent);
 
             // Rolling 1-hour write volume.
             var hourWrite = _repo.GetDiskTotals(disk.DiskId, nowUtc.AddHours(-1), nowUtc).Write;
@@ -83,45 +73,6 @@ public sealed class AlertEngine
                     buildMessage: (v, t) => $"{ByteFormat.Humanize(v)} written in the last 24 hours (threshold {ByteFormat.Humanize(t)}).");
             }
 
-            // Endurance projection: at the recent average write rate, when will this SSD reach
-            // its TBW endurance rating? Only evaluated once at least a day of history exists.
-            var earliest = _repo.GetEarliestSample(disk.DiskId);
-            if (earliest is not null && nowUtc - earliest.Value >= TimeSpan.FromHours(24))
-            {
-                MonitoringRateStats recentRate = _repo.GetRecentDiskWriteRate(
-                    disk.DiskId,
-                    nowUtc,
-                    highCoveragePercent);
-                double avgPerDay = recentRate.MonitoredBytesPerHour * 24.0;
-
-                if (recentRate.HasHighCoverage && avgPerDay > 0)
-                {
-                    double tbwLow = cfg.EffectiveTbw(disk.DiskId);
-                    double? tbwHigh = cfg.EffectiveTbwUpper(disk.DiskId);
-                    double yearsLow = tbwLow * 1_000_000_000_000d / (avgPerDay * 365.0);
-                    double yearsHigh = (tbwHigh ?? tbwLow) * 1_000_000_000_000d / (avgPerDay * 365.0);
-                    AlertSeverity? severity = yearsLow <= cfg.TbwProjectionCriticalYears ? AlertSeverity.Critical
-                        : yearsLow <= cfg.TbwProjectionWarnYears ? AlertSeverity.Warning
-                        : null;
-                    if (severity is not null)
-                    {
-                        bool estimated = !cfg.DiskTbwRatings.ContainsKey(disk.DiskId);
-                        string rating = tbwHigh.HasValue
-                            ? $"{tbwLow:0.#} to {tbwHigh:0.#} TBW {(estimated ? "estimate" : "range")}"
-                            : $"{tbwLow:0.#} TBW rating";
-                        string projection = tbwHigh.HasValue
-                            ? $"{FormatYears(yearsLow)} to {FormatYears(yearsHigh)}"
-                            : FormatYears(yearsLow);
-                        Emit(raised, cooldown, nowUtc,
-                            ruleKey: $"tbw-life:{disk.DiskId}",
-                            severity: severity.Value,
-                            title: $"{disk.DisplayName} is on track to wear out",
-                            message: $"At the recent average of {ByteFormat.Humanize(avgPerDay)}/day, {disk.DisplayName} would reach its {rating} in about {projection}.",
-                            value: yearsLow,
-                            threshold: cfg.TbwProjectionWarnYears);
-                    }
-                }
-            }
         }
 
         // Noisiest process in the last hour.
@@ -196,7 +147,7 @@ public sealed class AlertEngine
             string mapping = disk is null
                 ? "The physical disk is not currently present, so no volume mapping is available."
                 : $"That device number currently maps to {disk.DisplayName}.";
-            string latest = LocalTimeDisplay.FormatUtcWithZone(error.LatestUtc, "MMM d, yyyy HH:mm");
+            string latest = LocalTimeDisplay.FormatUtcWithZone(error.LatestUtc, "MMM d, yyyy h:mm tt");
             string countWord = error.Count == 1 ? "error" : "errors";
 
             Emit(raised, cooldown, nowUtc,
@@ -271,6 +222,9 @@ public sealed class AlertEngine
         double value,
         double threshold)
     {
+        if (_repo.IsAlertRuleSnoozed(ruleKey, nowUtc))
+            return;
+
         var last = _repo.GetLastAlertTime(ruleKey);
         if (last is not null && nowUtc - last.Value < cooldown)
             return;
@@ -289,11 +243,85 @@ public sealed class AlertEngine
         raised.Add(alert);
     }
 
-    private static string FormatYears(double years)
+    private void EvaluateEndurance(
+        List<AlertRecord> raised,
+        DiskInfo disk,
+        AppConfig config,
+        TimeSpan cooldown,
+        DateTime nowUtc,
+        double highCoveragePercent)
     {
-        if (double.IsNaN(years) || years <= 0) return "an unknown time";
-        if (years >= 1) return $"{years:0.0} years";
-        int months = Math.Max(1, (int)Math.Round(years * 12));
-        return months == 1 ? "1 month" : $"{months} months";
+        EnduranceAlertThreshold threshold = config.EffectiveEnduranceAlert(disk.DiskId);
+        var reasons = new List<string>();
+        double alertValue = 0;
+        double alertThreshold = 0;
+        double tbwLowBytes = config.EffectiveTbw(disk.DiskId) * 1_000_000_000_000d;
+        double? tbwHigh = config.EffectiveTbwUpper(disk.DiskId);
+        double tbwHighBytes = (tbwHigh ?? config.EffectiveTbw(disk.DiskId)) * 1_000_000_000_000d;
+
+        double? usedPercent = disk.LifetimeBytesWritten is long lifetimeWritten && tbwLowBytes > 0
+            ? lifetimeWritten / tbwLowBytes * 100.0
+            : disk.WearPercent;
+        if (threshold.EnableRemainingPercent && usedPercent is double used)
+        {
+            double remaining = Math.Clamp(100.0 - used, 0, 100);
+            if (remaining <= threshold.RemainingPercent)
+            {
+                reasons.Add($"Endurance remaining is about {remaining:0.##}% ({Math.Clamp(used, 0, 100):0.##}% used); the warning threshold is {threshold.RemainingPercent:0.##}% remaining.");
+                alertValue = remaining;
+                alertThreshold = threshold.RemainingPercent;
+            }
+        }
+
+        DateTime? earliest = _repo.GetEarliestSample(disk.DiskId);
+        if (threshold.EnableProjectedLife
+            && earliest is DateTime first
+            && nowUtc - first >= TimeSpan.FromHours(24))
+        {
+            MonitoringRateStats recentRate = _repo.GetRecentDiskWriteRate(
+                disk.DiskId,
+                nowUtc,
+                highCoveragePercent);
+            double avgPerDay = recentRate.MonitoredBytesPerHour * 24.0;
+            if (recentRate.HasHighCoverage && avgPerDay > 0)
+            {
+                double consumed = disk.LifetimeBytesWritten
+                    ?? _repo.GetDiskTotals(disk.DiskId, first, nowUtc).Write;
+                double daysLow = Math.Max(0, tbwLowBytes - consumed) / avgPerDay;
+                double daysHigh = Math.Max(0, tbwHighBytes - consumed) / avgPerDay;
+                if (daysLow <= threshold.RemainingLifeDays)
+                {
+                    string projection = tbwHigh.HasValue
+                        ? $"{FormatRemainingTime(daysLow)} to {FormatRemainingTime(daysHigh)}"
+                        : FormatRemainingTime(daysLow);
+                    reasons.Add($"Projected remaining life is {projection} at {ByteFormat.Humanize(avgPerDay)}/day; the warning threshold is {FormatRemainingTime(threshold.RemainingLifeDays)}.");
+                    alertValue = daysLow;
+                    alertThreshold = threshold.RemainingLifeDays;
+                }
+            }
+        }
+
+        if (reasons.Count == 0)
+            return;
+
+        Emit(
+            raised,
+            cooldown,
+            nowUtc,
+            ruleKey: $"endurance-health:{disk.DiskId}",
+            severity: AlertSeverity.Warning,
+            title: $"Endurance warning for {disk.DisplayName}",
+            message: string.Join(" ", reasons) + " Back up important data and plan drive replacement.",
+            value: alertValue,
+            threshold: alertThreshold);
+    }
+
+    internal static string FormatRemainingTime(double days)
+    {
+        if (!double.IsFinite(days) || days < 0) return "an unknown time";
+        if (days < 2) return $"{Math.Max(0, days):0.#} days";
+        if (days < 60) return $"{days:0} days";
+        if (days < 730) return $"{days / (365.25 / 12.0):0.#} months";
+        return $"{days / 365.25:0.#} years";
     }
 }
