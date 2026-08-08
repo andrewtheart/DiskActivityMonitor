@@ -243,14 +243,24 @@ function DescribeFileTime(var Value: TFileTime): String;
 var
   LocalValue: TFileTime;
   Parts: TDamSystemTime;
+  DisplayHour: Word;
+  Designator: String;
 begin
   Result := '';
   if not FileTimeToLocalFileTime(Value, LocalValue) then
     Exit;
   if not FileTimeToSystemTime(LocalValue, Parts) then
     Exit;
+  DisplayHour := Parts.Hour;
+  Designator := 'AM';
+  if DisplayHour >= 12 then
+    Designator := 'PM';
+  if DisplayHour = 0 then
+    DisplayHour := 12
+  else if DisplayHour > 12 then
+    DisplayHour := DisplayHour - 12;
   Result := IntToStr(Parts.Year) + '-' + PadTwoDigits(Parts.Month) + '-' + PadTwoDigits(Parts.Day) +
-    ' ' + PadTwoDigits(Parts.Hour) + ':' + PadTwoDigits(Parts.Minute);
+    ' ' + IntToStr(DisplayHour) + ':' + PadTwoDigits(Parts.Minute) + ' ' + Designator;
 end;
 
 // Size and dates make the keep-or-replace choice concrete instead of a blind guess.
