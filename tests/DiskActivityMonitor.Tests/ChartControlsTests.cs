@@ -11,6 +11,30 @@ namespace DiskActivityMonitor.Tests;
 public sealed class ChartControlsTests
 {
     [Fact]
+    public void ChartHoverTooltip_UsesDarkHighContrastVisual()
+    {
+        RunSta(() =>
+        {
+            EnsureApplication();
+
+            System.Windows.Controls.Border visual = ChartHoverTooltip.BuildContent("Write\nAug 8, 2:15 PM · 42.5 MB/s");
+            var content = Assert.IsType<System.Windows.Controls.StackPanel>(visual.Child);
+            var context = Assert.IsType<System.Windows.Controls.TextBlock>(content.Children[0]);
+            var value = Assert.IsType<System.Windows.Controls.TextBlock>(content.Children[1]);
+            var tooltip = new ChartHoverTooltip();
+
+            Assert.Equal(Color.FromRgb(0x12, 0x15, 0x19), Assert.IsType<SolidColorBrush>(visual.Background).Color);
+            Assert.Equal(Color.FromRgb(0x4A, 0x54, 0x60), Assert.IsType<SolidColorBrush>(visual.BorderBrush).Color);
+            Assert.Equal(Color.FromRgb(0xC7, 0xCD, 0xD4), Assert.IsType<SolidColorBrush>(context.Foreground).Color);
+            Assert.Equal(Color.FromRgb(0xF5, 0xF7, 0xFA), Assert.IsType<SolidColorBrush>(value.Foreground).Color);
+            Assert.Equal(System.Windows.Controls.Primitives.PlacementMode.MousePoint, tooltip.ToolTip.Placement);
+            Assert.Equal(14, tooltip.ToolTip.HorizontalOffset);
+            Assert.Equal(14, tooltip.ToolTip.VerticalOffset);
+            Assert.Same(Brushes.Transparent, tooltip.ToolTip.Background);
+        });
+    }
+
+    [Fact]
     public void BarChart_RendersEmptyAndDataStates()
     {
         RunSta(() =>
