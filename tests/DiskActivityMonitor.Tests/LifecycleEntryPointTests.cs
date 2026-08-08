@@ -2,6 +2,7 @@ using System.Reflection;
 using DiskActivityMonitor.Cli;
 using DiskActivityMonitor.Core;
 using DiskActivityMonitor.Core.Configuration;
+using DiskActivityMonitor.Core.Data;
 using DiskActivityMonitor.Service;
 using DiskActivityMonitor.Tray;
 using Microsoft.Extensions.DependencyInjection;
@@ -394,6 +395,55 @@ public sealed class LifecycleEntryPointTests
 
             Assert.Equal(2, signals);
             Assert.Equal(1, shutdowns);
+        });
+    }
+
+    [Fact]
+    public void TrayApp_EnduranceToastSnoozesOnlyItsRule()
+    {
+        RunSta(() =>
+        {
+            string database = Path.Combine(Path.GetTempPath(), $"dam_toast_rule_{Guid.NewGuid():N}.db");
+            try
+            {
+                var repo = new MonitorRepository(database);
+                repo.EnsureSchema();
+                App app = CreateIsolatedApp();
+                typeof(App).GetField("_repo", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(app, repo);
+                var activated = CreateToastEventArgs(
+                    "action=snooze-rule;rule=endurance-health:0",
+                    new Dictionary<string, object> { ["snoozeDuration"] = "5m" });
+
+                InvokeNonPublic(app, "OnToastActivated", activated);
+
+                DateTime now = DateTime.UtcNow;
+                Assert.True(repo.IsAlertRuleSnoozed("endurance-health:0", now));
+                Assert.False(repo.IsAlertRuleSnoozed("endurance-health:1", now));
+                Assert.InRange(
+                    repo.GetAlertRuleSnoozeUntil("endurance-health:0", now)!.Value,
+                    now.AddMinutes(4),
+                    now.AddMinutes(6));
+            }
+            finally
+            {
+                Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+                foreach (string file in Directory.GetFiles(Path.GetTempPath(), Path.GetFileName(database) + "*"))
+                    try { File.Delete(file); } catch { }
+            }
+        });
+    }
+
+    [Fact]
+    public void TrayApp_EnduranceToastWithoutRepositoryIsContained()
+    {
+        RunSta(() =>
+        {
+            App app = CreateIsolatedApp();
+            var activated = CreateToastEventArgs(
+                "action=snooze-rule;rule=endurance-health:0",
+                new Dictionary<string, object> { ["snoozeDuration"] = "5m" });
+
+            InvokeNonPublic(app, "OnToastActivated", activated);
         });
     }
 

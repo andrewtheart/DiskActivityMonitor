@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using DiskActivityMonitor.Core;
 using DiskActivityMonitor.Tray;
 using DiskActivityMonitor.Tray.Controls;
 
@@ -36,6 +37,10 @@ public sealed class ChartControlsTests
             chart.UpdateLayout();
 
             Render(chart);
+            Assert.Contains("00:01", chart.HitTextAt(new Point(160, 50)));
+            Assert.Contains("10 B", chart.HitTextAt(new Point(160, 50)));
+            Assert.Null(chart.HitTextAt(new Point(2, 2)));
+            ExerciseHover(chart, new Point(160, 50), new Point(2, 2));
         });
     }
 
@@ -91,6 +96,10 @@ public sealed class ChartControlsTests
             captionChart.Arrange(new Rect(0, 0, 420, 200));
             captionChart.UpdateLayout();
             Render(captionChart);
+            Assert.Contains("All", captionChart.HitTextAt(new Point(113, 30)));
+            Assert.Contains("100", captionChart.HitTextAt(new Point(113, 30)));
+            Assert.Null(captionChart.HitTextAt(new Point(400, 5)));
+            ExerciseHover(captionChart, new Point(113, 30), new Point(400, 5));
 
             // Exercise the full-circle geometry path without depending on WPF render invalidation timing.
             Geometry fullWedge = PieChart.BuildWedge(new Point(50, 50), 40, 20, 0, Math.PI * 2);
@@ -121,11 +130,20 @@ public sealed class ChartControlsTests
             RenderChart(null, 420, 170);
             RenderChart([new LiveDiskPoint(DateTime.UtcNow, 2, 3)], 12, 12);
             RenderChart([new LiveDiskPoint(DateTime.UtcNow, -2, 3)], 420, 170);
-            RenderChart(
+            LiveDiskChart populated = RenderChart(
             [
                 new LiveDiskPoint(DateTime.UtcNow.AddSeconds(-5), 0, 5),
                 new LiveDiskPoint(DateTime.UtcNow, 12.5, 150),
             ], 420, 170);
+            Assert.Contains("Read", populated.HitTextAt(new Point(8, 150)));
+            Assert.Contains("0 MB/s", populated.HitTextAt(new Point(8, 150)));
+            Assert.Null(populated.HitTextAt(new Point(210, 10)));
+            ExerciseHover(populated, new Point(8, 150), new Point(210, 10));
+            populated.SetSeries(null);
+            populated.SetSeries([
+                new ChartSeries("custom", "Custom", Brushes.Red,
+                    [new TimeValuePoint(DateTime.UtcNow, 1)])
+            ]);
 
             Assert.Equal("150 MB/s", LiveDiskChart.FormatRate(150));
             Assert.Equal("12.5 MB/s", LiveDiskChart.FormatRate(12.5));
@@ -133,7 +151,79 @@ public sealed class ChartControlsTests
         });
     }
 
-    private static void RenderChart(IReadOnlyList<LiveDiskPoint>? points, double width, double height)
+    [Fact]
+    public void TotalWrittenChart_RendersEmptyFlatAndRisingStates()
+    {
+        RunSta(() =>
+        {
+            EnsureApplication();
+            Render(new TotalWrittenChart());
+            Assert.False(TotalWrittenChart.HasRenderArea(0, 10));
+            Assert.True(TotalWrittenChart.HasRenderArea(10, 10));
+            var zeroChart = new TotalWrittenChart();
+            var drawingVisual = new DrawingVisual();
+            using (DrawingContext context = drawingVisual.RenderOpen())
+            {
+                typeof(TotalWrittenChart).GetMethod("OnRender", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .Invoke(zeroChart, [context]);
+            }
+
+            var start = new DateTime(2025, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+            RenderTotalChart(null, 420, 180);
+            RenderTotalChart([
+                new Trends.TotalWrittenPoint(start, 10_000),
+                new Trends.TotalWrittenPoint(start.AddHours(1), 10_000),
+            ], 420, 180);
+            TotalWrittenChart rising = RenderTotalChart([
+                new Trends.TotalWrittenPoint(start, 10_000),
+                new Trends.TotalWrittenPoint(start.AddDays(3), 11_000),
+                new Trends.TotalWrittenPoint(start.AddDays(7), 14_000),
+            ], 420, 180);
+            Assert.Contains("10000 B", rising.HitTextAt(new Point(82, 156)));
+            Assert.Contains("written", rising.HitTextAt(new Point(82, 156)));
+            Assert.Null(rising.HitTextAt(new Point(10, 10)));
+            ExerciseHover(rising, new Point(82, 156), new Point(10, 10));
+            RenderTotalChart([
+                new Trends.TotalWrittenPoint(start, 1),
+                new Trends.TotalWrittenPoint(start.AddMinutes(1), 2),
+            ], 50, 30);
+        });
+    }
+
+    private static void ExerciseHover(FrameworkElement chart, Point hit, Point miss)
+    {
+        chart.GetType().GetMethod("UpdateHover", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(chart, [hit]);
+        chart.GetType().GetMethod("UpdateHover", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(chart, [miss]);
+        chart.GetType().GetMethod("ClearHover", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(chart, null);
+
+        var mouse = new System.Windows.Input.MouseEventArgs(System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount)
+        {
+            RoutedEvent = System.Windows.Input.Mouse.MouseMoveEvent,
+        };
+        chart.GetType().GetMethod("OnMouseMove", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(chart, [mouse]);
+        chart.GetType().GetMethod("OnMouseLeave", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(chart, [mouse]);
+    }
+
+    private static TotalWrittenChart RenderTotalChart(
+        IReadOnlyList<Trends.TotalWrittenPoint>? points,
+        double width,
+        double height)
+    {
+        var chart = new TotalWrittenChart { Width = width, Height = height };
+        chart.SetData(points, value => $"{value:0} B");
+        chart.Measure(new Size(width, height));
+        chart.Arrange(new Rect(0, 0, width, height));
+        chart.UpdateLayout();
+        Render(chart);
+        return chart;
+    }
+
+    private static LiveDiskChart RenderChart(IReadOnlyList<LiveDiskPoint>? points, double width, double height)
     {
         var chart = new LiveDiskChart { Width = width, Height = height };
         chart.SetData(points);
@@ -141,6 +231,7 @@ public sealed class ChartControlsTests
         chart.Arrange(new Rect(0, 0, width, height));
         chart.UpdateLayout();
         Render(chart);
+        return chart;
     }
 
     private static void Render(FrameworkElement element)

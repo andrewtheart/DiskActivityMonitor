@@ -14,6 +14,10 @@ public sealed class CliCoverageTests : IDisposable
     {
         CliRunner.RepositoryFactory = () => new MonitorRepository();
         CliRunner.ConfigFactory = () => new ConfigStore().Current;
+        CliRunner.DatabaseStatusProvider = () => default;
+        CliRunner.WatchIterationRequested = () => true;
+        CliRunner.WatchDelay = Thread.Sleep;
+        CliRunner.WatchClear = Console.Clear;
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         foreach (string file in Directory.GetFiles(Path.GetTempPath(), Path.GetFileName(_db) + "*"))
             try { File.Delete(file); } catch { }
@@ -71,6 +75,83 @@ public sealed class CliCoverageTests : IDisposable
         {
             Assert.DoesNotContain("Calendar average", text);
             Assert.Contains("withheld below 90% coverage", text);
+        }
+    }
+
+    [Fact]
+    public void StatusAlertsAndOneWatchIteration_RenderStandardTimes()
+    {
+        var repo = new MonitorRepository(_db);
+        repo.EnsureSchema();
+        DateTime now = DateTime.UtcNow;
+        repo.UpsertDisks([new DiskInfo
+        {
+            DiskId = "0", InstanceName = "0 C:", FriendlyName = "CLI SSD", Volumes = "C:",
+            MediaType = DiskMediaType.Ssd,
+        }]);
+        repo.AddDiskSamples([new DiskSample
+        {
+            TimestampUtc = now.AddMinutes(-1), DiskId = "0", WriteBytes = 123,
+        }]);
+        repo.InsertAlert(new AlertRecord
+        {
+            TimestampUtc = now,
+            Severity = AlertSeverity.Warning,
+            RuleKey = "test",
+            Title = "CLI alert",
+            Message = "details",
+            Value = 1,
+            Threshold = 1,
+        });
+
+        CliRunner.RepositoryFactory = () => new MonitorRepository(_db);
+        CliRunner.ConfigFactory = () => new AppConfig { DashboardRefreshSeconds = 2 };
+        CliRunner.DatabaseStatusProvider = () => (true, 1024 * 1024, now);
+        int watchChecks = 0;
+        CliRunner.WatchIterationRequested = () => watchChecks++ == 0;
+        CliRunner.WatchDelay = _ => { };
+        CliRunner.WatchClear = () => { };
+
+        var output = new StringWriter();
+        TextWriter original = Console.Out;
+        try
+        {
+            Console.SetOut(output);
+            Assert.Equal(0, CliRunner.Run(["status"]));
+            CliRunner.DatabaseStatusProvider = () => default;
+            Assert.Equal(0, CliRunner.Run(["status"]));
+            Assert.Equal(0, CliRunner.Run(["alerts", "--full"]));
+            Assert.Equal(0, CliRunner.Run(["watch", "--interval", "2"]));
+        }
+        finally
+        {
+            Console.SetOut(original);
+        }
+
+        string text = output.ToString();
+        Assert.Contains("Database          : 1.0 MB, updated", text);
+        Assert.Contains("CLI alert", text);
+        Assert.Contains("Disk Activity Monitor — live", text);
+        Assert.Matches(@"\b(?:AM|PM)\b", text);
+        Assert.True(CliRunner.ShouldContinueWatch(false, () => true));
+        Assert.False(CliRunner.ShouldContinueWatch(false, () => false));
+        bool requested = false;
+        Assert.False(CliRunner.ShouldContinueWatch(true, () => { requested = true; return true; }));
+        Assert.False(requested);
+
+        string metadataPath = Path.Combine(Path.GetTempPath(), $"dam_cli_metadata_{Guid.NewGuid():N}.db");
+        try
+        {
+            Assert.False(CliRunner.ReadDatabaseStatus(metadataPath).Exists);
+            File.WriteAllBytes(metadataPath, new byte[] { 1, 2, 3 });
+            var metadata = CliRunner.ReadDatabaseStatus(metadataPath);
+            Assert.True(metadata.Exists);
+            Assert.Equal(3, metadata.Length);
+            _ = CliRunner.ReadDatabaseStatus();
+        }
+        finally
+        {
+            try { File.Delete(metadataPath); } catch { }
         }
     }
 }

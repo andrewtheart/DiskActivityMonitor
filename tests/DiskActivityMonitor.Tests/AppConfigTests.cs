@@ -28,6 +28,11 @@ public class AppConfigTests
         Assert.Equal(600, cfg.DefaultSsdTbwUpper);
         Assert.Equal(90, cfg.SsdWearWarnPercent);
         Assert.Equal(2, cfg.TbwProjectionWarnYears);
+        Assert.True(cfg.DefaultEnduranceAlert.EnableProjectedLife);
+        Assert.Equal(1, cfg.DefaultEnduranceAlert.RemainingLifeValue);
+        Assert.Equal(EnduranceAlertTimeUnit.Years, cfg.DefaultEnduranceAlert.RemainingLifeUnit);
+        Assert.True(cfg.DefaultEnduranceAlert.EnableRemainingPercent);
+        Assert.Equal(20, cfg.DefaultEnduranceAlert.RemainingPercent);
         Assert.Equal(1, cfg.TbwProjectionCriticalYears);
         Assert.Equal(90, cfg.HighCoveragePercent);
         Assert.Equal(512, cfg.TailMaxReadKb);
@@ -148,6 +153,21 @@ public class AppConfigTests
             ControllerErrorWindowDays = 30,
             ControllerErrorWarnCount = 5,
             ControllerErrorCriticalCount = 20,
+            DefaultEnduranceAlert = new EnduranceAlertThreshold
+            {
+                RemainingLifeValue = 6,
+                RemainingLifeUnit = EnduranceAlertTimeUnit.Months,
+                RemainingPercent = 15,
+            },
+            DiskEnduranceAlertOverrides =
+            {
+                ["disk1"] = new EnduranceAlertThreshold
+                {
+                    RemainingLifeValue = 45,
+                    RemainingLifeUnit = EnduranceAlertTimeUnit.Days,
+                    RemainingPercent = 8,
+                },
+            },
         };
 
         var json = JsonSerializer.Serialize(cfg, AppConfig.SerializerOptions);
@@ -167,6 +187,46 @@ public class AppConfigTests
         Assert.Equal(30, deserialized.ControllerErrorWindowDays);
         Assert.Equal(5, deserialized.ControllerErrorWarnCount);
         Assert.Equal(20, deserialized.ControllerErrorCriticalCount);
+        Assert.Equal(6, deserialized.DefaultEnduranceAlert.RemainingLifeValue);
+        Assert.Equal(EnduranceAlertTimeUnit.Months, deserialized.DefaultEnduranceAlert.RemainingLifeUnit);
+        Assert.Equal(15, deserialized.DefaultEnduranceAlert.RemainingPercent);
+        Assert.Equal(45, deserialized.EffectiveEnduranceAlert("disk1").RemainingLifeValue);
+    }
+
+    [Fact]
+    public void EffectiveEnduranceAlert_UsesDiskOverrideAndReturnsAClone()
+    {
+        var config = new AppConfig();
+        config.DiskEnduranceAlertOverrides["1"] = new EnduranceAlertThreshold
+        {
+            RemainingLifeValue = 3,
+            RemainingLifeUnit = EnduranceAlertTimeUnit.Months,
+            RemainingPercent = 12,
+        };
+
+        EnduranceAlertThreshold threshold = config.EffectiveEnduranceAlert("1");
+        threshold.RemainingPercent = 99;
+
+        Assert.Equal(3 * (365.25 / 12.0), threshold.RemainingLifeDays, 6);
+        Assert.Equal(12, config.EffectiveEnduranceAlert("1").RemainingPercent);
+        Assert.Equal(365.25, config.EffectiveEnduranceAlert("missing").RemainingLifeDays, 6);
+
+        EnduranceAlertThreshold normalized = AppConfig.CloneEnduranceAlert(new EnduranceAlertThreshold
+        {
+            RemainingLifeValue = double.NaN,
+            RemainingLifeUnit = (EnduranceAlertTimeUnit)99,
+            RemainingPercent = double.PositiveInfinity,
+        });
+        Assert.Equal(1, normalized.RemainingLifeValue);
+        Assert.Equal(EnduranceAlertTimeUnit.Years, normalized.RemainingLifeUnit);
+        Assert.Equal(20, normalized.RemainingPercent);
+        Assert.Equal(365.25, normalized.RemainingLifeDays, 6);
+        Assert.Equal(10, new EnduranceAlertThreshold
+        {
+            RemainingLifeValue = 10,
+            RemainingLifeUnit = EnduranceAlertTimeUnit.Days,
+        }.RemainingLifeDays);
+        Assert.Equal(20, AppConfig.CloneEnduranceAlert(null).RemainingPercent);
     }
 
     [Fact]

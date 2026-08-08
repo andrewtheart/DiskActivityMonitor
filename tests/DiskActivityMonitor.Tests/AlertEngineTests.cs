@@ -144,15 +144,13 @@ public class AlertEngineTests : IDisposable
     }
 
     [Fact]
-    public void Evaluate_UnknownTbwProjection_ReportsEstimatedRange()
+    public void Evaluate_UnknownTbwProjection_ReportsRemainingEstimatedRange()
     {
         var cfg = new AppConfig
         {
             SsdWarnGbPerHour = 0,
             SsdWarnGbPerDay = 0,
             SsdCriticalGbPerDay = 0,
-            TbwProjectionWarnYears = 2,
-            TbwProjectionCriticalYears = 1,
         };
         var now = new DateTime(2025, 6, 1, 12, 0, 0, DateTimeKind.Utc);
         for (int day = 8; day >= 1; day--)
@@ -169,9 +167,9 @@ public class AlertEngineTests : IDisposable
 
         var alerts = _engine.Evaluate([MakeSsd()], cfg, now);
 
-        var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "tbw-life:0");
-        Assert.Equal(AlertSeverity.Critical, alert.Severity);
-        Assert.Contains("150 to 600 TBW estimate", alert.Message);
+        var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "endurance-health:0");
+        Assert.Equal(AlertSeverity.Warning, alert.Severity);
+        Assert.Contains("Projected remaining life", alert.Message);
         Assert.Contains("to", alert.Message);
     }
 
@@ -183,8 +181,12 @@ public class AlertEngineTests : IDisposable
             SsdWarnGbPerHour = 0,
             SsdWarnGbPerDay = 0,
             SsdCriticalGbPerDay = 0,
-            TbwProjectionWarnYears = 100,
-            TbwProjectionCriticalYears = 50,
+            DefaultEnduranceAlert = new EnduranceAlertThreshold
+            {
+                RemainingLifeValue = 100,
+                RemainingLifeUnit = EnduranceAlertTimeUnit.Years,
+                EnableRemainingPercent = false,
+            },
         };
         var now = new DateTime(2025, 6, 1, 12, 0, 0, DateTimeKind.Utc);
         _repo.AddDiskSamples([
@@ -194,18 +196,17 @@ public class AlertEngineTests : IDisposable
 
         var alerts = _engine.Evaluate([MakeSsd()], cfg, now, highCoveragePercent: 90);
 
-        Assert.DoesNotContain(alerts, candidate => candidate.RuleKey == "tbw-life:0");
+        Assert.DoesNotContain(alerts, candidate => candidate.RuleKey == "endurance-health:0");
     }
 
     [Theory]
-    [InlineData(7_000_000_000_000, 10, 1, AlertSeverity.Critical)]
-    [InlineData(1_000_000_000_000, 10, 1, AlertSeverity.Warning)]
-    [InlineData(100_000_000_000, 10, 1, null)]
-    public void Evaluate_TbwProjection_CoversCriticalWarningAndHealthyRates(
+    [InlineData(7_000_000_000_000, 1, true)]
+    [InlineData(1_000_000_000_000, 1, false)]
+    [InlineData(1_000_000_000_000, 4, true)]
+    public void Evaluate_EnduranceProjection_UsesConfiguredRemainingLife(
         long sevenDayBytes,
         double warningYears,
-        double criticalYears,
-        AlertSeverity? expectedSeverity)
+        bool expectedAlert)
     {
         var cfg = new AppConfig
         {
@@ -214,8 +215,12 @@ public class AlertEngineTests : IDisposable
             SsdWarnGbPerHour = 0,
             SsdWarnGbPerDay = 0,
             SsdCriticalGbPerDay = 0,
-            TbwProjectionWarnYears = warningYears,
-            TbwProjectionCriticalYears = criticalYears,
+            DefaultEnduranceAlert = new EnduranceAlertThreshold
+            {
+                RemainingLifeValue = warningYears,
+                RemainingLifeUnit = EnduranceAlertTimeUnit.Years,
+                EnableRemainingPercent = false,
+            },
         };
         var now = new DateTime(2025, 6, 1, 12, 0, 0, DateTimeKind.Utc);
         _repo.AddDiskSamples([
@@ -226,18 +231,17 @@ public class AlertEngineTests : IDisposable
             _repo.AddCollectorHeartbeat(now.AddMinutes(-minute));
 
         var alerts = _engine.Evaluate([MakeSsd()], cfg, now);
-        var projection = alerts.SingleOrDefault(candidate => candidate.RuleKey == "tbw-life:0");
+        var projection = alerts.SingleOrDefault(candidate => candidate.RuleKey == "endurance-health:0");
 
-        if (expectedSeverity is null)
+        if (!expectedAlert)
         {
             Assert.Null(projection);
         }
         else
         {
             Assert.NotNull(projection);
-            Assert.Equal(expectedSeverity, projection.Severity);
-            Assert.Contains("150 TBW rating", projection.Message);
-            Assert.DoesNotContain(" to ", projection.Message);
+            Assert.Equal(AlertSeverity.Warning, projection.Severity);
+            Assert.Contains("Projected remaining life", projection.Message);
         }
     }
 
@@ -246,46 +250,109 @@ public class AlertEngineTests : IDisposable
     [Fact]
     public void Evaluate_WearExceedsThreshold_RaisesWarning()
     {
-        var cfg = new AppConfig { SsdWearWarnPercent = 90 };
+        var cfg = new AppConfig();
         var now = DateTime.UtcNow;
         var disk = MakeSsd(wearPercent: 92);
 
         var alerts = _engine.Evaluate([disk], cfg, now);
-        Assert.Contains(alerts, a => a.RuleKey == "ssd-wear:0" && a.Severity == AlertSeverity.Warning);
+        Assert.Contains(alerts, a => a.RuleKey == "endurance-health:0" && a.Severity == AlertSeverity.Warning);
     }
 
     [Fact]
-    public void Evaluate_WearAbove95_RaisesCritical()
+    public void Evaluate_PerDiskRemainingPercentOverride_TakesPrecedence()
     {
-        var cfg = new AppConfig { SsdWearWarnPercent = 90 };
+        var cfg = new AppConfig();
+        cfg.DiskEnduranceAlertOverrides["0"] = new EnduranceAlertThreshold
+        {
+            EnableProjectedLife = false,
+            RemainingPercent = 5,
+        };
         var now = DateTime.UtcNow;
-        var disk = MakeSsd(wearPercent: 97);
+        var disk = MakeSsd(wearPercent: 92);
 
         var alerts = _engine.Evaluate([disk], cfg, now);
-        Assert.Contains(alerts, a => a.RuleKey == "ssd-wear:0" && a.Severity == AlertSeverity.Critical);
+        Assert.DoesNotContain(alerts, a => a.RuleKey == "endurance-health:0");
     }
 
     [Fact]
     public void Evaluate_WearBelowThreshold_NoAlert()
     {
-        var cfg = new AppConfig { SsdWearWarnPercent = 90 };
+        var cfg = new AppConfig();
         var now = DateTime.UtcNow;
         var disk = MakeSsd(wearPercent: 50);
 
         var alerts = _engine.Evaluate([disk], cfg, now);
-        Assert.DoesNotContain(alerts, a => a.RuleKey.StartsWith("ssd-wear:"));
+        Assert.DoesNotContain(alerts, a => a.RuleKey.StartsWith("endurance-health:"));
     }
 
     [Fact]
     public void Evaluate_WearNull_NoAlert()
     {
-        var cfg = new AppConfig { SsdWearWarnPercent = 90 };
+        var cfg = new AppConfig();
         var now = DateTime.UtcNow;
         var disk = MakeSsd(wearPercent: null);
 
         var alerts = _engine.Evaluate([disk], cfg, now);
-        Assert.DoesNotContain(alerts, a => a.RuleKey.StartsWith("ssd-wear:"));
+        Assert.DoesNotContain(alerts, a => a.RuleKey.StartsWith("endurance-health:"));
     }
+
+    [Fact]
+    public void Evaluate_EnduranceRuleSnooze_IsScopedToOneDisk()
+    {
+        var cfg = new AppConfig();
+        DateTime now = DateTime.UtcNow;
+        _repo.SnoozeAlertRule("endurance-health:0", now.AddHours(1));
+
+        var alerts = _engine.Evaluate(
+            [MakeSsd("0", wearPercent: 95), MakeSsd("1", wearPercent: 95)],
+            cfg,
+            now);
+
+        Assert.DoesNotContain(alerts, alert => alert.RuleKey == "endurance-health:0");
+        Assert.Contains(alerts, alert => alert.RuleKey == "endurance-health:1");
+    }
+
+    [Fact]
+    public void Evaluate_EnduranceProjection_UsesDriveLifetimeWritesWhenAvailable()
+    {
+        var cfg = new AppConfig
+        {
+            DefaultSsdTbw = 1,
+            DefaultSsdTbwUpper = null,
+            DefaultEnduranceAlert = new EnduranceAlertThreshold
+            {
+                EnableProjectedLife = true,
+                RemainingLifeValue = 10,
+                RemainingLifeUnit = EnduranceAlertTimeUnit.Years,
+                EnableRemainingPercent = false,
+            },
+            SsdWarnGbPerHour = 0,
+            SsdWarnGbPerDay = 0,
+            SsdCriticalGbPerDay = 0,
+        };
+        DateTime now = new(2026, 8, 7, 12, 0, 0, DateTimeKind.Utc);
+        _repo.AddDiskSamples([
+            new DiskSample { TimestampUtc = now.AddDays(-8), DiskId = "0", WriteBytes = 1 },
+            new DiskSample { TimestampUtc = now.AddMinutes(-1), DiskId = "0", WriteBytes = 700_000_000_000 },
+        ]);
+        for (int minute = 7 * 24 * 60; minute >= 1; minute--)
+            _repo.AddCollectorHeartbeat(now.AddMinutes(-minute));
+
+        var alerts = _engine.Evaluate([MakeSsd(lifetimeWritten: 900_000_000_000)], cfg, now);
+
+        Assert.Contains(alerts, alert => alert.RuleKey == "endurance-health:0"
+            && alert.Message.Contains("Projected remaining life", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(double.NaN, "an unknown time")]
+    [InlineData(-1, "an unknown time")]
+    [InlineData(0.5, "0.5 days")]
+    [InlineData(10, "10 days")]
+    [InlineData(90, "3 months")]
+    [InlineData(730.5, "2 years")]
+    public void FormatRemainingTime_CoversEveryRange(double days, string expected)
+        => Assert.Equal(expected, AlertEngine.FormatRemainingTime(days));
 
     // ────────────────────────────────────────── Cooldown
 

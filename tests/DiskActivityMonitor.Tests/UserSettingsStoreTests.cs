@@ -34,6 +34,8 @@ public sealed class UserSettingsStoreTests : IDisposable
             LastAppUpdateCheckUtc = lastUpdateCheck,
             LastAppUpdateAlertedVersion = "1.4.13",
             MaxInstallerSizeMb = 384,
+            ChartColors = new Dictionary<string, string> { ["live:0:read"] = "#112233" },
+            CollapsedPanels = new HashSet<string> { "live-activity" },
             AutoSuspendRules =
             [
                 new AutoSuspendRule
@@ -62,6 +64,8 @@ public sealed class UserSettingsStoreTests : IDisposable
         Assert.Equal(lastUpdateCheck, reloaded.LastAppUpdateCheckUtc);
         Assert.Equal("1.4.13", reloaded.LastAppUpdateAlertedVersion);
         Assert.Equal(384, reloaded.MaxInstallerSizeMb);
+        Assert.Equal("#112233", reloaded.ChartColors["live:0:read"]);
+        Assert.Contains("live-activity", reloaded.CollapsedPanels);
     }
 
     [Fact]
@@ -97,9 +101,13 @@ public sealed class UserSettingsStoreTests : IDisposable
         var snapshot = store.Current;
         snapshot.EnableNotifications = true;
         snapshot.AutoSuspendRules[0].ProcessName = "changed";
+        snapshot.ChartColors["total:all"] = "#FFFFFF";
+        snapshot.CollapsedPanels.Add("throughput");
 
         Assert.False(store.Current.EnableNotifications);
         Assert.Equal("writer", Assert.Single(store.Current.AutoSuspendRules).ProcessName);
+        Assert.Empty(store.Current.ChartColors);
+        Assert.Empty(store.Current.CollapsedPanels);
     }
 
     [Fact]

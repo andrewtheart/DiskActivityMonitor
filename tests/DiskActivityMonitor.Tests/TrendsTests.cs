@@ -4,6 +4,73 @@ namespace DiskActivityMonitor.Tests;
 
 public class TrendsTests
 {
+    [Fact]
+    public void BuildCumulative_AccumulatesChronologicallyAndKeepsRangeBoundaries()
+    {
+        var from = new DateTime(2025, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+        var to = from.AddHours(1);
+        var writes = new[]
+        {
+            (from.AddMinutes(45), 300L),
+            (from.AddMinutes(15), 100L),
+            (from.AddMinutes(30), 200L),
+        };
+
+        var result = Trends.BuildCumulative(writes, from, to, totalAtStart: 10_000);
+
+        Assert.Equal([from, from.AddMinutes(15), from.AddMinutes(30), from.AddMinutes(45), to],
+            result.Select(point => point.TimestampUtc));
+        Assert.Equal([10_000L, 10_100L, 10_300L, 10_600L, 10_600L],
+            result.Select(point => point.TotalBytes));
+    }
+
+    [Fact]
+    public void BuildCumulative_EmptyRangeStaysFlatAndInvalidRangeIsEmpty()
+    {
+        var from = new DateTime(2025, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+        var to = from.AddHours(1);
+
+        var flat = Trends.BuildCumulative([], from, to, totalAtStart: 42);
+
+        Assert.Equal(2, flat.Count);
+        Assert.All(flat, point => Assert.Equal(42, point.TotalBytes));
+        Assert.Empty(Trends.BuildCumulative([], to, from, totalAtStart: 42));
+    }
+
+    [Fact]
+    public void BuildCumulative_IgnoresOutOfRangeAndNegativeWrites()
+    {
+        var from = new DateTime(2025, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+        var to = from.AddHours(1);
+        var writes = new[]
+        {
+            (from.AddMinutes(-1), 500L),
+            (from.AddMinutes(20), -100L),
+            (to.AddMinutes(1), 500L),
+        };
+
+        var result = Trends.BuildCumulative(writes, from, to, totalAtStart: -10);
+
+        Assert.Equal([0L, 0L, 0L], result.Select(point => point.TotalBytes));
+    }
+
+    [Fact]
+    public void BuildCumulative_SaturatesAndReplacesDuplicateTimestamp()
+    {
+        var from = new DateTime(2025, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+        var bucket = from.AddMinutes(30);
+        var to = from.AddHours(1);
+
+        var result = Trends.BuildCumulative(
+            [(bucket, 10L), (bucket, 20L)],
+            from,
+            to,
+            long.MaxValue - 5);
+
+        Assert.Equal([from, bucket, to], result.Select(point => point.TimestampUtc));
+        Assert.All(result.Skip(1), point => Assert.Equal(long.MaxValue, point.TotalBytes));
+    }
+
     // ────────────────────────────────────────── Build
 
     [Fact]
@@ -151,10 +218,10 @@ public class TrendsTests
     // ────────────────────────────────────────── Label
 
     [Fact]
-    public void Label_Hour_FormatsHHmm()
+    public void Label_Hour_FormatsStandardTime()
     {
         var dt = new DateTime(2025, 6, 1, 14, 0, 0, DateTimeKind.Local);
-        Assert.Equal("14:00", Trends.Label(dt, Trends.Bucket.Hour));
+        Assert.Equal("2:00 PM", Trends.Label(dt, Trends.Bucket.Hour));
     }
 
     [Fact]

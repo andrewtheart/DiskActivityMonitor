@@ -156,6 +156,25 @@ public class MonitorRepositoryTests : IDisposable
     }
 
     [Fact]
+    public void GetDiskMinuteTotals_MultipleDisks_GroupsByMinute()
+    {
+        var repo = CreateRepo();
+        var start = new DateTime(2026, 8, 7, 12, 0, 0, DateTimeKind.Utc);
+        repo.AddDiskSamples([
+            new DiskSample { TimestampUtc = start, DiskId = "0", ReadBytes = 100, WriteBytes = 200 },
+            new DiskSample { TimestampUtc = start, DiskId = "1", ReadBytes = 300, WriteBytes = 400 },
+            new DiskSample { TimestampUtc = start.AddMinutes(1), DiskId = "0", ReadBytes = 500, WriteBytes = 600 },
+            new DiskSample { TimestampUtc = start, DiskId = "2", ReadBytes = 9_000, WriteBytes = 9_000 },
+        ]);
+
+        List<long> totals = repo.GetDiskMinuteTotals(["0", "1"], start, start.AddMinutes(2));
+
+        Assert.Equal([1_000L, 1_100L], totals);
+        Assert.Equal([1_100L], repo.GetDiskMinuteTotals("0", start.AddMinutes(1), start.AddMinutes(2)));
+        Assert.Empty(repo.GetDiskMinuteTotals([], start, start.AddMinutes(2)));
+    }
+
+    [Fact]
     public void LiveDiskSamples_AreOrderedFilteredAndPruned()
     {
         var repo = CreateRepo();
@@ -198,6 +217,21 @@ public class MonitorRepositoryTests : IDisposable
         var (read, write) = repo.GetDiskTotals("nonexistent", now.AddHours(-1), now);
         Assert.Equal(0, read);
         Assert.Equal(0, write);
+    }
+
+    [Fact]
+    public void AlertRuleSnooze_IsScopedAndExpires()
+    {
+        var repo = CreateRepo();
+        DateTime now = new(2026, 8, 7, 12, 0, 0, DateTimeKind.Utc);
+
+        repo.SnoozeAlertRule("endurance-health:0", now.AddHours(1));
+
+        Assert.True(repo.IsAlertRuleSnoozed("endurance-health:0", now));
+        Assert.False(repo.IsAlertRuleSnoozed("endurance-health:1", now));
+        Assert.Equal(now.AddHours(1), repo.GetAlertRuleSnoozeUntil("endurance-health:0", now));
+        Assert.False(repo.IsAlertRuleSnoozed("endurance-health:0", now.AddHours(2)));
+        Assert.Null(repo.GetAlertRuleSnoozeUntil("endurance-health:0", now.AddHours(2)));
     }
 
     [Fact]
@@ -341,6 +375,37 @@ public class MonitorRepositoryTests : IDisposable
         Assert.Equal(280, hourly[0].Write);
         Assert.Equal(10, hourly[1].Read);
         Assert.Equal(20, hourly[1].Write);
+    }
+
+    [Fact]
+    public void GetDiskWriteBuckets_GroupsRelativeToRangeStartAndMarksBucketEnds()
+    {
+        var repo = CreateRepo();
+        var start = new DateTime(2025, 6, 1, 10, 5, 0, DateTimeKind.Utc);
+
+        repo.AddDiskSamples([
+            new DiskSample { TimestampUtc = start, DiskId = "0", WriteBytes = 100 },
+            new DiskSample { TimestampUtc = start.AddMinutes(14), DiskId = "0", WriteBytes = 200 },
+            new DiskSample { TimestampUtc = start.AddMinutes(15), DiskId = "0", WriteBytes = 400 },
+            new DiskSample { TimestampUtc = start.AddMinutes(50), DiskId = "0", WriteBytes = 800 },
+        ]);
+
+        var buckets = repo.GetDiskWriteBuckets(
+            "0", start, start.AddMinutes(40), TimeSpan.FromMinutes(15));
+
+        Assert.Equal(2, buckets.Count);
+        Assert.Equal((start.AddMinutes(15), 300L), buckets[0]);
+        Assert.Equal((start.AddMinutes(30), 400L), buckets[1]);
+    }
+
+    [Fact]
+    public void GetDiskWriteBuckets_EmptyOrInvalidRangeReturnsNoBuckets()
+    {
+        var repo = CreateRepo();
+        var start = new DateTime(2025, 6, 1, 10, 5, 0, DateTimeKind.Utc);
+
+        Assert.Empty(repo.GetDiskWriteBuckets("0", start, start.AddHours(1), TimeSpan.Zero));
+        Assert.Empty(repo.GetDiskWriteBuckets("0", start, start, TimeSpan.FromMinutes(1)));
     }
 
     // ────────────────────────────────────────── Process Samples

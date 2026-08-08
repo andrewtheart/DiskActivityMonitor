@@ -103,7 +103,7 @@ public sealed class TrayLifecycleToastTests : IDisposable
     }
 
     [Fact]
-    public void AlertToast_BuildsProcessAndOrdinaryToasts_AndFallsBackOnFailure()
+    public void AlertToast_BuildsProcessEnduranceAndOrdinaryToasts_AndFallsBackOnFailure()
     {
         using var harness = CreateController();
         var presented = new List<ToastContentBuilder>();
@@ -112,10 +112,15 @@ public sealed class TrayLifecycleToastTests : IDisposable
         harness.Controller.BalloonPresenter = (_, title, _, icon) => balloons.Add((title, icon));
 
         harness.Controller.ShowAlertToast(Alert("proc-1h:writer", AlertSeverity.Warning));
+        harness.Controller.ShowAlertToast(Alert("endurance-health:0", AlertSeverity.Warning));
         harness.Controller.ShowAlertToast(Alert("misc", AlertSeverity.Warning));
 
-        Assert.Equal(2, presented.Count);
+        Assert.Equal(3, presented.Count);
         Assert.Empty(balloons);
+        string enduranceXml = presented[1].GetToastContent().GetContent();
+        Assert.Contains("Snooze this disk", enduranceXml);
+        Assert.Contains("action=snooze-rule", enduranceXml);
+        Assert.Contains("endurance-health", enduranceXml);
 
         harness.Controller.ToastPresenter = _ => throw new InvalidOperationException("toast unavailable");
         harness.Controller.ShowAlertToast(Alert("misc", AlertSeverity.Critical));
@@ -231,6 +236,7 @@ public sealed class TrayLifecycleToastTests : IDisposable
     [InlineData("ssd-24h:0", AlertSeverity.Warning, "Alert", "24h limit")]
     [InlineData("ssd-24h:0", AlertSeverity.Critical, "Alert", "24h critical limit")]
     [InlineData("tbw-life:0", AlertSeverity.Warning, "Alert", "Projected life")]
+    [InlineData("endurance-health:0", AlertSeverity.Warning, "Alert", "Details")]
     [InlineData("disk-controller:0", AlertSeverity.Warning, "Alert", "1 error")]
     [InlineData("other", AlertSeverity.Warning, "Alert", "Details")]
     public void AlertToastFormatting_CoversEveryRuleFamily(

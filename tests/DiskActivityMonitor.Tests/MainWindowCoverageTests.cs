@@ -38,6 +38,549 @@ public sealed class MainWindowCoverageTests : IDisposable
     }
 
     [Fact]
+    public void TotalWrittenTrend_SwitchesPresetsAndAppliesCustomDates()
+    {
+        RunStaAsync(async () =>
+        {
+            EnsureApplication();
+            var repo = new MonitorRepository(_db);
+            repo.EnsureSchema();
+            var now = DateTime.UtcNow;
+            repo.UpsertDisks([new DiskInfo
+            {
+                DiskId = "0",
+                InstanceName = "0 C:",
+                FriendlyName = "Trend SSD",
+                Volumes = "C:",
+                MediaType = DiskMediaType.Ssd,
+                LifetimeBytesWritten = 10_000,
+            }]);
+            repo.AddDiskSamples([
+                new DiskSample { TimestampUtc = now.AddMinutes(-45), DiskId = "0", WriteBytes = 100 },
+                new DiskSample { TimestampUtc = now.AddMinutes(-15), DiskId = "0", WriteBytes = 300 },
+            ]);
+            using var config = new ConfigStore(_cfg);
+            var window = new MainWindow(repo, config, new UserSettingsStore(_userSettings));
+            try
+            {
+                Assert.True(window.Btn1h.IsChecked);
+                Assert.Equal("Total written over time", window.TrendTitle.Text);
+                Assert.Contains("anchored to SMART", window.TrendCaption.Text);
+                Assert.Contains("Increase: +400 B", window.TrendChangeText.Text);
+                Assert.Equal(Visibility.Collapsed, window.TrendCustomRangePanel.Visibility);
+
+                Invoke(window, "Range_Click", window.Btn7d, new RoutedEventArgs());
+                Assert.True(window.Btn7d.IsChecked);
+                Assert.False(window.Btn1h.IsChecked);
+
+                Invoke(window, "Range_Click", window.BtnCustom, new RoutedEventArgs());
+                Assert.True(window.BtnCustom.IsChecked);
+                Assert.Equal(Visibility.Visible, window.TrendCustomRangePanel.Visibility);
+
+                DateTime today = DateTime.Today;
+                window.TrendStartDate.SelectedDate = today.AddDays(-2);
+                window.TrendEndDate.SelectedDate = today;
+                Invoke(window, "CustomTrendApply_Click", window.TrendApplyCustomButton, new RoutedEventArgs());
+                Assert.Equal(Visibility.Collapsed, window.TrendCustomError.Visibility);
+                Assert.Contains("Increase: +400 B", window.TrendChangeText.Text);
+
+                window.TrendStartDate.SelectedDate = today;
+                window.TrendEndDate.SelectedDate = today.AddDays(-1);
+                Invoke(window, "CustomTrendApply_Click", window.TrendApplyCustomButton, new RoutedEventArgs());
+                Assert.Equal(Visibility.Visible, window.TrendCustomError.Visibility);
+                Assert.Contains("valid date range", window.TrendRangeText.Text);
+
+                await Task.CompletedTask;
+            }
+            finally { window.ForceClose(); }
+        });
+    }
+
+    [Fact]
+    public void AllDisks_AggregatesStatisticsAndRendersPerDiskLiveSeries()
+    {
+        RunStaAsync(async () =>
+        {
+            EnsureApplication();
+            var repo = new MonitorRepository(_db);
+            repo.EnsureSchema();
+            var now = DateTime.UtcNow;
+            repo.UpsertDisks([
+                new DiskInfo
+                {
+                    DiskId = "0", InstanceName = "0 C:", FriendlyName = "System SSD", Volumes = "C:",
+                    MediaType = DiskMediaType.Ssd, LifetimeBytesWritten = 10_000, LifetimeBytesRead = 4_000,
+                },
+                new DiskInfo
+                {
+                    DiskId = "1", InstanceName = "1 F:", FriendlyName = "Data HDD", Volumes = "F:",
+                    MediaType = DiskMediaType.Hdd,
+                },
+            ]);
+            repo.AddDiskSamples([
+                new DiskSample { TimestampUtc = now.AddDays(-8), DiskId = "0", WriteBytes = 1 },
+                new DiskSample { TimestampUtc = now.AddDays(-8), DiskId = "1", WriteBytes = 1 },
+                new DiskSample { TimestampUtc = now.AddMinutes(-2), DiskId = "0", ReadBytes = 100, WriteBytes = 200 },
+                new DiskSample { TimestampUtc = now.AddMinutes(-2), DiskId = "1", ReadBytes = 300, WriteBytes = 400 },
+            ]);
+            repo.AddLiveDiskSamples([
+                new LiveDiskSample { TimestampUtc = now.AddSeconds(-5), DiskId = "0", ElapsedMilliseconds = 5000, ReadBytes = 5_000_000, WriteBytes = 10_000_000 },
+                new LiveDiskSample { TimestampUtc = now.AddSeconds(-5), DiskId = "1", ElapsedMilliseconds = 5000, ReadBytes = 15_000_000, WriteBytes = 20_000_000 },
+            ], now.AddMinutes(-15));
+
+            using var config = new ConfigStore(_cfg);
+            var window = new MainWindow(repo, config, new UserSettingsStore(_userSettings));
+            try
+            {
+                object allDisks = ((IEnumerable)window.DiskSelector.ItemsSource).Cast<object>()
+                    .Single(choice => choice.GetType().GetProperty("Disk")!.GetValue(choice) is null);
+                Assert.Equal("All disks", allDisks.GetType().GetProperty("Display")!.GetValue(allDisks));
+                Assert.True(Property<bool>(allDisks, "IsAll"));
+
+                window.DiskSelector.SelectedItem = allDisks;
+                Invoke(window, "LoadDisks");
+
+                Assert.Equal(ByteFormat.Humanize(600), window.TodayMetric.Text);
+                Assert.Equal($"read {ByteFormat.Humanize(400)}", window.TodayReadSub.Text);
+                Assert.Contains("All disks", window.TrendTitle.Text);
+                Assert.False(window.EnduranceRatedBadge.IsEnabled);
+                Assert.Equal(4, ((IEnumerable)window.LiveDiskLegend.ItemsSource).Cast<object>().Count());
+                Assert.Contains("C:", window.LiveDiskCurrent.Text);
+                Assert.Contains("F:", window.LiveDiskCurrent.Text);
+                Assert.Contains("SMART lifetime anchors", window.TrendCaption.Text);
+                Assert.Contains("read across", window.SmartWearLifeText.Text);
+
+                IReadOnlyList<DiskInfo> repoDisks = repo.GetDisks();
+                var allAnchored = repoDisks.Select(disk => new DiskInfo
+                {
+                    DiskId = disk.DiskId,
+                    InstanceName = disk.InstanceName,
+                    FriendlyName = disk.FriendlyName,
+                    Volumes = disk.Volumes,
+                    MediaType = disk.MediaType,
+                    LifetimeBytesWritten = 100_000,
+                }).ToList();
+                typeof(MainWindow).GetMethod("UpdateChart", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(window, [allAnchored]);
+                Assert.Contains("Combined drive lifetime totals", window.TrendCaption.Text);
+
+                DiskInfo unanchored = repoDisks.Single(disk => disk.DiskId == "1");
+                typeof(MainWindow).GetMethod("UpdateChart", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(window, [new List<DiskInfo> { unanchored }]);
+                Assert.Contains("lifetime SMART total is unavailable", window.TrendCaption.Text);
+
+                var recentDisk = new DiskInfo
+                {
+                    DiskId = "recent", InstanceName = "recent", FriendlyName = "Recent",
+                    MediaType = DiskMediaType.Ssd,
+                };
+                repo.AddDiskSamples([new DiskSample
+                {
+                    TimestampUtc = now.AddMinutes(-1), DiskId = recentDisk.DiskId, WriteBytes = 1,
+                }]);
+                typeof(MainWindow).GetMethod("UpdateAggregateEndurance", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(window, [new List<DiskInfo> { recentDisk }, now]);
+
+                Invoke(window, "ConfigureChart_Click", new MenuItem { Tag = "total" }, new RoutedEventArgs());
+                Assert.Equal("All disks total written", Property<string>(window.ChartColorList.Items[0], "Label"));
+                Invoke(window, "ChartConfigClose_Click", window, new RoutedEventArgs());
+
+                Assert.Equal("Friendly", InvokePrivateStatic<string>("DiskChartLabel", new DiskInfo
+                {
+                    DiskId = "9", InstanceName = "9", FriendlyName = "Friendly",
+                }));
+                Assert.Equal("Disk 10", InvokePrivateStatic<string>("DiskChartLabel", new DiskInfo
+                {
+                    DiskId = "10", InstanceName = "10",
+                }));
+
+                var liveZoom = new System.Windows.Input.MouseWheelEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice,
+                    Environment.TickCount,
+                    120)
+                {
+                    RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent,
+                };
+                Invoke(window, "LiveDiskChart_MouseWheel", window.LiveDiskActivityChart, liveZoom);
+                Assert.Contains("last 10 min", window.LiveDiskCaption.Text);
+                typeof(MainWindow).GetField("_liveGraphWindowMinutes", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .SetValue(window, 1);
+                var liveBoundary = new System.Windows.Input.MouseWheelEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, 120)
+                { RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent };
+                Invoke(window, "LiveDiskChart_MouseWheel", window.LiveDiskActivityChart, liveBoundary);
+                Assert.False(liveBoundary.Handled);
+                typeof(MainWindow).GetField("_liveGraphWindowMinutes", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .SetValue(window, 999);
+                var liveBeyond = new System.Windows.Input.MouseWheelEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, -120)
+                { RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent };
+                Invoke(window, "LiveDiskChart_MouseWheel", window.LiveDiskActivityChart, liveBeyond);
+
+                var trendZoom = new System.Windows.Input.MouseWheelEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice,
+                    Environment.TickCount,
+                    -120)
+                {
+                    RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent,
+                };
+                Invoke(window, "TotalWrittenChart_MouseWheel", window.TotalWrittenTrendChart, trendZoom);
+                var zoomWindow = (TimeSpan?)typeof(MainWindow)
+                    .GetField("_trendZoomWindow", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .GetValue(window);
+                Assert.Equal(TimeSpan.FromHours(6), zoomWindow);
+
+                Invoke(window, "Range_Click", window.Btn24h, new RoutedEventArgs());
+                Invoke(window, "Range_Click", window.Btn30d, new RoutedEventArgs());
+                Invoke(window, "Range_Click", window.Btn1h, new RoutedEventArgs());
+                var trendBoundary = new System.Windows.Input.MouseWheelEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, 120)
+                { RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent };
+                Invoke(window, "TotalWrittenChart_MouseWheel", window.TotalWrittenTrendChart, trendBoundary);
+                Assert.False(trendBoundary.Handled);
+
+                typeof(MainWindow).GetField("_trendZoomWindow", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .SetValue(window, TimeSpan.FromDays(500));
+                typeof(MainWindow).GetField("_trendRange", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .SetValue(window, Enum.Parse(typeof(MainWindow).GetNestedType("TrendRangeKind", BindingFlags.NonPublic)!, "Zoom"));
+                var trendBeyond = new System.Windows.Input.MouseWheelEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, 120)
+                { RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent };
+                Invoke(window, "TotalWrittenChart_MouseWheel", window.TotalWrittenTrendChart, trendBeyond);
+
+                typeof(MainWindow).GetField("_trendRange", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .SetValue(window, Enum.Parse(typeof(MainWindow).GetNestedType("TrendRangeKind", BindingFlags.NonPublic)!, "Custom"));
+                window.TrendStartDate.SelectedDate = DateTime.Today;
+                window.TrendEndDate.SelectedDate = DateTime.Today.AddDays(-1);
+                var invalidTrend = new System.Windows.Input.MouseWheelEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, -120)
+                { RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent };
+                Invoke(window, "TotalWrittenChart_MouseWheel", window.TotalWrittenTrendChart, invalidTrend);
+                Assert.False(invalidTrend.Handled);
+
+                Assert.Equal(long.MaxValue, MainWindow.SaturatingAdd(long.MaxValue - 1, 2));
+                Assert.Equal(long.MinValue, MainWindow.SaturatingAdd(long.MinValue + 1, -2));
+                Assert.Equal(7, MainWindow.SaturatingAdd(5, 2));
+                Assert.Equal(3, MainWindow.SaturatingAdd(5, -2));
+                Assert.Equal("No drives expose lifetime-write totals.", MainWindow.FormatAggregateLifetime(0, 0, 0, 0));
+                Assert.DoesNotContain("read across", MainWindow.FormatAggregateLifetime(100, 1, 0, 0));
+                Assert.Contains("read across", MainWindow.FormatAggregateLifetime(100, 1, 50, 1));
+
+                window.DiskSelector.SelectedItem = ((IEnumerable)window.DiskSelector.ItemsSource).Cast<object>()
+                    .First(choice => choice.GetType().GetProperty("Disk")!.GetValue(choice) is DiskInfo);
+                Invoke(window, "LoadDisks");
+                window.DiskSelector.SelectedItem = null;
+                Invoke(window, "CustomTrendApply_Click", window, new RoutedEventArgs());
+
+                await Task.CompletedTask;
+            }
+            finally { window.ForceClose(); }
+        });
+    }
+
+    [Fact]
+    public void AllDisks_NoHistoryOrLifetimeTelemetry_RendersSafeEmptyState()
+    {
+        RunStaAsync(async () =>
+        {
+            EnsureApplication();
+            var repo = new MonitorRepository(_db);
+            repo.EnsureSchema();
+            repo.UpsertDisks([
+                new DiskInfo { DiskId = "0", InstanceName = "0", FriendlyName = "No SMART A", MediaType = DiskMediaType.Ssd },
+                new DiskInfo { DiskId = "1", InstanceName = "1", FriendlyName = "No SMART B", MediaType = DiskMediaType.Ssd },
+            ]);
+            using var config = new ConfigStore(_cfg);
+            var window = new MainWindow(repo, config, new UserSettingsStore(_userSettings));
+            try
+            {
+                object allDisks = ((IEnumerable)window.DiskSelector.ItemsSource).Cast<object>()
+                    .Single(choice => Property<object?>(choice, "Disk") is null);
+                window.DiskSelector.SelectedItem = allDisks;
+
+                Assert.Equal("No drives expose lifetime-write totals.", window.SmartWearLifeText.Text);
+                Assert.Equal("-", window.EnduranceAvgHour.Text);
+                Assert.Equal("-", window.EnduranceAvgDay.Text);
+                Assert.Equal("No samples", window.TrendChangeText.Text);
+                Assert.Contains("no samples", window.TrendCaption.Text);
+                await Task.CompletedTask;
+            }
+            finally { window.ForceClose(); }
+        });
+    }
+
+    [Fact]
+    public void ChartColorsAndCollapsedPanels_PersistAcrossWindows()
+    {
+        RunStaAsync(async () =>
+        {
+            EnsureApplication();
+            var repo = new MonitorRepository(_db);
+            repo.EnsureSchema();
+            repo.UpsertDisks([new DiskInfo
+            {
+                DiskId = "0", InstanceName = "0 C:", FriendlyName = "System SSD", Volumes = "C:",
+                MediaType = DiskMediaType.Ssd,
+            }]);
+            using var config = new ConfigStore(_cfg);
+            var settings = new UserSettingsStore(_userSettings);
+            var window = new MainWindow(repo, config, settings);
+            try
+            {
+                var menuItem = new MenuItem { Tag = "live" };
+                Invoke(window, "ConfigureChart_Click", menuItem, new RoutedEventArgs());
+                Assert.Equal(Visibility.Visible, window.ChartConfigOverlay.Visibility);
+                Assert.Equal(2, window.ChartColorList.Items.Count);
+
+                object firstRow = window.ChartColorList.Items[0];
+                Assert.Contains("read", Property<string>(firstRow, "Label"));
+                Assert.Contains("Choose color", Property<string>(firstRow, "ChooseAutomationName"));
+                Assert.NotNull(Property<Brush>(firstRow, "PreviewBrush"));
+                string originalHex = Property<string>(firstRow, "Hex");
+                firstRow.GetType().GetProperty("Hex")!.SetValue(firstRow, originalHex);
+                ((System.ComponentModel.INotifyPropertyChanged)firstRow).PropertyChanged += (_, _) => { };
+                firstRow.GetType().GetProperty("Hex")!.SetValue(firstRow, "#654321");
+                firstRow.GetType().GetProperty("Hex")!.SetValue(firstRow, "invalid");
+                Invoke(window, "ChartConfigSave_Click", window, new RoutedEventArgs());
+                Assert.Equal(Visibility.Visible, window.ChartConfigError.Visibility);
+                Invoke(window, "ChartConfigReset_Click", window, new RoutedEventArgs());
+                Assert.Equal(Visibility.Collapsed, window.ChartConfigError.Visibility);
+
+                var colorButton = new Button { DataContext = firstRow };
+                window.ChartColorPicker = _ => Color.FromRgb(0x12, 0x34, 0x56);
+                Invoke(window, "ChartColorChoose_Click", colorButton, new RoutedEventArgs());
+                Assert.Equal("#123456", Property<string>(firstRow, "Hex"));
+                window.ChartColorPicker = _ => null;
+                Invoke(window, "ChartColorChoose_Click", colorButton, new RoutedEventArgs());
+                Invoke(window, "ChartColorChoose_Click", window, new RoutedEventArgs());
+                Invoke(window, "ChartColorChoose_Click", new object(), new RoutedEventArgs());
+
+                Type chartColorRowType = firstRow.GetType();
+                Brush fallbackPreview = (Brush)chartColorRowType
+                    .GetMethod("Preview", BindingFlags.Static | BindingFlags.NonPublic)!
+                    .Invoke(null, ["invalid", Colors.Red])!;
+                Assert.Equal(Colors.Red, Assert.IsType<SolidColorBrush>(fallbackPreview).Color);
+                object rowWithoutSubscriber = Activator.CreateInstance(
+                    chartColorRowType, "key", "label", Colors.Blue, null)!;
+                chartColorRowType.GetMethod("OnPropertyChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(rowWithoutSubscriber, ["Hex"]);
+                bool notified = false;
+                ((System.ComponentModel.INotifyPropertyChanged)rowWithoutSubscriber).PropertyChanged += (_, _) => notified = true;
+                chartColorRowType.GetMethod("OnPropertyChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(rowWithoutSubscriber, ["Hex"]);
+                Assert.True(notified);
+
+                firstRow.GetType().GetProperty("Hex")!.SetValue(firstRow, "#123456");
+                Invoke(window, "ChartConfigSave_Click", window, new RoutedEventArgs());
+                Assert.Equal("#123456", settings.Current.ChartColors["live:0:read"]);
+
+                Invoke(window, "ConfigureChart_Click", new MenuItem { Tag = "total" }, new RoutedEventArgs());
+                Assert.Single(window.ChartColorList.Items);
+                Invoke(window, "ChartConfigClose_Click", window, new RoutedEventArgs());
+                Assert.Equal(Visibility.Collapsed, window.ChartConfigOverlay.Visibility);
+
+                Invoke(window, "ConfigureChart_Click", new MenuItem { Tag = "throughput" }, new RoutedEventArgs());
+                Assert.Equal(3, window.ChartColorList.Items.Count);
+                var space = new System.Windows.Input.KeyEventArgs(
+                    System.Windows.Input.Keyboard.PrimaryDevice,
+                    new FakePresentationSource(),
+                    Environment.TickCount,
+                    System.Windows.Input.Key.Space)
+                { RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent };
+                Invoke(window, "ChartConfigOverlay_PreviewKeyDown", window.ChartConfigOverlay, space);
+                Assert.False(space.Handled);
+                var escape = new System.Windows.Input.KeyEventArgs(
+                    System.Windows.Input.Keyboard.PrimaryDevice,
+                    new FakePresentationSource(),
+                    Environment.TickCount,
+                    System.Windows.Input.Key.Escape)
+                { RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent };
+                Invoke(window, "ChartConfigOverlay_PreviewKeyDown", window.ChartConfigOverlay, escape);
+                Assert.True(escape.Handled);
+                Assert.Equal(Visibility.Collapsed, window.ChartConfigOverlay.Visibility);
+
+                Invoke(window, "ConfigureChart_Click", new MenuItem { Tag = "unknown" }, new RoutedEventArgs());
+                Assert.Equal(Visibility.Collapsed, window.ChartConfigOverlay.Visibility);
+                Invoke(window, "ConfigureChart_Click", window, new RoutedEventArgs());
+                Invoke(window, "ConfigureChart_Click", new object(), new RoutedEventArgs());
+                window.DiskSelector.SelectedItem = null;
+                Invoke(window, "ConfigureChart_Click", new MenuItem { Tag = "live" }, new RoutedEventArgs());
+                Assert.Equal(Visibility.Collapsed, window.ChartConfigOverlay.Visibility);
+
+                window.SetPanelCollapsed("live-activity", true);
+                Assert.True(window.IsPanelCollapsed("live-activity"));
+                Assert.Contains("live-activity", settings.Current.CollapsedPanels);
+                window.SetPanelCollapsed("live-activity", false);
+                Assert.False(window.IsPanelCollapsed("live-activity"));
+                window.SetPanelCollapsed("missing", true);
+                Assert.False(window.IsPanelCollapsed("missing"));
+
+                var cards = (System.Collections.IDictionary)typeof(MainWindow)
+                    .GetField("_collapsibleCards", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .GetValue(window)!;
+                object liveCard = cards["live-activity"]!;
+                var chevron = Property<System.Windows.Shapes.Path>(liveCard, "Chevron");
+                Assert.IsType<Button>(chevron.Parent).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.True(window.IsPanelCollapsed("live-activity"));
+
+                window.InitializeCollapsiblePanel(new Border { Tag = "missing", Child = new TextBlock() }, new HashSet<string>());
+                window.InitializeCollapsiblePanel(new Border { Tag = "live-activity" }, new HashSet<string>());
+                window.InitializeCollapsiblePanel(new Border { Child = new TextBlock() }, new HashSet<string>());
+                object previousSecondary = window.Resources["TextSecondary"];
+                window.Resources["TextSecondary"] = "not a brush";
+                window.InitializeCollapsiblePanel(
+                    new Border { Tag = "summary-24h", Child = new TextBlock() },
+                    new HashSet<string> { "summary-24h" });
+                window.Resources["TextSecondary"] = previousSecondary;
+
+                MethodInfo logicalChildren = typeof(MainWindow)
+                    .GetMethod("FindLogicalChildren", BindingFlags.Static | BindingFlags.NonPublic)!
+                    .MakeGenericMethod(typeof(TextBlock));
+                var textRoot = new TextBlock { Text = "logical text" };
+                _ = ((IEnumerable)logicalChildren.Invoke(null, [textRoot])!).Cast<object>().ToList();
+            }
+            finally { window.ForceClose(); }
+
+            var restored = new MainWindow(repo, config, new UserSettingsStore(_userSettings));
+            try
+            {
+                Assert.True(restored.IsPanelCollapsed("live-activity"));
+                Assert.Equal("#123456", new UserSettingsStore(_userSettings).Current.ChartColors["live:0:read"]);
+                Invoke(restored, "ConfigureChart_Click", new MenuItem { Tag = "live" }, new RoutedEventArgs());
+                Assert.Equal("#123456", Property<string>(restored.ChartColorList.Items[0], "Hex"));
+                await Task.CompletedTask;
+            }
+            finally { restored.ForceClose(); }
+        });
+    }
+
+    [Fact]
+    public void EnduranceAlertSettings_EditDefaultsOverridesAndInAppSnooze()
+    {
+        RunStaAsync(async () =>
+        {
+            EnsureApplication();
+            var repo = new MonitorRepository(_db);
+            repo.EnsureSchema();
+            repo.UpsertDisks([new DiskInfo
+            {
+                DiskId = "0", InstanceName = "0 C:", FriendlyName = "System SSD", Volumes = "C:",
+                MediaType = DiskMediaType.Ssd,
+            }]);
+            repo.InsertAlert(new AlertRecord
+            {
+                TimestampUtc = DateTime.UtcNow,
+                Severity = AlertSeverity.Warning,
+                RuleKey = "endurance-health:0",
+                Title = "Endurance warning",
+                Message = "20% remaining",
+                Value = 20,
+                Threshold = 20,
+            });
+
+            using var config = new ConfigStore(_cfg);
+            var window = new MainWindow(repo, config, new UserSettingsStore(_userSettings));
+            try
+            {
+                object allDisks = ((IEnumerable)window.DiskSelector.ItemsSource).Cast<object>()
+                    .Single(choice => choice.GetType().GetProperty("Disk")!.GetValue(choice) is null);
+                object physicalDisk = ((IEnumerable)window.DiskSelector.ItemsSource).Cast<object>()
+                    .Single(choice => choice.GetType().GetProperty("Disk")!.GetValue(choice) is DiskInfo);
+
+                window.DiskSelector.SelectedItem = allDisks;
+                Assert.Equal(1, window.HeaderSeparator.Height);
+                Assert.Equal(34, window.TxtWarnHour.MinHeight);
+                Assert.IsType<System.Windows.Controls.Primitives.UniformGrid>(window.TxtWarnHour.Parent is DockPanel dock
+                    ? ((StackPanel)dock.Parent).Parent
+                    : null);
+                Assert.Equal(Visibility.Collapsed, window.ChkEnduranceAlertOverride.Visibility);
+                Assert.Equal("1", window.TxtEnduranceLifeValue.Text);
+                Assert.Equal("20", window.TxtEnduranceRemainingPercent.Text);
+                window.TxtEnduranceLifeValue.Text = "6";
+                window.EnduranceLifeUnitSelector.SelectedIndex = 1;
+                window.TxtEnduranceRemainingPercent.Text = "15";
+                Invoke(window, "Save_Click", window, new RoutedEventArgs());
+
+                Assert.Equal(6, config.Current.DefaultEnduranceAlert.RemainingLifeValue);
+                Assert.Equal(EnduranceAlertTimeUnit.Months, config.Current.DefaultEnduranceAlert.RemainingLifeUnit);
+                Assert.Equal(15, config.Current.DefaultEnduranceAlert.RemainingPercent);
+
+                window.DiskSelector.SelectedItem = physicalDisk;
+                Assert.False(window.ChkEnduranceAlertOverride.IsChecked);
+                Assert.False(window.TxtEnduranceLifeValue.IsEnabled);
+                window.ChkEnduranceAlertOverride.IsChecked = true;
+                window.TxtEnduranceLifeValue.Text = "45";
+                window.EnduranceLifeUnitSelector.SelectedIndex = 0;
+                window.TxtEnduranceRemainingPercent.Text = "5";
+                Invoke(window, "Save_Click", window, new RoutedEventArgs());
+
+                EnduranceAlertThreshold diskThreshold = config.Current.EffectiveEnduranceAlert("0");
+                Assert.Equal(45, diskThreshold.RemainingLifeValue);
+                Assert.Equal(EnduranceAlertTimeUnit.Days, diskThreshold.RemainingLifeUnit);
+                Assert.Equal(5, diskThreshold.RemainingPercent);
+
+                window.ChkEnduranceAlertOverride.IsChecked = false;
+                Invoke(window, "Save_Click", window, new RoutedEventArgs());
+                Assert.False(config.Current.DiskEnduranceAlertOverrides.ContainsKey("0"));
+                Assert.Equal(6, config.Current.EffectiveEnduranceAlert("0").RemainingLifeValue);
+
+                window.UpdateAlerts();
+                object alertRow = ((IEnumerable)window.AlertList.ItemsSource).Cast<object>().Single();
+                Assert.Equal(
+                    Visibility.Visible,
+                    alertRow.GetType().GetProperty("SnoozeVisibility")!.GetValue(alertRow));
+
+                System.Windows.Controls.ContextMenu? snoozeMenu = null;
+                window.AlertSnoozeMenuPresenter = (menu, _) => snoozeMenu = menu;
+                var snoozeButton = new Button { CommandParameter = alertRow };
+                Invoke(window, "SnoozeEnduranceAlert_Click", snoozeButton, new RoutedEventArgs());
+                Assert.NotNull(snoozeMenu);
+                Assert.Equal(SnoozeOptions.Choices.Length, snoozeMenu.Items.Count);
+                Assert.All(snoozeMenu.Items.Cast<MenuItem>(), item => Assert.NotNull(item.Tag));
+                Assert.IsType<MenuItem>(snoozeMenu.Items[0]).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                Assert.True(repo.IsAlertRuleSnoozed("endurance-health:0", DateTime.UtcNow));
+                Invoke(window, "SnoozeEnduranceAlert_Click", window, new RoutedEventArgs());
+                Invoke(window, "SnoozeEnduranceAlert_Click", new Button(), new RoutedEventArgs());
+                Invoke(window, "SnoozeEnduranceAlert_Click",
+                    new Button { CommandParameter = CreateAlertRow("0", true) }, new RoutedEventArgs());
+
+                Assert.False(MainWindow.TryParseEnduranceAlert(
+                    false, "1", EnduranceAlertTimeUnit.Years, false, "20", out _, out string validationError));
+                Assert.Contains("at least one", validationError);
+                AssertEnduranceAlertValidationBranches();
+
+                Invoke(window, "SelectEnduranceUnit", (EnduranceAlertTimeUnit)99);
+                Assert.Equal(2, window.EnduranceLifeUnitSelector.SelectedIndex);
+                window.EnduranceLifeUnitSelector.Items.Add("not an item");
+                window.EnduranceLifeUnitSelector.Items.Add(new ComboBoxItem());
+                Invoke(window, "SelectEnduranceUnit", (EnduranceAlertTimeUnit)99);
+                window.EnduranceLifeUnitSelector.SelectedItem = null;
+                Assert.Equal(
+                    EnduranceAlertTimeUnit.Years,
+                    typeof(MainWindow).GetMethod("SelectedEnduranceUnit", BindingFlags.Instance | BindingFlags.NonPublic)!
+                        .Invoke(window, null));
+                window.EnduranceLifeUnitSelector.SelectedItem = new ComboBoxItem { Tag = "invalid" };
+                Assert.Equal(
+                    EnduranceAlertTimeUnit.Years,
+                    typeof(MainWindow).GetMethod("SelectedEnduranceUnit", BindingFlags.Instance | BindingFlags.NonPublic)!
+                        .Invoke(window, null));
+                    Assert.Equal(EnduranceAlertTimeUnit.Years, MainWindow.ParseEnduranceUnit(null));
+                    Assert.Equal(EnduranceAlertTimeUnit.Years, MainWindow.ParseEnduranceUnit(new ComboBoxItem()));
+                    Assert.Equal(EnduranceAlertTimeUnit.Years, MainWindow.ParseEnduranceUnit(new ComboBoxItem { Tag = "invalid" }));
+                    Assert.Equal(EnduranceAlertTimeUnit.Months, MainWindow.ParseEnduranceUnit(new ComboBoxItem { Tag = "Months" }));
+
+                window.DiskSelector.SelectedItem = allDisks;
+                Invoke(window, "EnduranceAlertOverride_Changed", window, new RoutedEventArgs());
+                window.TxtEnduranceLifeValue.Text = "bad";
+                Invoke(window, "Save_Click", window, new RoutedEventArgs());
+                Assert.Contains("greater than 0", window.SaveStatus.Text);
+                await Task.CompletedTask;
+            }
+            finally { window.ForceClose(); }
+        });
+    }
+
+    [Fact]
     public void DashboardChangedPaths_RenderAndPersistRealWpfState()
     {
         RunStaAsync(async () =>
@@ -64,7 +607,7 @@ public sealed class MainWindowCoverageTests : IDisposable
             window.Resources["Caption"] = new Style(typeof(TextBlock));
             window.Resources["ToolButton"] = new Style(typeof(Button));
             object hddChoice = ((IEnumerable)window.DiskSelector.ItemsSource).Cast<object>()
-                .First(choice => ((DiskInfo)choice.GetType().GetProperty("Disk")!.GetValue(choice)!).DiskId == "2");
+                .First(choice => choice.GetType().GetProperty("Disk")!.GetValue(choice) is DiskInfo disk && disk.DiskId == "2");
             window.DiskSelector.SelectedItem = hddChoice;
             try
             {
@@ -517,7 +1060,7 @@ public sealed class MainWindowCoverageTests : IDisposable
 
                 const string onboardingKey = "synthetic-serper-onboarding-test-key";
                 object ssdChoice = ((IEnumerable)window.DiskSelector.ItemsSource).Cast<object>()
-                    .First(choice => ((DiskInfo)choice.GetType().GetProperty("Disk")!.GetValue(choice)!).DiskId == "8");
+                    .First(choice => choice.GetType().GetProperty("Disk")!.GetValue(choice) is DiskInfo disk && disk.DiskId == "8");
                 window.DiskSelector.SelectedItem = ssdChoice;
                 window.TbwSetupSerperKey.Password = "stale-before-reveal";
                 window.TbwSetupSerperKeyRevealButton.IsChecked = true;
@@ -566,6 +1109,7 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Assert.False(controller.PromptTbwOnlineSetupIfNeeded());
 
                 UpdateUserSettings(userSettings, settings => settings.SuppressTbwOnlineSetupPrompt = true);
+                controller.StartupPromptsRunner = () => { };
                 controller.Initialize();
                 var trayMenu = Assert.IsType<DarkTrayContextMenu>(
                     typeof(TrayController).GetField("_trayMenu", BindingFlags.Instance | BindingFlags.NonPublic)!
@@ -933,7 +1477,10 @@ public sealed class MainWindowCoverageTests : IDisposable
     {
         Type type = typeof(MainWindow).GetNestedType("AlertRow", BindingFlags.NonPublic)!;
         return Activator.CreateInstance(type, "title", "message", "time", Brushes.Red,
-            diskId, 2, canScan, canScan ? Visibility.Visible : Visibility.Collapsed, alertIds ?? new long[] { 1 })!;
+            $"disk-controller:{diskId}", diskId, 2, canScan,
+            canScan ? Visibility.Visible : Visibility.Collapsed,
+            Visibility.Collapsed,
+            alertIds ?? new long[] { 1 })!;
     }
 
     private static object CreateProcessRow(string processName)
@@ -959,6 +1506,42 @@ public sealed class MainWindowCoverageTests : IDisposable
 
     private static T Property<T>(object target, string name)
         => (T)target.GetType().GetProperty(name)!.GetValue(target)!;
+
+    private static T InvokePrivateStatic<T>(string name, params object[] args)
+        => (T)typeof(MainWindow).GetMethod(name, BindingFlags.Static | BindingFlags.NonPublic)!
+            .Invoke(null, args)!;
+
+    private static void AssertEnduranceAlertValidationBranches()
+    {
+        Assert.False(MainWindow.TryParseEnduranceAlert(
+            true, "bad", EnduranceAlertTimeUnit.Years, false, "20", out _, out _));
+        Assert.False(MainWindow.TryParseEnduranceAlert(
+            true, "NaN", EnduranceAlertTimeUnit.Years, false, "20", out _, out _));
+        Assert.False(MainWindow.TryParseEnduranceAlert(
+            true, "0", EnduranceAlertTimeUnit.Years, false, "20", out _, out _));
+        Assert.False(MainWindow.TryParseEnduranceAlert(
+            false, "-1", EnduranceAlertTimeUnit.Years, true, "bad", out _, out _));
+        Assert.False(MainWindow.TryParseEnduranceAlert(
+            false, "-1", EnduranceAlertTimeUnit.Years, true, "NaN", out _, out _));
+        Assert.False(MainWindow.TryParseEnduranceAlert(
+            false, "-1", EnduranceAlertTimeUnit.Years, true, "-1", out _, out _));
+        Assert.False(MainWindow.TryParseEnduranceAlert(
+            false, "-1", EnduranceAlertTimeUnit.Years, true, "101", out _, out _));
+        Assert.True(MainWindow.TryParseEnduranceAlert(
+            false, "-1", EnduranceAlertTimeUnit.Years, true, "10", out EnduranceAlertThreshold percentOnly, out _));
+        Assert.Equal(0, percentOnly.RemainingLifeValue);
+        Assert.True(MainWindow.TryParseEnduranceAlert(
+            true, "2", EnduranceAlertTimeUnit.Months, false, "-1", out EnduranceAlertThreshold lifeOnly, out _));
+        Assert.Equal(0, lifeOnly.RemainingPercent);
+
+        Assert.False(MainWindow.TryParseChartColor(null, out _));
+        Assert.False(MainWindow.TryParseChartColor("#123", out _));
+        Assert.False(MainWindow.TryParseChartColor("#GG0000", out _));
+        Assert.False(MainWindow.TryParseChartColor("#00GG00", out _));
+        Assert.False(MainWindow.TryParseChartColor("#0000GG", out _));
+        Assert.True(MainWindow.TryParseChartColor("  #abcdef ", out Color parsed));
+        Assert.Equal("#ABCDEF", MainWindow.FormatChartColor(parsed));
+    }
 
     private sealed class FakePresentationSource : PresentationSource
     {
