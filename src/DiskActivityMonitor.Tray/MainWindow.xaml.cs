@@ -3340,7 +3340,14 @@ public partial class MainWindow : Window
     }
 
     private void LiveDiskChart_MouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
+        => HandleLiveDiskChartWheel(e, System.Windows.Input.Keyboard.Modifiers);
+
+    internal void HandleLiveDiskChartWheel(
+        System.Windows.Input.MouseWheelEventArgs e,
+        System.Windows.Input.ModifierKeys modifiers)
     {
+        if (!IsChartZoomGesture(modifiers)) return;
+
         int maximum = Math.Clamp(_config.Current.LiveGraphRetentionMinutes, 1, 120);
         int[] steps = [1, 2, 5, 10, 15, 30, 60, 120];
         int[] available = steps.Where(value => value <= maximum).Append(maximum).Distinct().Order().ToArray();
@@ -3354,7 +3361,14 @@ public partial class MainWindow : Window
     }
 
     private void TotalWrittenChart_MouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
+        => HandleTotalWrittenChartWheel(e, System.Windows.Input.Keyboard.Modifiers);
+
+    internal void HandleTotalWrittenChartWheel(
+        System.Windows.Input.MouseWheelEventArgs e,
+        System.Windows.Input.ModifierKeys modifiers)
     {
+        if (!IsChartZoomGesture(modifiers)) return;
+
         TimeSpan[] steps =
         [
             TimeSpan.FromHours(1),
@@ -3388,6 +3402,9 @@ public partial class MainWindow : Window
         if (disks.Count > 0) UpdateChart(disks);
         e.Handled = true;
     }
+
+    internal static bool IsChartZoomGesture(System.Windows.Input.ModifierKeys modifiers)
+        => (modifiers & System.Windows.Input.ModifierKeys.Control) != 0;
 
     private System.Windows.Rect? _restoreBounds;
 

@@ -202,20 +202,25 @@ public sealed class MainWindowCoverageTests : IDisposable
                     RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent,
                 };
                 Invoke(window, "LiveDiskChart_MouseWheel", window.LiveDiskActivityChart, liveZoom);
+                Assert.False(liveZoom.Handled);
+                Assert.DoesNotContain("last 10 min", window.LiveDiskCaption.Text);
+                Assert.False(MainWindow.IsChartZoomGesture(System.Windows.Input.ModifierKeys.None));
+                Assert.True(MainWindow.IsChartZoomGesture(System.Windows.Input.ModifierKeys.Control));
+                window.HandleLiveDiskChartWheel(liveZoom, System.Windows.Input.ModifierKeys.Control);
                 Assert.Contains("last 10 min", window.LiveDiskCaption.Text);
                 typeof(MainWindow).GetField("_liveGraphWindowMinutes", BindingFlags.Instance | BindingFlags.NonPublic)!
                     .SetValue(window, 1);
                 var liveBoundary = new System.Windows.Input.MouseWheelEventArgs(
                     System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, 120)
                 { RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent };
-                Invoke(window, "LiveDiskChart_MouseWheel", window.LiveDiskActivityChart, liveBoundary);
+                window.HandleLiveDiskChartWheel(liveBoundary, System.Windows.Input.ModifierKeys.Control);
                 Assert.False(liveBoundary.Handled);
                 typeof(MainWindow).GetField("_liveGraphWindowMinutes", BindingFlags.Instance | BindingFlags.NonPublic)!
                     .SetValue(window, 999);
                 var liveBeyond = new System.Windows.Input.MouseWheelEventArgs(
                     System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, -120)
                 { RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent };
-                Invoke(window, "LiveDiskChart_MouseWheel", window.LiveDiskActivityChart, liveBeyond);
+                window.HandleLiveDiskChartWheel(liveBeyond, System.Windows.Input.ModifierKeys.Control);
 
                 var trendZoom = new System.Windows.Input.MouseWheelEventArgs(
                     System.Windows.Input.Mouse.PrimaryDevice,
@@ -225,6 +230,11 @@ public sealed class MainWindowCoverageTests : IDisposable
                     RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent,
                 };
                 Invoke(window, "TotalWrittenChart_MouseWheel", window.TotalWrittenTrendChart, trendZoom);
+                Assert.False(trendZoom.Handled);
+                Assert.Null(typeof(MainWindow)
+                    .GetField("_trendZoomWindow", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .GetValue(window));
+                window.HandleTotalWrittenChartWheel(trendZoom, System.Windows.Input.ModifierKeys.Control);
                 var zoomWindow = (TimeSpan?)typeof(MainWindow)
                     .GetField("_trendZoomWindow", BindingFlags.Instance | BindingFlags.NonPublic)!
                     .GetValue(window);
@@ -236,7 +246,7 @@ public sealed class MainWindowCoverageTests : IDisposable
                 var trendBoundary = new System.Windows.Input.MouseWheelEventArgs(
                     System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, 120)
                 { RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent };
-                Invoke(window, "TotalWrittenChart_MouseWheel", window.TotalWrittenTrendChart, trendBoundary);
+                window.HandleTotalWrittenChartWheel(trendBoundary, System.Windows.Input.ModifierKeys.Control);
                 Assert.False(trendBoundary.Handled);
 
                 typeof(MainWindow).GetField("_trendZoomWindow", BindingFlags.Instance | BindingFlags.NonPublic)!
@@ -246,7 +256,7 @@ public sealed class MainWindowCoverageTests : IDisposable
                 var trendBeyond = new System.Windows.Input.MouseWheelEventArgs(
                     System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, 120)
                 { RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent };
-                Invoke(window, "TotalWrittenChart_MouseWheel", window.TotalWrittenTrendChart, trendBeyond);
+                window.HandleTotalWrittenChartWheel(trendBeyond, System.Windows.Input.ModifierKeys.Control);
 
                 typeof(MainWindow).GetField("_trendRange", BindingFlags.Instance | BindingFlags.NonPublic)!
                     .SetValue(window, Enum.Parse(typeof(MainWindow).GetNestedType("TrendRangeKind", BindingFlags.NonPublic)!, "Custom"));
@@ -255,7 +265,7 @@ public sealed class MainWindowCoverageTests : IDisposable
                 var invalidTrend = new System.Windows.Input.MouseWheelEventArgs(
                     System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, -120)
                 { RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent };
-                Invoke(window, "TotalWrittenChart_MouseWheel", window.TotalWrittenTrendChart, invalidTrend);
+                window.HandleTotalWrittenChartWheel(invalidTrend, System.Windows.Input.ModifierKeys.Control);
                 Assert.False(invalidTrend.Handled);
 
                 Assert.Equal(long.MaxValue, MainWindow.SaturatingAdd(long.MaxValue - 1, 2));
