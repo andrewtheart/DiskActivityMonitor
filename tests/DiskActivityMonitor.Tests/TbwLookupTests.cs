@@ -251,7 +251,7 @@ public class TbwLookupTests
         Assert.Equal(180, Assert.Single(gb).TbwTerabytes);
     }
 
-    [Fact]
+    [LiveTbwFact]
     public async Task LookupAsync_LiveSerperAndLocalModel_ProducesVerifiedCandidate()
     {
         var settings = new DiskActivityMonitor.Core.Configuration.UserSettings
@@ -562,4 +562,18 @@ public class TbwLookupTests
     [InlineData("VMware SVGA 3D", "PCI\\VEN_15AD", false)]              // virtual adapter
     public void IsHardwareAccelerator_ClassifiesDevices(string desc, string deviceId, bool expected)
         => Assert.Equal(expected, HardwareCapabilityDetector.IsHardwareAccelerator(desc, deviceId));
+}
+
+public sealed class LiveTbwFactAttribute : FactAttribute
+{
+    public LiveTbwFactAttribute()
+    {
+        if (!string.Equals(
+                Environment.GetEnvironmentVariable("DAM_RUN_LIVE_TBW_TESTS"),
+                "1",
+                StringComparison.Ordinal))
+        {
+            Skip = "Set DAM_RUN_LIVE_TBW_TESTS=1 to run the live Serper and Foundry Local integration test.";
+        }
+    }
 }
