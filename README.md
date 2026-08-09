@@ -310,6 +310,8 @@ dam.ps1                          CLI convenience wrapper
 
 - For usage and troubleshooting, see the comprehensive [HELP.md](HELP.md) guide. The tray app
   also compiles it to HTML and displays it from the top **?** button.
+- For the exact Windows sources, database tables, and calculations behind every activity card
+  and graph, see [docs/DATA-SOURCES.md](docs/DATA-SOURCES.md).
 - For the threat model, implemented controls, validation evidence, known limitations, and
   roadmap, see [docs/security/security.md](docs/security/security.md).
 
