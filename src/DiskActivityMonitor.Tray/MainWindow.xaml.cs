@@ -3347,6 +3347,7 @@ public partial class MainWindow : Window
         System.Windows.Input.ModifierKeys modifiers)
     {
         if (!IsChartZoomGesture(modifiers)) return;
+        e.Handled = true;
 
         int maximum = Math.Clamp(_config.Current.LiveGraphRetentionMinutes, 1, 120);
         int[] steps = [1, 2, 5, 10, 15, 30, 60, 120];
@@ -3357,7 +3358,6 @@ public partial class MainWindow : Window
         if (available[next] == _liveGraphWindowMinutes) return;
         _liveGraphWindowMinutes = available[next];
         RefreshLiveDiskActivity();
-        e.Handled = true;
     }
 
     private void TotalWrittenChart_MouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
@@ -3368,6 +3368,7 @@ public partial class MainWindow : Window
         System.Windows.Input.ModifierKeys modifiers)
     {
         if (!IsChartZoomGesture(modifiers)) return;
+        e.Handled = true;
 
         TimeSpan[] steps =
         [
@@ -3400,7 +3401,6 @@ public partial class MainWindow : Window
         TrendCustomRangePanel.Visibility = Visibility.Collapsed;
         IReadOnlyList<DiskInfo> disks = SelectedDisks;
         if (disks.Count > 0) UpdateChart(disks);
-        e.Handled = true;
     }
 
     internal static bool IsChartZoomGesture(System.Windows.Input.ModifierKeys modifiers)

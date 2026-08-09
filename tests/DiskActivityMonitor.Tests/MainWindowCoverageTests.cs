@@ -201,7 +201,7 @@ public sealed class MainWindowCoverageTests : IDisposable
                 {
                     RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent,
                 };
-                Invoke(window, "LiveDiskChart_MouseWheel", window.LiveDiskActivityChart, liveZoom);
+                window.HandleLiveDiskChartWheel(liveZoom, System.Windows.Input.ModifierKeys.None);
                 Assert.False(liveZoom.Handled);
                 Assert.DoesNotContain("last 10 min", window.LiveDiskCaption.Text);
                 Assert.False(MainWindow.IsChartZoomGesture(System.Windows.Input.ModifierKeys.None));
@@ -214,13 +214,14 @@ public sealed class MainWindowCoverageTests : IDisposable
                     System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, 120)
                 { RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent };
                 window.HandleLiveDiskChartWheel(liveBoundary, System.Windows.Input.ModifierKeys.Control);
-                Assert.False(liveBoundary.Handled);
+                Assert.True(liveBoundary.Handled);
                 typeof(MainWindow).GetField("_liveGraphWindowMinutes", BindingFlags.Instance | BindingFlags.NonPublic)!
                     .SetValue(window, 999);
                 var liveBeyond = new System.Windows.Input.MouseWheelEventArgs(
                     System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, -120)
                 { RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent };
                 window.HandleLiveDiskChartWheel(liveBeyond, System.Windows.Input.ModifierKeys.Control);
+                Assert.True(liveBeyond.Handled);
 
                 var trendZoom = new System.Windows.Input.MouseWheelEventArgs(
                     System.Windows.Input.Mouse.PrimaryDevice,
@@ -229,7 +230,7 @@ public sealed class MainWindowCoverageTests : IDisposable
                 {
                     RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent,
                 };
-                Invoke(window, "TotalWrittenChart_MouseWheel", window.TotalWrittenTrendChart, trendZoom);
+                window.HandleTotalWrittenChartWheel(trendZoom, System.Windows.Input.ModifierKeys.None);
                 Assert.False(trendZoom.Handled);
                 Assert.Null(typeof(MainWindow)
                     .GetField("_trendZoomWindow", BindingFlags.Instance | BindingFlags.NonPublic)!
@@ -247,7 +248,7 @@ public sealed class MainWindowCoverageTests : IDisposable
                     System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, 120)
                 { RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent };
                 window.HandleTotalWrittenChartWheel(trendBoundary, System.Windows.Input.ModifierKeys.Control);
-                Assert.False(trendBoundary.Handled);
+                Assert.True(trendBoundary.Handled);
 
                 typeof(MainWindow).GetField("_trendZoomWindow", BindingFlags.Instance | BindingFlags.NonPublic)!
                     .SetValue(window, TimeSpan.FromDays(500));
@@ -257,6 +258,7 @@ public sealed class MainWindowCoverageTests : IDisposable
                     System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, 120)
                 { RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent };
                 window.HandleTotalWrittenChartWheel(trendBeyond, System.Windows.Input.ModifierKeys.Control);
+                Assert.True(trendBeyond.Handled);
 
                 typeof(MainWindow).GetField("_trendRange", BindingFlags.Instance | BindingFlags.NonPublic)!
                     .SetValue(window, Enum.Parse(typeof(MainWindow).GetNestedType("TrendRangeKind", BindingFlags.NonPublic)!, "Custom"));
@@ -266,7 +268,7 @@ public sealed class MainWindowCoverageTests : IDisposable
                     System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, -120)
                 { RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent };
                 window.HandleTotalWrittenChartWheel(invalidTrend, System.Windows.Input.ModifierKeys.Control);
-                Assert.False(invalidTrend.Handled);
+                Assert.True(invalidTrend.Handled);
 
                 Assert.Equal(long.MaxValue, MainWindow.SaturatingAdd(long.MaxValue - 1, 2));
                 Assert.Equal(long.MinValue, MainWindow.SaturatingAdd(long.MinValue + 1, -2));
