@@ -143,6 +143,7 @@ public sealed class ConfigStore : IDisposable
         FileTargetMinKbPerMinute = source.FileTargetMinKbPerMinute,
         FileTargetRetentionDays = source.FileTargetRetentionDays,
         FileTargetTrackingLimit = source.FileTargetTrackingLimit,
+        FileTargetPageSize = Math.Clamp(source.FileTargetPageSize, 25, 1000),
         DatabaseSizeWarnGb = source.DatabaseSizeWarnGb,
         DatabaseSizeAlertCooldownHours = source.DatabaseSizeAlertCooldownHours,
         BinaryExtensions = source.BinaryExtensions,
@@ -169,6 +170,7 @@ public sealed class ConfigStore : IDisposable
         HighCoveragePercent = double.IsFinite(source.HighCoveragePercent)
             ? Math.Clamp(source.HighCoveragePercent, 1, 100)
             : 90,
+        EnduranceCoverageWindowDays = Math.Clamp(source.EnduranceCoverageWindowDays, 1, 365),
         SsdWearWarnPercent = source.SsdWearWarnPercent,
         DefaultEnduranceAlert = AppConfig.CloneEnduranceAlert(source.DefaultEnduranceAlert),
         DiskEnduranceAlertOverrides = source.DiskEnduranceAlertOverrides is null

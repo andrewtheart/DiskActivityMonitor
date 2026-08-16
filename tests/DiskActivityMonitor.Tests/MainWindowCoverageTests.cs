@@ -808,6 +808,7 @@ public sealed class MainWindowCoverageTests : IDisposable
                 window.TxtInterval.Text = "999";
                 window.TxtRefresh.Text = "9999";
                 window.TxtHighCoveragePercent.Text = "92.5";
+                window.TxtEnduranceCoverageWindowDays.Text = "500";
                 window.RadTbwRange.IsChecked = true;
                 window.TxtTbw.Text = "900";
                 window.TxtTbwUpper.Text = "1200";
@@ -818,6 +819,7 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Assert.Equal(60, config.Current.SampleIntervalSeconds);
                 Assert.False(config.Current.EnableControllerErrorAlerts);
                 Assert.Equal(92.5, config.Current.HighCoveragePercent);
+                Assert.Equal(365, config.Current.EnduranceCoverageWindowDays);
                 Assert.Equal(900, config.Current.DiskTbwRatings["2"]);
                 Assert.Equal(1200, config.Current.DiskTbwRatingsUpper["2"]);
 
@@ -1290,7 +1292,8 @@ public sealed class MainWindowCoverageTests : IDisposable
 
                 Invoke(window, "UpdateEndurance", repo.GetDisks().Single(), coverageEnd);
                 Assert.Contains("Projection withheld", window.WearSub.Text);
-                Assert.Contains("withheld at", window.EnduranceProjSub.Text);
+                Assert.Contains("Monitoring coverage since collection began", window.EnduranceProjSub.Text);
+                Assert.Contains("of 4 min", window.EnduranceProjSub.Text);
                 Assert.Equal("~9.44%", window.SmartWearValue.Text);
                 Assert.Contains("drive SMART reports 2% used", window.SmartWearText.Text);
 
@@ -1802,7 +1805,9 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Assert.NotEqual("-", window.EnduranceProjValue.Text);
                 Assert.Contains("reaches 150 to 600 TBW", window.EnduranceProjSub.Text);
                 Assert.Contains("18.63 GB read", window.SmartWearLifeText.Text);
-                Assert.Contains("Recent monitoring coverage: 100%", window.EnduranceConsumedText.Text);
+                Assert.Contains("Rolling 7-day monitoring coverage: 100%", window.EnduranceConsumedText.Text);
+                Assert.Contains("10,080 of 10,080 min", window.EnduranceConsumedText.Text);
+                Assert.Contains("enter or leave the rolling window", window.EnduranceConsumedText.Text);
                 Assert.NotEqual("-", window.EnduranceAvgHour.Text);
 
                 foreach (System.Windows.Controls.Primitives.ToggleButton button in new[] { window.TpBtn1h, window.TpBtn24h, window.TpBtn7d, window.TpBtn30d })

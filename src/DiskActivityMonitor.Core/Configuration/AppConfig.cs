@@ -67,6 +67,9 @@ public sealed class AppConfig
     /// <summary>Maximum number of distinct files tracked in memory between samples.</summary>
     public int FileTargetTrackingLimit { get; set; } = 20000;
 
+    /// <summary>Process/file rows appended per page in the all-disk file activity view.</summary>
+    public int FileTargetPageSize { get; set; } = 100;
+
     /// <summary>Warn when the monitoring database grows past this many gigabytes.</summary>
     public double DatabaseSizeWarnGb { get; set; } = 1;
 
@@ -167,6 +170,9 @@ public sealed class AppConfig
 
     /// <summary>Minimum recent monitoring coverage required for calendar-rate and endurance projections.</summary>
     public double HighCoveragePercent { get; set; } = 90;
+
+    /// <summary>Rolling history window used to assess endurance projection coverage, in days.</summary>
+    public int EnduranceCoverageWindowDays { get; set; } = 7;
 
     /// <summary>Warn when a drive's SMART-reported endurance used (percentage) reaches this level.</summary>
     public double SsdWearWarnPercent { get; set; } = 90;

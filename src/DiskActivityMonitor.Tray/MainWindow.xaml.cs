@@ -128,6 +128,34 @@ public partial class MainWindow : Window
         public string AutomationName => $"{Name}, {WriteText} written. Show files";
     }
 
+    private sealed class FileTargetDiskFilterRow : INotifyPropertyChanged
+    {
+        private bool _isSelected = true;
+
+        public FileTargetDiskFilterRow(DiskInfo disk)
+        {
+            Disk = disk;
+            Label = disk.DisplayName;
+        }
+
+        public DiskInfo Disk { get; }
+        public string Label { get; }
+        public string AutomationName => $"Include {Label} in file activity";
+
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set
+            {
+                if (_isSelected == value) return;
+                _isSelected = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+            }
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+    }
+
     /// <summary>One file inside the per-process drill-down.</summary>
     private sealed record FileTargetRow(
         string Path, string FileName, string KindLabel, string WriteText, double BarWidth, string Explanation)
@@ -141,8 +169,12 @@ public partial class MainWindow : Window
 
         public string TailAutomationName => $"Live tail {FileName}";
         public string CopyAutomationName => $"Copy full path for {FileName}";
+        public string FolderAutomationName => $"Open containing folder for {FileName}";
         public string TraceAutomationName => $"Find processes holding {FileName} open";
         public string DeleteAutomationName => $"Delete {FileName}";
+        public bool CanOpenContainingFolder { get; init; }
+        public string ContextLabel { get; init; } = "";
+        public Visibility ContextVisibility { get; init; } = Visibility.Collapsed;
     }
 
     /// <summary>One horizontal bar in the dialog's file-type breakdown.</summary>
@@ -711,6 +743,22 @@ public partial class MainWindow : Window
         return coverage + $" Calendar average: {FormatMbps(calendarMbps)} MB/s.";
     }
 
+    internal static string FormatRecentCoverage(
+        MonitoringRateStats rates,
+        int configuredWindowDays,
+        bool explainRollingWindow = false)
+    {
+        int windowDays = Math.Clamp(configuredWindowDays, 1, 365);
+        bool rollingWindow = rates.RequestedMinutes >= windowDays * 24 * 60;
+        string scope = rollingWindow
+            ? $"Rolling {windowDays}-day monitoring coverage"
+            : "Monitoring coverage since collection began";
+        string result = $"{scope}: {rates.CoveragePercent:0.#}% ({rates.MonitoredMinutes:N0} of {rates.RequestedMinutes:N0} min).";
+        return explainRollingWindow && rollingWindow
+            ? result + " It changes only as monitored or missing minutes enter or leave the rolling window."
+            : result;
+    }
+
     private static string FormatMbps(double mbps) => mbps switch
     {
         >= 100 => mbps.ToString("0"),
@@ -932,7 +980,8 @@ public partial class MainWindow : Window
         MonitoringRateStats recentRate = _repo.GetRecentDiskWriteRate(
             disk.DiskId,
             nowUtc,
-            cfg.HighCoveragePercent);
+            cfg.HighCoveragePercent,
+            cfg.EnduranceCoverageWindowDays);
         double avgPerDay = recentRate.MonitoredBytesPerHour * 24.0;
         double avgPerHour = avgPerDay / 24.0;
         double avgPerWeek = avgPerDay * 7.0;
@@ -975,7 +1024,7 @@ public partial class MainWindow : Window
             WearMetric.Text = "-";
             WearSub.Text = recentRate.MonitoredMinutes == 0
                 ? $"Using {tbwBasisLabel}. Collecting data to project lifespan."
-                : $"Projection withheld at {recentRate.CoveragePercent:0.#}% monitoring coverage (requires {cfg.HighCoveragePercent:0.#}%).";
+                : $"Projection withheld. {FormatRecentCoverage(recentRate, cfg.EnduranceCoverageWindowDays)} Requires {cfg.HighCoveragePercent:0.#}%.";
         }
 
         // Endurance panel.
@@ -1040,7 +1089,7 @@ public partial class MainWindow : Window
             EnduranceProjValue.Text = "-";
             EnduranceProjSub.Text = recentRate.MonitoredMinutes == 0
                 ? "collecting data to project a lifespan"
-                : $"withheld at {recentRate.CoveragePercent:0.#}% coverage; requires {cfg.HighCoveragePercent:0.#}%";
+                : $"withheld; {FormatRecentCoverage(recentRate, cfg.EnduranceCoverageWindowDays)} Requires {cfg.HighCoveragePercent:0.#}%.";
         }
 
         // Averages.
@@ -1058,7 +1107,7 @@ public partial class MainWindow : Window
         }
         string sinceLine = earliest is null
             ? "No history recorded yet."
-            : $"Recorded by this app since {LocalTimeDisplay.FormatUtcWithZone(earliest.Value, "MMM d")}: {ByteFormat.Humanize(observedBytes)} written. Recent monitoring coverage: {recentRate.CoveragePercent:0.#}%; averages are per monitored time.";
+            : $"Recorded by this app since {LocalTimeDisplay.FormatUtcWithZone(earliest.Value, "MMM d")}: {ByteFormat.Humanize(observedBytes)} written. {FormatRecentCoverage(recentRate, cfg.EnduranceCoverageWindowDays, explainRollingWindow: true)} Averages are per monitored time.";
         EnduranceConsumedText.Text = lifeLine + sinceLine;
     }
 
@@ -1450,6 +1499,7 @@ public partial class MainWindow : Window
         var endUtc = new DateTime(nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, nowUtc.Minute, 0, DateTimeKind.Utc);
         var startUtc = endUtc - _processWindow;
 
+        _fileTargetsAllProcesses = false;
         _fileTargetsProcess = processName;
         _fileTargetsWindowStartUtc = startUtc;
         _fileTargetsWindowEndUtc = endUtc;
@@ -1478,6 +1528,7 @@ public partial class MainWindow : Window
                 FileTargetNormalizer.ExplainTarget(t.Path, t.Kind))
             {
                 CanTail = !binaryPolicy.IsBinary(t.Path),
+                CanOpenContainingFolder = IsExplorerFilePath(t.Path),
             })
             .ToList();
 
@@ -1487,8 +1538,219 @@ public partial class MainWindow : Window
 
         UpdateFileTargetsAnalytics(processName, startUtc, endUtc, processWrite);
 
+        FileTargetsDiskFilterBorder.Visibility = Visibility.Collapsed;
+        BtnFileTargetsShowMore.Visibility = Visibility.Collapsed;
+        BtnTraceProcess.Visibility = Visibility.Visible;
         FileTargetsOverlay.Visibility = Visibility.Visible;
         FileTargetsOverlay.Focus();
+    }
+
+    private void ShowAllFileTargets_Click(object sender, RoutedEventArgs e)
+        => ShowAllFileTargets();
+
+    /// <summary>Opens tracked file activity across every disk, with all disk filters selected.</summary>
+    internal void ShowAllFileTargets()
+    {
+        var nowUtc = DateTime.UtcNow;
+        _fileTargetsWindowEndUtc = new DateTime(
+            nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, nowUtc.Minute, 0, DateTimeKind.Utc);
+        _fileTargetsWindowStartUtc = _fileTargetsWindowEndUtc - _processWindow;
+        _fileTargetsAllProcesses = true;
+        _fileTargetsProcess = "";
+
+        _fileTargetDiskFilters = _repo.GetDisks()
+            .OrderByDescending(disk => disk.IsSsd)
+            .ThenBy(disk => disk.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .Select(disk => new FileTargetDiskFilterRow(disk))
+            .ToList();
+        FileTargetsDiskFilterList.ItemsSource = _fileTargetDiskFilters;
+
+        RefreshAllFileTargets();
+        FileTargetsDiskFilterBorder.Visibility = Visibility.Visible;
+        BtnTraceProcess.Visibility = Visibility.Collapsed;
+        FileTargetsOverlay.Visibility = Visibility.Visible;
+        FileTargetsOverlay.Focus();
+    }
+
+    private void FileTargetsDiskFilter_Click(object sender, RoutedEventArgs e)
+        => RefreshAllFileTargets();
+
+    private void FileTargetsSelectAllDisks_Click(object sender, RoutedEventArgs e)
+    {
+        foreach (FileTargetDiskFilterRow row in _fileTargetDiskFilters)
+            row.IsSelected = true;
+        RefreshAllFileTargets();
+    }
+
+    private void FileTargetsShowMore_Click(object sender, RoutedEventArgs e)
+        => LoadNextAllFileTargetPage();
+
+    /// <summary>Resets the aggregate view to its first bounded page for the selected disks.</summary>
+    internal void RefreshAllFileTargets()
+    {
+        if (!_fileTargetsAllProcesses) return;
+
+        IReadOnlyList<FileTargetDiskFilterRow> selected = _fileTargetDiskFilters
+            .Where(row => row.IsSelected)
+            .ToList();
+        _fileTargetSelectedVolumeRoots = SelectedFileTargetVolumeRoots(selected);
+        _allFileTargetsTrackedWrite = _repo.GetFileTargetWriteTotal(
+            _fileTargetsWindowStartUtc,
+            _fileTargetsWindowEndUtc,
+            _fileTargetSelectedVolumeRoots);
+
+        _allFileTargetRows.Clear();
+        _loadedAllFileTargets.Clear();
+        _allFileTargetMaxWrite = 1;
+        _allFileTargetsHasMore = false;
+        FileTargetsList.ItemsSource = _allFileTargetRows;
+
+        FileTargetsTitle.Text = FileTargetScopeTitle(selected, _fileTargetDiskFilters.Count);
+        FileTargetsSubtitle.Text = $"{ProcessRangeLabel()}  \u00b7  {ByteFormat.Humanize(_allFileTargetsTrackedWrite)} of tracked logical write requests";
+        FileTargetsDiskFilterStatus.Text = FileTargetDiskFilterStatus(selected.Count, _fileTargetDiskFilters.Count);
+        FileTargetsSelectAllDisksButton.IsEnabled = selected.Count < _fileTargetDiskFilters.Count;
+
+        FileTargetsNote.Text =
+            "This view aggregates tracked logical file-write requests across processes. Disk membership is derived from normalized drive-letter paths; network, unmounted, and aggregate paths that cannot be assigned to a disk are excluded.";
+        FileTargetsNoteBorder.Visibility = Visibility.Visible;
+
+        LoadNextAllFileTargetPage();
+
+        UpdateAllFileTargetsAnalytics(
+            _fileTargetsWindowStartUtc,
+            _fileTargetsWindowEndUtc,
+            _fileTargetSelectedVolumeRoots,
+            _loadedAllFileTargets,
+            _allFileTargetsTrackedWrite);
+    }
+
+    private void LoadNextAllFileTargetPage()
+    {
+        if (!_fileTargetsAllProcesses) return;
+
+        int pageSize = _config.Current.FileTargetPageSize;
+        int offset = _loadedAllFileTargets.Count;
+        var pageWithSentinel = _repo.GetTopFileTargets(
+            _fileTargetsWindowStartUtc,
+            _fileTargetsWindowEndUtc,
+            _fileTargetSelectedVolumeRoots,
+            pageSize + 1,
+            offset);
+        _allFileTargetsHasMore = pageWithSentinel.Count > pageSize;
+        var page = pageWithSentinel.Take(pageSize).ToList();
+
+        if (offset == 0 && page.Count > 0)
+            _allFileTargetMaxWrite = Math.Max(1, page[0].WriteBytes);
+
+        var binaryPolicy = new BinaryExtensionPolicy(_config.Current.BinaryExtensions);
+        const double barArea = 660;
+        IReadOnlyList<DiskInfo> allDisks = _fileTargetDiskFilters.Select(row => row.Disk).ToList();
+        foreach (ProcessFileTargetRank target in page)
+        {
+            _loadedAllFileTargets.Add(target);
+            _allFileTargetRows.Add(new FileTargetRow(
+                target.Path,
+                FileNameOf(target.Path),
+                FileTargetNormalizer.Label(target.Kind),
+                ByteFormat.Humanize(target.WriteBytes),
+                Math.Max(2, target.WriteBytes / _allFileTargetMaxWrite * barArea),
+                FileTargetNormalizer.ExplainTarget(target.Path, target.Kind))
+            {
+                CanTail = !binaryPolicy.IsBinary(target.Path),
+                CanOpenContainingFolder = IsExplorerFilePath(target.Path),
+                ContextLabel = $"{target.ProcessName}  \u00b7  {FileTargetDiskLabel(target.Path, allDisks)}",
+                ContextVisibility = Visibility.Visible,
+            });
+        }
+
+        FileTargetsEmpty.Text = _fileTargetDiskFilters.All(row => !row.IsSelected)
+            ? "Select at least one disk to see its tracked file activity."
+            : "No per-file records matched the selected disks in this window. Widen the time range or wait a minute for new data.";
+        FileTargetsEmpty.Visibility = _allFileTargetRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        BtnFileTargetsShowMore.Content = $"Show {pageSize:N0} more";
+        BtnFileTargetsShowMore.Visibility = _allFileTargetsHasMore ? Visibility.Visible : Visibility.Collapsed;
+        FileTargetsFooter.Text = AllFileTargetsCoverage(
+            _loadedAllFileTargets.Sum(target => target.WriteBytes),
+            _allFileTargetsTrackedWrite,
+            _config.Current.FileTargetRetentionDays,
+            _loadedAllFileTargets.Count,
+            _allFileTargetsHasMore);
+
+        SetFileTypeBreakdown(
+            _loadedAllFileTargets.Select(target => (target.Path, target.WriteBytes)),
+            $"Grouped from the {_loadedAllFileTargets.Count:N0} loaded process/file row(s) on the selected disks.");
+    }
+
+    private IReadOnlyCollection<string>? SelectedFileTargetVolumeRoots(
+        IReadOnlyList<FileTargetDiskFilterRow> selected)
+    {
+        if (_fileTargetDiskFilters.Count == 0)
+            return null;
+
+        return FileTargetVolumeRoots(selected.Select(row => row.Disk));
+    }
+
+    internal static IReadOnlyList<string> FileTargetVolumeRoots(IEnumerable<DiskInfo> disks)
+        => disks
+            .SelectMany(disk => disk.Volumes.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .Where(volume => volume.Length == 2 && char.IsLetter(volume[0]) && volume[1] == ':')
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    private static string FileTargetDiskLabel(string path, IReadOnlyList<DiskInfo> disks)
+    {
+        foreach (DiskInfo disk in disks)
+        {
+            foreach (string root in FileTargetVolumeRoots([disk]))
+            {
+                if (path.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase))
+                    return string.IsNullOrWhiteSpace(disk.Volumes) ? $"Disk {disk.DiskId}" : disk.Volumes.Trim();
+            }
+        }
+
+        return "Other location";
+    }
+
+    private static string FileTargetScopeTitle(
+        IReadOnlyList<FileTargetDiskFilterRow> selected,
+        int diskCount)
+    {
+        if (selected.Count == 0)
+            return "Files written to selected disks";
+        if (selected.Count == diskCount)
+            return "Files written across all disks";
+        if (selected.Count == 1)
+            return $"Files written to {selected[0].Label}";
+        return $"Files written across {selected.Count} disks";
+    }
+
+    internal static string FileTargetDiskFilterStatus(int selectedCount, int diskCount)
+    {
+        if (diskCount == 0)
+            return "No physical disks are currently available; showing every tracked path.";
+        if (selectedCount == 0)
+            return $"No disks selected ({diskCount} available).";
+        if (selectedCount == diskCount)
+            return $"All {diskCount} disk(s) selected.";
+        return $"{selectedCount} of {diskCount} disks selected.";
+    }
+
+    internal static string AllFileTargetsCoverage(
+        long listedBytes,
+        long trackedBytes,
+        int retentionDays,
+        int loadedRows,
+        bool hasMore)
+    {
+        string rows = hasMore
+            ? $"Showing the top {loadedRows:N0} rows; more are available."
+            : $"Showing all {loadedRows:N0} matching row(s).";
+        string retention = $"Per-file history is kept for {retentionDays} day(s).";
+        if (trackedBytes <= 0 || listedBytes <= 0)
+            return $"{rows} {retention}";
+
+        double share = Math.Min(1, (double)listedBytes / trackedBytes);
+        return $"{rows} Loaded rows account for {share:P0} of tracked writes on the selected disks. {retention}";
     }
 
     private string ProcessRangeLabel()
@@ -1515,6 +1777,13 @@ public partial class MainWindow : Window
         int slash = path.LastIndexOf('\\');
         return slash >= 0 && slash < path.Length - 1 ? path[(slash + 1)..] : path;
     }
+
+    internal static bool IsExplorerFilePath(string path)
+        => path.StartsWith("\\\\", StringComparison.Ordinal)
+            || (path.Length >= 3
+                && char.IsAsciiLetter(path[0])
+                && path[1] == ':'
+                && path[2] == '\\');
 
     internal void FileTargetsClose_Click(object sender, RoutedEventArgs e)
         => CloseFileTargets();
@@ -1872,6 +2141,7 @@ public partial class MainWindow : Window
         TxtRefresh.Text = cfg.DashboardRefreshSeconds.ToString(CultureInfo.InvariantCulture);
         TxtLiveGraphRetention.Text = cfg.LiveGraphRetentionMinutes.ToString(CultureInfo.InvariantCulture);
         TxtHighCoveragePercent.Text = cfg.HighCoveragePercent.ToString(CultureInfo.InvariantCulture);
+        TxtEnduranceCoverageWindowDays.Text = cfg.EnduranceCoverageWindowDays.ToString(CultureInfo.InvariantCulture);
         ChkControllerErrors.IsChecked = cfg.EnableControllerErrorAlerts;
         ChkNotify.IsChecked = userSettings.EnableNotifications;
         TxtDatabaseSizeWarnGb.Text = cfg.DatabaseSizeWarnGb.ToString(CultureInfo.InvariantCulture);
@@ -1888,6 +2158,7 @@ public partial class MainWindow : Window
         TxtFileTargetMinKb.Text = cfg.FileTargetMinKbPerMinute.ToString(CultureInfo.InvariantCulture);
         TxtFileTargetRetention.Text = cfg.FileTargetRetentionDays.ToString(CultureInfo.InvariantCulture);
         TxtFileTargetTrackingLimit.Text = cfg.FileTargetTrackingLimit.ToString(CultureInfo.InvariantCulture);
+        TxtFileTargetPageSize.Text = cfg.FileTargetPageSize.ToString(CultureInfo.InvariantCulture);
 
         // Web TBW lookup settings.
         ChkTbwLookup.IsChecked = userSettings.EnableTbwWebLookup;
@@ -2208,6 +2479,7 @@ public partial class MainWindow : Window
             cfg.DashboardRefreshSeconds = (int)Math.Clamp(ParseOr(TxtRefresh.Text, cfg.DashboardRefreshSeconds), 1, 600);
             cfg.LiveGraphRetentionMinutes = (int)Math.Clamp(ParseOr(TxtLiveGraphRetention.Text, cfg.LiveGraphRetentionMinutes), 1, 120);
             cfg.HighCoveragePercent = highCoveragePercent;
+            cfg.EnduranceCoverageWindowDays = (int)Math.Clamp(ParseOr(TxtEnduranceCoverageWindowDays.Text, cfg.EnduranceCoverageWindowDays), 1, 365);
             cfg.EnableControllerErrorAlerts = ChkControllerErrors.IsChecked == true;
 
             cfg.TrackFileTargets = ChkTrackFileTargets.IsChecked == true;
@@ -2215,6 +2487,7 @@ public partial class MainWindow : Window
             cfg.FileTargetMinKbPerMinute = ParseOr(TxtFileTargetMinKb.Text, cfg.FileTargetMinKbPerMinute);
             cfg.FileTargetRetentionDays = (int)Math.Clamp(ParseOr(TxtFileTargetRetention.Text, cfg.FileTargetRetentionDays), 1, 365);
             cfg.FileTargetTrackingLimit = (int)Math.Clamp(ParseOr(TxtFileTargetTrackingLimit.Text, cfg.FileTargetTrackingLimit), 100, 500000);
+            cfg.FileTargetPageSize = (int)Math.Clamp(ParseOr(TxtFileTargetPageSize.Text, cfg.FileTargetPageSize), 25, 1000);
 
             // 0 GB disables the size warning; the upper bound keeps the threshold meaningful.
             cfg.DatabaseSizeWarnGb = Math.Clamp(ParseOr(TxtDatabaseSizeWarnGb.Text, cfg.DatabaseSizeWarnGb), 0, 4096);
@@ -3306,6 +3579,20 @@ public partial class MainWindow : Window
         {
             _processWindow = r.Span;
             UpdateProcesses();
+            if (_fileTargetsAllProcesses && FileTargetsOverlay.Visibility == Visibility.Visible)
+            {
+                DateTime nowUtc = DateTime.UtcNow;
+                _fileTargetsWindowEndUtc = new DateTime(
+                    nowUtc.Year,
+                    nowUtc.Month,
+                    nowUtc.Day,
+                    nowUtc.Hour,
+                    nowUtc.Minute,
+                    0,
+                    DateTimeKind.Utc);
+                _fileTargetsWindowStartUtc = _fileTargetsWindowEndUtc - _processWindow;
+                RefreshAllFileTargets();
+            }
         }
     }
 

@@ -368,13 +368,14 @@ internal static class CliRunner
                 MonitoringRateStats recentRate = repo.GetRecentDiskWriteRate(
                     disk.DiskId,
                     nowUtc,
-                    cfg.HighCoveragePercent);
+                    cfg.HighCoveragePercent,
+                    cfg.EnduranceCoverageWindowDays);
                 double avgPerDay = recentRate.MonitoredBytesPerHour * 24.0;
                 double yearsLow = avgPerDay > 0 ? Math.Max(tbwLowBytes - (disk.LifetimeBytesWritten ?? 0), tbwLowBytes * 0.001) / (avgPerDay * 365.0) : double.PositiveInfinity;
                 double yearsHigh = avgPerDay > 0 ? Math.Max(tbwHighBytes - (disk.LifetimeBytesWritten ?? 0), tbwHighBytes * 0.001) / (avgPerDay * 365.0) : double.PositiveInfinity;
                 string projText = ranged ? $"{FormatYears(yearsLow)} to {FormatYears(yearsHigh)}" : FormatYears(yearsLow);
                 Console.WriteLine($"  Monitored average : {ByteFormat.Humanize(avgPerDay)}/day");
-                Console.WriteLine($"  Coverage          : {recentRate.CoveragePercent:0.#}% ({recentRate.MonitoredMinutes:N0}/{recentRate.RequestedMinutes:N0} min)");
+                Console.WriteLine($"  Coverage ({cfg.EnduranceCoverageWindowDays}d) : {recentRate.CoveragePercent:0.#}% ({recentRate.MonitoredMinutes:N0}/{recentRate.RequestedMinutes:N0} min)");
                 if (recentRate.HasHighCoverage)
                 {
                     Console.WriteLine($"  Calendar average  : {ByteFormat.Humanize(recentRate.CalendarBytesPerHour * 24.0)}/day");

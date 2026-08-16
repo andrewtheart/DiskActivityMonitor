@@ -215,6 +215,48 @@ public sealed class FileTargetTests : IDisposable
         Assert.Empty(repo.GetTopFileTargets("System", minute, minute.AddMinutes(5), 10));
     }
 
+    [Fact]
+    public void Repository_GlobalFileActivityFiltersOneOrMoreDiskVolumes()
+    {
+        var repo = new MonitorRepository(_db);
+        repo.EnsureSchema();
+        var minute = new DateTime(2026, 8, 4, 12, 0, 0, DateTimeKind.Utc);
+
+        repo.AddProcessFileSamples(
+        [
+            Sample(minute, "alpha", @"C:\logs\alpha.log", FileTargetKind.LogFile, 600, 60),
+            Sample(minute, "beta", @"D:\data\beta.db", FileTargetKind.Database, 900, 90),
+            Sample(minute.AddMinutes(1), "alpha", @"D:\data\alpha.tmp", FileTargetKind.Temporary, 300, 30),
+            Sample(minute, "network", @"\\server\share\remote.log", FileTargetKind.Network, 1200, 120),
+        ]);
+
+        DateTime end = minute.AddMinutes(5);
+        var cOnly = repo.GetTopFileTargets(minute, end, ["C:"], 10);
+        Assert.Equal(@"C:\logs\alpha.log", Assert.Single(cOnly).Path);
+        Assert.Equal(600, repo.GetFileTargetWriteTotal(minute, end, ["C:"]));
+
+        var localDisks = repo.GetTopFileTargets(minute, end, ["C:", "D:"], 10);
+        Assert.Equal(3, localDisks.Count);
+        Assert.Equal("beta", localDisks[0].ProcessName);
+        Assert.Equal(1800, repo.GetFileTargetWriteTotal(minute, end, ["C:", "D:"]));
+
+        var processes = repo.GetFileTargetProcessRanks(minute, end, ["C:", "D:"], 10);
+        Assert.Equal(900, Assert.Single(processes, process => process.ProcessName == "alpha").WriteBytes);
+        Assert.Equal(900, Assert.Single(processes, process => process.ProcessName == "beta").WriteBytes);
+
+        var timeline = repo.GetFileTargetMinuteWrites(minute, end, ["D:"]);
+        Assert.Equal([900L, 300L], timeline.Select(point => point.WriteBytes));
+
+        Assert.Equal(4, repo.GetTopFileTargets(minute, end, null, 10).Count);
+        Assert.Empty(repo.GetTopFileTargets(minute, end, [], 10));
+
+        var firstPage = repo.GetTopFileTargets(minute, end, null, 2);
+        var secondPage = repo.GetTopFileTargets(minute, end, null, 2, offset: 2);
+        Assert.Equal(["network", "beta"], firstPage.Select(target => target.ProcessName));
+        Assert.Equal(["alpha", "alpha"], secondPage.Select(target => target.ProcessName));
+        Assert.Empty(repo.GetTopFileTargets(minute, end, null, 2, offset: 4));
+    }
+
     private static ProcessFileIoSample Sample(
         DateTime minute, string process, string path, FileTargetKind kind, long write, long read) => new()
         {

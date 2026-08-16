@@ -281,7 +281,8 @@ public sealed class AlertEngine
             MonitoringRateStats recentRate = _repo.GetRecentDiskWriteRate(
                 disk.DiskId,
                 nowUtc,
-                highCoveragePercent);
+                highCoveragePercent,
+                config.EnduranceCoverageWindowDays);
             double avgPerDay = recentRate.MonitoredBytesPerHour * 24.0;
             if (recentRate.HasHighCoverage && avgPerDay > 0)
             {

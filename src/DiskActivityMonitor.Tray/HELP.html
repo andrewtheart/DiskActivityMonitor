@@ -475,6 +475,8 @@ to “System”</a></li>
 <li><a href="#which-files-a-process-wrote"
 id="toc-which-files-a-process-wrote">Which files a process
 wrote</a></li>
+<li><a href="#file-activity-across-disks"
+id="toc-file-activity-across-disks">File activity across disks</a></li>
 <li><a href="#analytics-in-the-per-file-breakdown"
 id="toc-analytics-in-the-per-file-breakdown">Analytics in the per-file
 breakdown</a></li>
@@ -853,6 +855,15 @@ the configured high-coverage threshold. This prevents a long service
 shutdown from making drive life look artificially long. It is not a
 failure prediction or warranty calculation. Workload changes can
 materially change the projection.</p>
+<p>Once enough history exists for the configured <strong>Endurance
+coverage window</strong>, recent coverage is a rolling value over that
+many days (7 by default, configurable from 1 to 365). Each new monitored
+minute also removes the minute from exactly one coverage window earlier.
+Coverage can therefore remain unchanged while monitoring is active when
+a monitored minute replaces another monitored minute; it rises when an
+old missing minute leaves the window. The dashboard shows both the
+percentage and monitored/requested minute counts so this behavior is
+visible.</p>
 <h3 id="endurance-alerts">Endurance alerts</h3>
 <p>The default profile applies to every SSD and warns when either
 condition is true:</p>
@@ -1128,8 +1139,9 @@ Settings:</p>
 </tr>
 <tr>
 <td>Minimum per file (KB/min)</td>
-<td>256</td>
-<td>Files below this in a minute are not stored.</td>
+<td>64</td>
+<td>Files below this in a minute are folded into the aggregate
+other-files row.</td>
 </tr>
 <tr>
 <td>File history (days)</td>
@@ -1142,11 +1154,38 @@ process rollup. Configurable from 1 to 365 days.</td>
 <td>20000</td>
 <td>Upper bound on distinct files tracked between samples.</td>
 </tr>
+<tr>
+<td>Rows loaded per page</td>
+<td>100</td>
+<td>Process/file rows appended at a time in the all-disk view.
+Configurable from 25 to 1000.</td>
+</tr>
 </tbody>
 </table>
 <p>Because of the size floor, the listed files usually account for most
 - not all - of a process’s logical writes; the modal states the exact
 share.</p>
+<h3 id="file-activity-across-disks">File activity across disks</h3>
+<p>Select <strong>All files</strong> beside <strong>Top application
+write requests</strong> to open the same file-analysis view across every
+monitored disk. All disks are selected each time the view opens. Use the
+disk checkboxes to keep any one disk or any combination of disks, and
+use <strong>Select all</strong> to restore the complete view.</p>
+<p>The file rows, process-share donut, write timeline, file-type
+summary, totals, and coverage text all refresh from the same disk
+selection. Aggregate rows include the process name and disk volume so
+the writer and destination remain visible. Disk membership comes from
+normalized drive-letter paths; network paths, unmounted paths, and
+aggregate records that cannot be assigned to a physical disk are not
+included in this view.</p>
+<p>The view initially queries and renders only the configured
+<strong>Rows loaded per page</strong>. Select <strong>Show more</strong>
+to append the next ranked page without rebuilding the rows already on
+screen. The footer reports how many rows are loaded and whether more are
+available. Changing the disk filter or time range resets the list to its
+first page. Process totals and the timeline remain aggregated over the
+complete selected window; the file-type summary describes the rows
+loaded so far.</p>
 <h3 id="analytics-in-the-per-file-breakdown">Analytics in the per-file
 breakdown</h3>
 <p>The <strong>Analytics</strong> button in the breakdown header toggles
@@ -1193,6 +1232,12 @@ command on its right-click menu:</p>
 <td>Live tail</td>
 <td>Streams new lines as they are written. Disabled for binary
 extensions.</td>
+</tr>
+<tr>
+<td>Folder</td>
+<td>Open containing folder</td>
+<td>Opens File Explorer with the file selected. Disabled for paths
+Explorer cannot address.</td>
 </tr>
 <tr>
 <td>Lock</td>
@@ -1560,6 +1605,12 @@ conditions.</td>
 projection claims.</td>
 </tr>
 <tr>
+<td><code>enduranceCoverageWindowDays</code></td>
+<td style="text-align: right;"><code>7</code></td>
+<td>Rolling history window used to validate endurance projections (1-365
+days).</td>
+</tr>
+<tr>
 <td><code>trackFileTargets</code></td>
 <td style="text-align: right;"><code>true</code></td>
 <td>Master switch for per-file attribution.</td>
@@ -1583,6 +1634,11 @@ projection claims.</td>
 <td><code>fileTargetTrackingLimit</code></td>
 <td style="text-align: right;"><code>20000</code></td>
 <td>Distinct files tracked in memory between samples.</td>
+</tr>
+<tr>
+<td><code>fileTargetPageSize</code></td>
+<td style="text-align: right;"><code>100</code></td>
+<td>Rows appended per page in all-disk file activity (25-1000).</td>
 </tr>
 <tr>
 <td><code>databaseSizeWarnGb</code></td>

@@ -71,6 +71,27 @@ public sealed class MonitoringRateStatsTests
         Assert.Contains("Calendar average:", high);
     }
 
+    [Fact]
+    public void RecentCoverage_DistinguishesStartupHistoryFromRollingSevenDays()
+    {
+        string startup = MainWindow.FormatRecentCoverage(
+            MonitoringRateStats.Compute(100, 3, 4, 90),
+            configuredWindowDays: 7,
+            explainRollingWindow: true);
+        string rolling = MainWindow.FormatRecentCoverage(
+            MonitoringRateStats.Compute(100, 7_786, 10_080, 90),
+            configuredWindowDays: 7,
+            explainRollingWindow: true);
+        string custom = MainWindow.FormatRecentCoverage(
+            MonitoringRateStats.Compute(100, 20_160, 20_160, 90),
+            configuredWindowDays: 14);
+
+        Assert.Equal("Monitoring coverage since collection began: 75% (3 of 4 min).", startup);
+        Assert.Contains("Rolling 7-day monitoring coverage: 77.2% (7,786 of 10,080 min).", rolling);
+        Assert.Contains("enter or leave the rolling window", rolling);
+        Assert.StartsWith("Rolling 14-day monitoring coverage", custom);
+    }
+
     [Theory]
     [InlineData("1", true, 1)]
     [InlineData("100", true, 100)]

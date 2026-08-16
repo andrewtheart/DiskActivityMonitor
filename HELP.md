@@ -241,6 +241,13 @@ recent monitoring coverage reaches the configured high-coverage threshold. This 
 service shutdown from making drive life look artificially long. It is not a failure prediction or
 warranty calculation. Workload changes can materially change the projection.
 
+Once enough history exists for the configured **Endurance coverage window**, recent coverage is a
+rolling value over that many days (7 by default, configurable from 1 to 365). Each new monitored
+minute also removes the minute from exactly one coverage window earlier. Coverage can therefore
+remain unchanged while monitoring is active when a monitored minute replaces another monitored
+minute; it rises when an old missing minute leaves the window. The dashboard shows both the
+percentage and monitored/requested minute counts so this behavior is visible.
+
 ### Endurance alerts
 
 The default profile applies to every SSD and warns when either condition is true:
@@ -468,12 +475,32 @@ Per-file attribution requires the ETW collector and is controlled in Settings:
 |---|---|---|
 | Record which files each process writes | on | Master switch for per-file attribution. |
 | Files kept per process / minute | 15 | Busiest files stored for each process each minute. |
-| Minimum per file (KB/min) | 256 | Files below this in a minute are not stored. |
+| Minimum per file (KB/min) | 64 | Files below this in a minute are folded into the aggregate other-files row. |
 | File history (days) | 30 | Per-file rows are far more numerous, so they expire sooner than the process rollup. Configurable from 1 to 365 days. |
 | Files tracked in memory | 20000 | Upper bound on distinct files tracked between samples. |
+| Rows loaded per page | 100 | Process/file rows appended at a time in the all-disk view. Configurable from 25 to 1000. |
 
 Because of the size floor, the listed files usually account for most - not all - of a process's
 logical writes; the modal states the exact share.
+
+### File activity across disks
+
+Select **All files** beside **Top application write requests** to open the same file-analysis view
+across every monitored disk. All disks are selected each time the view opens. Use the disk
+checkboxes to keep any one disk or any combination of disks, and use **Select all** to restore the
+complete view.
+
+The file rows, process-share donut, write timeline, file-type summary, totals, and coverage text all
+refresh from the same disk selection. Aggregate rows include the process name and disk volume so
+the writer and destination remain visible. Disk membership comes from normalized drive-letter
+paths; network paths, unmounted paths, and aggregate records that cannot be assigned to a physical
+disk are not included in this view.
+
+The view initially queries and renders only the configured **Rows loaded per page**. Select
+**Show more** to append the next ranked page without rebuilding the rows already on screen. The
+footer reports how many rows are loaded and whether more are available. Changing the disk filter
+or time range resets the list to its first page. Process totals and the timeline remain aggregated
+over the complete selected window; the file-type summary describes the rows loaded so far.
 
 ### Analytics in the per-file breakdown
 
@@ -496,6 +523,7 @@ Each file row carries four actions on the right and the same copy command on its
 |---|---|---|
 | Copy | Copy full path | Copies the exact path to the clipboard. Also available as **Copy full path** on right-click. |
 | Eye | Live tail | Streams new lines as they are written. Disabled for binary extensions. |
+| Folder | Open containing folder | Opens File Explorer with the file selected. Disabled for paths Explorer cannot address. |
 | Lock | Find open handles | Lists which processes currently hold that file open. |
 | Bin | Delete | Asks for confirmation, then reports exactly why a delete failed. |
 
@@ -653,11 +681,13 @@ Machine-wide collector settings are stored in `%ProgramData%\DiskActivityMonitor
 | `defaultEnduranceAlert` | 1 year / 20% | Global enabled conditions for projected remaining life and endurance remaining. |
 | `diskEnduranceAlertOverrides` | empty | Full per-disk profiles that replace the global endurance conditions. |
 | `highCoveragePercent` | `90` | Minimum monitoring coverage required for calendar-rate and endurance projection claims. |
+| `enduranceCoverageWindowDays` | `7` | Rolling history window used to validate endurance projections (1-365 days). |
 | `trackFileTargets` | `true` | Master switch for per-file attribution. |
 | `fileTargetsPerProcessPerMinute` | `15` | Busiest files stored per process per minute. |
 | `fileTargetMinKbPerMinute` | `64` | Per-file size floor for a minute to be stored. |
 | `fileTargetRetentionDays` | `30` | Age at which per-file rows are pruned (1-365). |
 | `fileTargetTrackingLimit` | `20000` | Distinct files tracked in memory between samples. |
+| `fileTargetPageSize` | `100` | Rows appended per page in all-disk file activity (25-1000). |
 | `databaseSizeWarnGb` | `1` | Warn when the database, WAL, and index together exceed this size. `0` disables. |
 | `databaseSizeAlertCooldownHours` | `12` | Minimum gap between repeat database-size warnings. |
 | `binaryExtensions` | see below | Extensions never opened as text by the live tail. |

@@ -80,3 +80,13 @@ public sealed class FileTargetRank
     public long WriteBytes { get; set; }
     public long ReadBytes { get; set; }
 }
+
+/// <summary>A process and file pair ranked by writes across one or more disk volumes.</summary>
+public sealed class ProcessFileTargetRank
+{
+    public required string ProcessName { get; init; }
+    public required string Path { get; init; }
+    public required FileTargetKind Kind { get; init; }
+    public long WriteBytes { get; set; }
+    public long ReadBytes { get; set; }
+}

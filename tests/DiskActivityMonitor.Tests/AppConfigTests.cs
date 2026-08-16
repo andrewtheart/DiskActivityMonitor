@@ -35,6 +35,7 @@ public class AppConfigTests
         Assert.Equal(20, cfg.DefaultEnduranceAlert.RemainingPercent);
         Assert.Equal(1, cfg.TbwProjectionCriticalYears);
         Assert.Equal(90, cfg.HighCoveragePercent);
+        Assert.Equal(7, cfg.EnduranceCoverageWindowDays);
         Assert.Equal(512, cfg.TailMaxReadKb);
         Assert.Equal(1024, cfg.TailMaxBufferKb);
     }

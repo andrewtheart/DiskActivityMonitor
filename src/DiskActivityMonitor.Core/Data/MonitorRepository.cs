@@ -473,6 +473,156 @@ public sealed class MonitorRepository
         return Convert.ToInt64(cmd.ExecuteScalar() ?? 0L);
     }
 
+    /// <summary>
+    /// Process/file pairs ranked by tracked writes. A null volume set includes every path; an
+    /// empty set includes none. Volume roots use drive-letter form such as <c>C:</c>.
+    /// </summary>
+    public List<ProcessFileTargetRank> GetTopFileTargets(
+        DateTime fromUtc,
+        DateTime toUtc,
+        IReadOnlyCollection<string>? volumeRoots,
+        int topN,
+        int offset = 0)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        string volumeFilter = AddFileTargetVolumeFilter(cmd, volumeRoots);
+        cmd.CommandText = $"""
+            SELECT name, path, MAX(kind), SUM(write_bytes) AS w, SUM(read_bytes) AS r
+            FROM proc_file_minute
+            WHERE ts_min >= $from AND ts_min < $to{volumeFilter}
+            GROUP BY name COLLATE NOCASE, path COLLATE NOCASE
+            ORDER BY w DESC, name COLLATE NOCASE, path COLLATE NOCASE
+            LIMIT $limit OFFSET $offset;
+            """;
+        cmd.Parameters.AddWithValue("$from", ToUnix(fromUtc));
+        cmd.Parameters.AddWithValue("$to", ToUnix(toUtc));
+        cmd.Parameters.AddWithValue("$limit", topN);
+        cmd.Parameters.AddWithValue("$offset", Math.Max(0, offset));
+
+        var list = new List<ProcessFileTargetRank>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new ProcessFileTargetRank
+            {
+                ProcessName = reader.GetString(0),
+                Path = reader.GetString(1),
+                Kind = (FileTargetKind)reader.GetInt32(2),
+                WriteBytes = reader.GetInt64(3),
+                ReadBytes = reader.GetInt64(4),
+            });
+        }
+        return list;
+    }
+
+    /// <summary>Processes ranked by their tracked file writes on the requested volumes.</summary>
+    public List<ProcessRank> GetFileTargetProcessRanks(
+        DateTime fromUtc,
+        DateTime toUtc,
+        IReadOnlyCollection<string>? volumeRoots,
+        int topN)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        string volumeFilter = AddFileTargetVolumeFilter(cmd, volumeRoots);
+        cmd.CommandText = $"""
+            SELECT name, SUM(write_bytes) AS w, SUM(read_bytes) AS r
+            FROM proc_file_minute
+            WHERE ts_min >= $from AND ts_min < $to{volumeFilter}
+            GROUP BY name COLLATE NOCASE
+            ORDER BY w DESC
+            LIMIT $limit;
+            """;
+        cmd.Parameters.AddWithValue("$from", ToUnix(fromUtc));
+        cmd.Parameters.AddWithValue("$to", ToUnix(toUtc));
+        cmd.Parameters.AddWithValue("$limit", topN);
+
+        var list = new List<ProcessRank>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new ProcessRank
+            {
+                ProcessName = reader.GetString(0),
+                WriteBytes = reader.GetInt64(1),
+                ReadBytes = reader.GetInt64(2),
+            });
+        }
+        return list;
+    }
+
+    /// <summary>Per-minute tracked file writes on the requested volumes.</summary>
+    public List<(DateTime MinuteUtc, long WriteBytes)> GetFileTargetMinuteWrites(
+        DateTime fromUtc,
+        DateTime toUtc,
+        IReadOnlyCollection<string>? volumeRoots)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        string volumeFilter = AddFileTargetVolumeFilter(cmd, volumeRoots);
+        cmd.CommandText = $"""
+            SELECT ts_min, SUM(write_bytes)
+            FROM proc_file_minute
+            WHERE ts_min >= $from AND ts_min < $to{volumeFilter}
+            GROUP BY ts_min
+            ORDER BY ts_min;
+            """;
+        cmd.Parameters.AddWithValue("$from", ToUnix(fromUtc));
+        cmd.Parameters.AddWithValue("$to", ToUnix(toUtc));
+
+        var list = new List<(DateTime, long)>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            list.Add((FromUnix(reader.GetInt64(0)), reader.GetInt64(1)));
+        return list;
+    }
+
+    /// <summary>Total tracked file writes on the requested volumes.</summary>
+    public long GetFileTargetWriteTotal(
+        DateTime fromUtc,
+        DateTime toUtc,
+        IReadOnlyCollection<string>? volumeRoots)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        string volumeFilter = AddFileTargetVolumeFilter(cmd, volumeRoots);
+        cmd.CommandText = $"""
+            SELECT COALESCE(SUM(write_bytes), 0)
+            FROM proc_file_minute
+            WHERE ts_min >= $from AND ts_min < $to{volumeFilter};
+            """;
+        cmd.Parameters.AddWithValue("$from", ToUnix(fromUtc));
+        cmd.Parameters.AddWithValue("$to", ToUnix(toUtc));
+        return Convert.ToInt64(cmd.ExecuteScalar() ?? 0L);
+    }
+
+    private static string AddFileTargetVolumeFilter(
+        SqliteCommand command,
+        IReadOnlyCollection<string>? volumeRoots)
+    {
+        if (volumeRoots is null)
+            return "";
+
+        string[] roots = volumeRoots
+            .Select(root => root.Trim().TrimEnd('\\'))
+            .Where(root => root.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (roots.Length == 0)
+            return " AND 0 = 1";
+
+        var predicates = new string[roots.Length];
+        for (int index = 0; index < roots.Length; index++)
+        {
+            string parameterName = $"$volume{index}";
+            predicates[index] = $"path LIKE {parameterName} COLLATE NOCASE";
+            command.Parameters.AddWithValue(parameterName, roots[index] + "\\%");
+        }
+
+        return $" AND ({string.Join(" OR ", predicates)})";
+    }
+
     // ---------------------------------------------------------------- Trend queries
     /// <summary>
     /// Returns hour-aligned (UTC) read/write totals for one disk between two instants.
@@ -647,14 +797,16 @@ public sealed class MonitorRepository
     public MonitoringRateStats GetRecentDiskWriteRate(
         string diskId,
         DateTime nowUtc,
-        double highCoveragePercent)
+        double highCoveragePercent,
+        int coverageWindowDays = 7)
     {
         DateTime? earliest = GetEarliestSample(diskId);
         if (earliest is null)
             return default;
 
-        DateTime fromUtc = nowUtc - earliest.Value >= TimeSpan.FromDays(7)
-            ? nowUtc.AddDays(-7)
+        int windowDays = Math.Clamp(coverageWindowDays, 1, 365);
+        DateTime fromUtc = nowUtc - earliest.Value >= TimeSpan.FromDays(windowDays)
+            ? nowUtc.AddDays(-windowDays)
             : earliest.Value;
         long writeBytes = GetDiskTotals(diskId, fromUtc, nowUtc).Write;
         MonitoringCoverage coverage = GetMonitoringCoverage(fromUtc, nowUtc);

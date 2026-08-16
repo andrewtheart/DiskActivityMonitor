@@ -36,11 +36,13 @@ public class ConfigStoreTests : IDisposable
         cfg.SsdWarnGbPerHour = 42;
         cfg.AlertCooldownMinutes = 30;
         cfg.HighCoveragePercent = 92.5;
+        cfg.EnduranceCoverageWindowDays = 14;
         cfg.TrackFileTargets = false;
         cfg.FileTargetsPerProcessPerMinute = 42;
         cfg.FileTargetMinKbPerMinute = 12.5;
         cfg.FileTargetRetentionDays = 45;
         cfg.FileTargetTrackingLimit = 54321;
+        cfg.FileTargetPageSize = 321;
         cfg.DatabaseSizeWarnGb = 2.5;
         cfg.DatabaseSizeAlertCooldownHours = 24;
         cfg.BinaryExtensions = "exe;bin";
@@ -55,11 +57,13 @@ public class ConfigStoreTests : IDisposable
         Assert.Equal(42, reloaded.SsdWarnGbPerHour);
         Assert.Equal(30, reloaded.AlertCooldownMinutes);
         Assert.Equal(92.5, reloaded.HighCoveragePercent);
+        Assert.Equal(14, reloaded.EnduranceCoverageWindowDays);
         Assert.False(reloaded.TrackFileTargets);
         Assert.Equal(42, reloaded.FileTargetsPerProcessPerMinute);
         Assert.Equal(12.5, reloaded.FileTargetMinKbPerMinute);
         Assert.Equal(45, reloaded.FileTargetRetentionDays);
         Assert.Equal(54321, reloaded.FileTargetTrackingLimit);
+        Assert.Equal(321, reloaded.FileTargetPageSize);
         Assert.Equal(2.5, reloaded.DatabaseSizeWarnGb);
         Assert.Equal(24, reloaded.DatabaseSizeAlertCooldownHours);
         Assert.Equal("exe;bin", reloaded.BinaryExtensions);
@@ -81,6 +85,17 @@ public class ConfigStoreTests : IDisposable
         Assert.Equal(expected, store.Current.HighCoveragePercent);
     }
 
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(30, 30)]
+    [InlineData(500, 365)]
+    public void EnduranceCoverageWindowDays_IsClampedToVisibleRange(int configured, int expected)
+    {
+        using var store = new ConfigStore(_configPath);
+        store.Update(config => config.EnduranceCoverageWindowDays = configured);
+        Assert.Equal(expected, store.Current.EnduranceCoverageWindowDays);
+    }
+
     [Fact]
     public void Constructor_LegacyConfig_PreservesValuesAndAppliesNewDefaults()
     {
@@ -94,6 +109,19 @@ public class ConfigStoreTests : IDisposable
 
         Assert.Equal(12, store.Current.SampleIntervalSeconds);
         Assert.True(store.Current.EnableControllerErrorAlerts);
+        Assert.Equal(7, store.Current.EnduranceCoverageWindowDays);
+        Assert.Equal(100, store.Current.FileTargetPageSize);
+    }
+
+    [Theory]
+    [InlineData(1, 25)]
+    [InlineData(250, 250)]
+    [InlineData(5000, 1000)]
+    public void FileTargetPageSize_IsClampedToVisibleRange(int configured, int expected)
+    {
+        using var store = new ConfigStore(_configPath);
+        store.Update(config => config.FileTargetPageSize = configured);
+        Assert.Equal(expected, store.Current.FileTargetPageSize);
     }
 
     [Fact]

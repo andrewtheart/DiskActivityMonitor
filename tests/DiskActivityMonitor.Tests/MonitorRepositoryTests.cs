@@ -339,7 +339,7 @@ public class MonitorRepositoryTests : IDisposable
     }
 
     [Fact]
-    public void RecentDiskWriteRate_UsesOnlyTrailingSevenDaysForLongHistory()
+    public void RecentDiskWriteRate_UsesConfiguredTrailingWindowForLongHistory()
     {
         var repo = CreateRepo();
         var now = new DateTime(2025, 6, 10, 12, 0, 0, DateTimeKind.Utc);
@@ -349,11 +349,11 @@ public class MonitorRepositoryTests : IDisposable
         ]);
         repo.AddCollectorHeartbeat(now.AddMinutes(-1));
 
-        MonitoringRateStats rate = repo.GetRecentDiskWriteRate("0", now, 0);
+        MonitoringRateStats rate = repo.GetRecentDiskWriteRate("0", now, 0, coverageWindowDays: 2);
 
         Assert.Equal(600, rate.TotalBytes);
         Assert.Equal(1, rate.MonitoredMinutes);
-        Assert.Equal(7 * 24 * 60, rate.RequestedMinutes);
+        Assert.Equal(2 * 24 * 60, rate.RequestedMinutes);
         Assert.False(rate.HasHighCoverage);
     }
 

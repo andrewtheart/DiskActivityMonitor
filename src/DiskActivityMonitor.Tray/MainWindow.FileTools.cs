@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Net.Http;
@@ -6,6 +8,7 @@ using System.Windows.Media;
 using DiskActivityMonitor.Core;
 using DiskActivityMonitor.Core.Data;
 using DiskActivityMonitor.Core.Files;
+using DiskActivityMonitor.Core.Models;
 using DiskActivityMonitor.Core.Tools;
 using DiskActivityMonitor.Tray.Controls;
 using Microsoft.Toolkit.Uwp.Notifications;
@@ -23,6 +26,14 @@ public partial class MainWindow
     private string _fileTargetsProcess = "";
     private DateTime _fileTargetsWindowStartUtc;
     private DateTime _fileTargetsWindowEndUtc;
+    private bool _fileTargetsAllProcesses;
+    private List<FileTargetDiskFilterRow> _fileTargetDiskFilters = [];
+    private IReadOnlyCollection<string>? _fileTargetSelectedVolumeRoots;
+    private readonly ObservableCollection<FileTargetRow> _allFileTargetRows = [];
+    private readonly List<ProcessFileTargetRank> _loadedAllFileTargets = [];
+    private long _allFileTargetsTrackedWrite;
+    private double _allFileTargetMaxWrite = 1;
+    private bool _allFileTargetsHasMore;
 
     // Live tail state.
     private DispatcherTimer? _tailTimer;
@@ -64,6 +75,9 @@ public partial class MainWindow
     internal Action<string> ClipboardWriter { get; set; }
         = text => System.Windows.Clipboard.SetText(text);
 
+    internal Action<ProcessStartInfo> FileShellLauncher { get; set; }
+        = startInfo => Process.Start(startInfo);
+
     internal Func<DatabaseSize> DatabaseMeasurer { get; set; }
         = () => DatabaseMaintenance.Measure();
 
@@ -89,6 +103,42 @@ public partial class MainWindow
         UpdateWritesByProcessPie(processName, startUtc, endUtc, processWrite);
         UpdateWriteTimeline(processName, startUtc, endUtc);
         UpdateFileTypeBreakdown(processName, startUtc, endUtc);
+    }
+
+    /// <summary>Fills the analytics band for tracked files across the selected disk volumes.</summary>
+    private void UpdateAllFileTargetsAnalytics(
+        DateTime startUtc,
+        DateTime endUtc,
+        IReadOnlyCollection<string>? volumeRoots,
+        IReadOnlyList<ProcessFileTargetRank> targets,
+        long trackedWrite)
+    {
+        var topProcesses = _repo.GetFileTargetProcessRanks(startUtc, endUtc, volumeRoots, topN: 7);
+        var slices = topProcesses
+            .Select(process => new PieSlice(process.ProcessName, process.WriteBytes))
+            .ToList();
+        long accounted = topProcesses.Sum(process => process.WriteBytes);
+        if (trackedWrite > accounted)
+            slices.Add(new PieSlice("Other processes", trackedWrite - accounted));
+
+        FileTargetsPie.SetData(
+            slices,
+            value => ByteFormat.Humanize((long)value),
+            ByteFormat.Humanize(trackedWrite));
+        FileTargetsPieCaption.Text = trackedWrite <= 0
+            ? "No tracked file writes were recorded on the selected disks in this window."
+            : $"Process share of {ByteFormat.Humanize(trackedWrite)} in tracked writes on the selected disks.";
+
+        var minutes = _repo.GetFileTargetMinuteWrites(startUtc, endUtc, volumeRoots);
+        var bars = BuildTimelineBars(minutes, startUtc, endUtc);
+        FileTargetsTimeline.SetData(bars, value => ByteFormat.Humanize((long)value));
+        FileTargetsTimelineCaption.Text = minutes.Count == 0
+            ? "No per-minute tracked file samples on the selected disks in this window."
+            : $"{minutes.Count:N0} recorded minute(s) grouped into {bars.Count} interval(s); tall bars are write bursts.";
+
+        SetFileTypeBreakdown(
+            targets.Select(target => (target.Path, target.WriteBytes)),
+            $"Grouped from {targets.Count:N0} tracked process/file pair(s) on the selected disks.");
     }
 
     /// <summary>Shows how much of all disk writing this process is responsible for.</summary>
@@ -185,9 +235,20 @@ public partial class MainWindow
         // Pull a deeper slice than the visible list so the breakdown reflects more than 20 files.
         var targets = _repo.GetTopFileTargets(processName, startUtc, endUtc, topN: 200);
 
-        var groups = targets
-            .GroupBy(t => ExtensionLabel(t.Path))
-            .Select(g => (Label: g.Key, Bytes: g.Sum(t => t.WriteBytes)))
+        SetFileTypeBreakdown(
+            targets.Select(target => (target.Path, target.WriteBytes)),
+            $"Grouped from the {targets.Count:N0} busiest tracked file(s) for {processName}.");
+    }
+
+    private void SetFileTypeBreakdown(
+        IEnumerable<(string Path, long WriteBytes)> targets,
+        string populatedCaption)
+    {
+        var targetList = targets.ToList();
+
+        var groups = targetList
+            .GroupBy(target => ExtensionLabel(target.Path))
+            .Select(group => (Label: group.Key, Bytes: group.Sum(target => target.WriteBytes)))
             .OrderByDescending(g => g.Bytes)
             .ToList();
 
@@ -213,7 +274,7 @@ public partial class MainWindow
         FileTargetsTypesEmpty.Visibility = groups.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         FileTargetsTypesCaption.Text = groups.Count == 0
             ? ""
-            : $"Grouped from the {targets.Count:N0} busiest tracked file(s) for {processName}.";
+            : populatedCaption;
     }
 
     /// <summary>Extension label for grouping; files without one are reported as "(no extension)".</summary>
@@ -242,6 +303,26 @@ public partial class MainWindow
     private void FileTargetTail_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is FileTargetRow row) StartFileTail(row);
+    }
+
+    private void FileTargetOpenFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not FileTargetRow row
+            || !row.CanOpenContainingFolder)
+            return;
+
+        try
+        {
+            FileShellLauncher(new ProcessStartInfo("explorer.exe", $"/select,\"{row.Path}\"")
+            {
+                UseShellExecute = true,
+            });
+            FileTargetsFooter.Text = $"Opened the containing folder for {row.FileName}.";
+        }
+        catch
+        {
+            FileTargetsFooter.Text = $"The containing folder for {row.FileName} could not be opened.";
+        }
     }
 
     private async void FileTargetTrace_Click(object sender, RoutedEventArgs e)
@@ -491,7 +572,13 @@ public partial class MainWindow
         // Only a lock or permission failure has a process worth naming.
         BtnFileDeleteDiagnose.Visibility = outcome.NeedsLockAnalysis ? Visibility.Visible : Visibility.Collapsed;
 
-        if (outcome.Removed) ShowFileTargets(_fileTargetsProcess);
+        if (outcome.Removed)
+        {
+            if (_fileTargetsAllProcesses)
+                RefreshAllFileTargets();
+            else
+                ShowFileTargets(_fileTargetsProcess);
+        }
     }
 
     /// <summary>Runs Handle against the file that could not be deleted and names the holders.</summary>

@@ -218,6 +218,143 @@ public sealed class FileTargetsDialogTests : IDisposable
     }
 
     [Fact]
+    public void AllFiles_DefaultsToEveryDiskAndFiltersToAnySelectedSubset()
+    {
+        RunSta(() =>
+        {
+            EnsureApplication();
+
+            var repo = new MonitorRepository(_db);
+            repo.EnsureSchema();
+            repo.UpsertDisks(
+            [
+                new DiskInfo
+                {
+                    DiskId = "0", InstanceName = "0 C:", FriendlyName = "System SSD",
+                    Volumes = "C:", MediaType = DiskMediaType.Ssd,
+                },
+                new DiskInfo
+                {
+                    DiskId = "1", InstanceName = "1 D:", FriendlyName = "Data HDD",
+                    Volumes = "D:", MediaType = DiskMediaType.Hdd,
+                },
+            ]);
+            DateTime minute = FloorToMinute(DateTime.UtcNow).AddMinutes(-1);
+            repo.AddProcessFileSamples(
+            [
+                new ProcessFileIoSample
+                {
+                    TimestampUtc = minute, ProcessName = "alpha", Path = @"C:\logs\alpha.log",
+                    Kind = FileTargetKind.LogFile, WriteBytes = 600,
+                },
+                new ProcessFileIoSample
+                {
+                    TimestampUtc = minute, ProcessName = "beta", Path = @"D:\data\beta.db",
+                    Kind = FileTargetKind.Database, WriteBytes = 900,
+                },
+                new ProcessFileIoSample
+                {
+                    TimestampUtc = minute, ProcessName = "network", Path = @"\\server\share\remote.log",
+                    Kind = FileTargetKind.Network, WriteBytes = 1200,
+                },
+            ]);
+
+            using var config = new ConfigStore(_cfg);
+            var window = new MainWindow(repo, config, new UserSettingsStore(_user));
+            try
+            {
+                window.ShowAllFileTargets();
+
+                Assert.Equal(Visibility.Visible, window.FileTargetsOverlay.Visibility);
+                Assert.Equal(Visibility.Visible, window.FileTargetsDiskFilterBorder.Visibility);
+                Assert.Equal(Visibility.Collapsed, window.BtnTraceProcess.Visibility);
+                Assert.Equal("Files written across all disks", window.FileTargetsTitle.Text);
+                Assert.Contains("All 2 disk(s) selected", window.FileTargetsDiskFilterStatus.Text);
+
+                var filters = ((IEnumerable)window.FileTargetsDiskFilterList.ItemsSource!).Cast<object>().ToList();
+                Assert.Equal(2, filters.Count);
+                Assert.All(filters, filter => Assert.True(Property<bool>(filter, "IsSelected")));
+
+                var allRows = FileRows(window);
+                Assert.Equal(2, allRows.Count);
+                Assert.DoesNotContain(allRows, row => Name(row) == "remote.log");
+                Assert.All(allRows, row => Assert.Equal(Visibility.Visible, Property<Visibility>(row, "ContextVisibility")));
+                Assert.Contains("selected disks", window.FileTargetsPieCaption.Text);
+
+                object cDisk = filters.Single(filter => Property<string>(filter, "Label").StartsWith("C:", StringComparison.Ordinal));
+                cDisk.GetType().GetProperty("IsSelected")!.SetValue(cDisk, false);
+                Invoke(window, "FileTargetsDiskFilter_Click", window, new RoutedEventArgs());
+
+                Assert.StartsWith("Files written to D:", window.FileTargetsTitle.Text);
+                Assert.Contains("1 of 2 disks selected", window.FileTargetsDiskFilterStatus.Text);
+                Assert.Equal("beta", Property<string>(Assert.Single(FileRows(window)), "ContextLabel").Split(' ', 2)[0]);
+
+                window.FileTargetsSelectAllDisksButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.Equal("Files written across all disks", window.FileTargetsTitle.Text);
+                Assert.Equal(2, FileRows(window).Count);
+                Assert.All(filters, filter => Assert.True(Property<bool>(filter, "IsSelected")));
+
+                RenderSnapshotIfRequested(window);
+            }
+            finally
+            {
+                CleanupWindow(window);
+            }
+        });
+    }
+
+    [Fact]
+    public void AllFiles_LoadsOneConfiguredPageAndAppendsMoreRowsOnDemand()
+    {
+        RunSta(() =>
+        {
+            EnsureApplication();
+
+            var repo = new MonitorRepository(_db);
+            repo.EnsureSchema();
+            repo.UpsertDisks([new DiskInfo
+            {
+                DiskId = "0", InstanceName = "0 C:", FriendlyName = "Paging SSD",
+                Volumes = "C:", MediaType = DiskMediaType.Ssd,
+            }]);
+            DateTime minute = FloorToMinute(DateTime.UtcNow).AddMinutes(-1);
+            repo.AddProcessFileSamples(Enumerable.Range(0, 30).Select(index => new ProcessFileIoSample
+            {
+                TimestampUtc = minute,
+                ProcessName = $"writer{index:D2}",
+                Path = $@"C:\data\file{index:D2}.log",
+                Kind = FileTargetKind.LogFile,
+                WriteBytes = 10_000 - index,
+            }).ToList());
+
+            using var config = new ConfigStore(_cfg);
+            config.Update(current => current.FileTargetPageSize = 25);
+            var window = new MainWindow(repo, config, new UserSettingsStore(_user));
+            try
+            {
+                window.ShowAllFileTargets();
+
+                Assert.Equal(25, FileRows(window).Count);
+                Assert.Equal(Visibility.Visible, window.BtnFileTargetsShowMore.Visibility);
+                Assert.Equal("Show 25 more", window.BtnFileTargetsShowMore.Content);
+                Assert.Contains("top 25 rows", window.FileTargetsFooter.Text);
+
+                window.BtnFileTargetsShowMore.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+                Assert.Equal(30, FileRows(window).Count);
+                Assert.Equal(Visibility.Collapsed, window.BtnFileTargetsShowMore.Visibility);
+                Assert.Contains("all 30 matching row", window.FileTargetsFooter.Text);
+                Assert.Equal("writer00", Property<string>(FileRows(window)[0], "ContextLabel").Split(' ', 2)[0]);
+                Assert.Equal("writer29", Property<string>(FileRows(window)[29], "ContextLabel").Split(' ', 2)[0]);
+            }
+            finally
+            {
+                CleanupWindow(window);
+            }
+        });
+    }
+
+    [Fact]
     public void RowActions_DispatchOnlyForFileTargetRows()
     {
         RunStaAsync(async () =>
@@ -352,6 +489,63 @@ public sealed class FileTargetsDialogTests : IDisposable
                 Assert.True(escape.Handled);
                 Assert.Equal(Visibility.Collapsed, window.FileTailOverlay.Visibility);
                 window.FileTailClose_Click(window, new RoutedEventArgs());
+            }
+            finally
+            {
+                CleanupWindow(window);
+            }
+        });
+    }
+
+    [Fact]
+    public void LiveTail_FitsNarrowViewportAndFolderActionSelectsTheFile()
+    {
+        RunSta(() =>
+        {
+            EnsureApplication();
+            var repo = CreateSeededRepository();
+            using var config = new ConfigStore(_cfg);
+            var window = new MainWindow(repo, config, new UserSettingsStore(_user));
+            try
+            {
+                window.ShowFileTargets("System");
+                object textRow = FileRows(window).Single(row => Name(row) == "app.log");
+                Assert.True(Property<bool>(textRow, "CanOpenContainingFolder"));
+
+                window.TailInitialReader = (_, _, _) => new TailBatch(["seed"], 4, false, null);
+                Invoke(window, "FileTargetTail_Click", new Border { DataContext = textRow }, new RoutedEventArgs());
+
+                const double viewportWidth = 900;
+                const double viewportHeight = 700;
+                var content = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
+                content.Measure(new Size(viewportWidth, viewportHeight));
+                content.Arrange(new Rect(0, 0, viewportWidth, viewportHeight));
+                content.UpdateLayout();
+
+                Point dialogRight = window.FileTailDialogBorder.TranslatePoint(
+                    new Point(window.FileTailDialogBorder.ActualWidth, 0),
+                    content);
+                Assert.InRange(window.FileTailDialogBorder.ActualWidth, 1, viewportWidth - 68);
+                Assert.InRange(dialogRight.X, 1, viewportWidth);
+                RenderFileTailSnapshotIfRequested(window, viewportWidth, viewportHeight);
+
+                System.Diagnostics.ProcessStartInfo? launched = null;
+                window.FileShellLauncher = startInfo => launched = startInfo;
+                Invoke(window, "FileTargetOpenFolder_Click", new Border { DataContext = textRow }, new RoutedEventArgs());
+
+                Assert.NotNull(launched);
+                Assert.Equal("explorer.exe", launched.FileName);
+                Assert.Equal("/select,\"C:\\logs\\app.log\"", launched.Arguments);
+                Assert.True(launched.UseShellExecute);
+                Assert.Contains("Opened the containing folder", window.FileTargetsFooter.Text);
+
+                launched = null;
+                Invoke(window, "FileTargetOpenFolder_Click", new object(), new RoutedEventArgs());
+                Assert.Null(launched);
+
+                window.FileShellLauncher = _ => throw new InvalidOperationException("unavailable");
+                Invoke(window, "FileTargetOpenFolder_Click", new Border { DataContext = textRow }, new RoutedEventArgs());
+                Assert.Contains("could not be opened", window.FileTargetsFooter.Text);
             }
             finally
             {
@@ -865,6 +1059,25 @@ public sealed class FileTargetsDialogTests : IDisposable
         element.UpdateLayout();
 
         var bitmap = new RenderTargetBitmap(1180, 900, 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(element);
+
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using var stream = File.Create(target);
+        encoder.Save(stream);
+    }
+
+    private static void RenderFileTailSnapshotIfRequested(MainWindow window, double width, double height)
+    {
+        string? target = Environment.GetEnvironmentVariable("DAM_FILE_TAIL_SNAPSHOT");
+        if (string.IsNullOrWhiteSpace(target)) return;
+
+        var element = window.FileTailOverlay;
+        element.Measure(new Size(width, height));
+        element.Arrange(new Rect(0, 0, width, height));
+        element.UpdateLayout();
+
+        var bitmap = new RenderTargetBitmap((int)width, (int)height, 96, 96, PixelFormats.Pbgra32);
         bitmap.Render(element);
 
         var encoder = new PngBitmapEncoder();
