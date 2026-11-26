@@ -744,8 +744,8 @@ adds a Startup shortcut, and opens the dashboard.</p>
 <li><strong>Disk selector:</strong> chooses one physical disk or
 <strong>All disks</strong>. SSDs are listed first. All-disk mode sums
 summary, trend, and throughput values; the live graph retains separate
-read/write series for every disk. SMART wear, TBW percentage, and
-lifespan stay per-drive because those health values cannot be safely
+read/write series for every disk. SMART wear, TBW percentage, and time
+to TBW stay per-drive because those health values cannot be safely
 combined.</li>
 <li><strong>Refresh:</strong> re-reads current data immediately.</li>
 <li><strong>Settings:</strong> switches between the dashboard and
@@ -766,7 +766,7 @@ rate.</li>
 <li>Rated TBW or the configured rating range.</li>
 <li>Drive Life Used.</li>
 <li>Lifetime bytes written/read when the drive exposes them.</li>
-<li>Projected lifespan.</li>
+<li>Time to the TBW rating.</li>
 <li>Recent average writes per hour, day, and week.</li>
 </ul>
 <h3 id="trend-chart">Trend chart</h3>
@@ -891,8 +891,8 @@ visible.</p>
 <p>The default profile applies to every SSD and has three independently
 enabled conditions:</p>
 <ul>
-<li><strong>Projected remaining life</strong> falls below <strong>1
-year</strong>.</li>
+<li><strong>Projected time to the endurance limit</strong> falls below
+<strong>1 year</strong>.</li>
 <li><strong>SMART-reported endurance remaining</strong> falls to
 <strong>20% or less</strong>. This uses only the drive’s own SMART/NVMe
 wear value.</li>
@@ -928,9 +928,10 @@ trigger it.</td>
 only when the drive reports no SMART wear.</td>
 </tr>
 <tr>
-<td>Projected remaining life</td>
-<td>This drive’s configured rating; otherwise the drive’s SMART wear
-rate extrapolated to 100%; otherwise the assumed default range.</td>
+<td>Projected time to the endurance limit</td>
+<td>This drive’s configured rating; otherwise 100% SMART wear,
+extrapolated from the drive’s wear rate; otherwise the assumed default
+range.</td>
 </tr>
 </tbody>
 </table>
@@ -950,7 +951,12 @@ point, so TBW-based notifications advise backing up and watching SMART
 health instead. When the only evidence is an assumed TBW rating, the
 notification suggests setting the drive’s rated TBW (or using
 <strong>Look up rated TBW</strong>).</p>
-<p>The remaining-life value accepts <strong>days</strong>,
+<p>When lifetime writes have already passed a TBW target, the
+notification and dashboard say so (“Reached”) instead of predicting a
+remaining time, and with a rating range they report the time to the
+upper bound once the lower bound is passed. Reaching a TBW rating is not
+end of life; check SMART wear for the drive’s own measurement.</p>
+<p>The time value accepts <strong>days</strong>,
 <strong>months</strong>, or <strong>years</strong>. Select <strong>All
 disks</strong> before opening Settings to edit the default profile.
 Select one disk and enable <strong>Override defaults for this
@@ -1063,8 +1069,8 @@ snoozing</h2>
 <li>High process-level writes in one hour.</li>
 <li>High combined process writes.</li>
 <li>SMART-reported endurance remaining, lifetime writes reaching a share
-of the TBW rating, or projected remaining life falling below the
-configured thresholds.</li>
+of the TBW rating, or projected time to the endurance limit falling
+below the configured thresholds.</li>
 <li>Repeated Windows Disk event 11 controller errors.</li>
 </ul>
 <p>The cooldown prevents the same rule and scope from creating alerts
@@ -1668,9 +1674,10 @@ settings.</p>
 <tr>
 <td><code>defaultEnduranceAlert</code></td>
 <td style="text-align: right;">1 year / 20% / 80%</td>
-<td>Global profile: projected remaining life, SMART-reported endurance
-remaining, and lifetime writes as a share of the TBW rating
-(<code>enableTbwConsumed</code>, <code>tbwConsumedPercent</code>).</td>
+<td>Global profile: projected time to the endurance limit,
+SMART-reported endurance remaining, and lifetime writes as a share of
+the TBW rating (<code>enableTbwConsumed</code>,
+<code>tbwConsumedPercent</code>).</td>
 </tr>
 <tr>
 <td><code>diskEnduranceAlertOverrides</code></td>

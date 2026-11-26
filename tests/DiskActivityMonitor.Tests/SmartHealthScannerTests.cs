@@ -139,6 +139,17 @@ public class SmartHealthScannerTests
         Assert.Contains("1 controller error.", single.Summary);
     }
 
+    [Fact]
+    public void Assess_ZeroIoCounters_ReportWearButNoLifetimeTotals()
+    {
+        var result = SmartHealthScanner.Assess(Disk(), 0,
+            new SmartHealthScanner.Evidence(Detected(), new SmartLifetimeReader.SmartLifetime(0, 0, 95), "Healthy", "OK", "OK", "NVMe"), ScanTime);
+
+        Assert.Equal(95, result.WearPercent);
+        Assert.Null(result.LifetimeBytesWritten);
+        Assert.Null(result.LifetimeBytesRead);
+    }
+
     [Theory]
     [MemberData(nameof(CriticalSignals))]
     public void DetermineGrade_EachCriticalSignalWins(ushort? health, ushort[] operations, string status,

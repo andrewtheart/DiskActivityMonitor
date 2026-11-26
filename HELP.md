@@ -135,7 +135,7 @@ This publishes staging files under the repository's `publish` directory, copies 
 
 - **Disk selector:** chooses one physical disk or **All disks**. SSDs are listed first. All-disk
   mode sums summary, trend, and throughput values; the live graph retains separate read/write
-  series for every disk. SMART wear, TBW percentage, and lifespan stay per-drive because those
+  series for every disk. SMART wear, TBW percentage, and time to TBW stay per-drive because those
   health values cannot be safely combined.
 - **Refresh:** re-reads current data immediately.
 - **Settings:** switches between the dashboard and editable configuration.
@@ -156,7 +156,7 @@ This panel displays:
 - Rated TBW or the configured rating range.
 - Drive Life Used.
 - Lifetime bytes written/read when the drive exposes them.
-- Projected lifespan.
+- Time to the TBW rating.
 - Recent average writes per hour, day, and week.
 
 ### Trend chart
@@ -271,7 +271,7 @@ percentage and monitored/requested minute counts so this behavior is visible.
 
 The default profile applies to every SSD and has three independently enabled conditions:
 
-- **Projected remaining life** falls below **1 year**.
+- **Projected time to the endurance limit** falls below **1 year**.
 - **SMART-reported endurance remaining** falls to **20% or less**. This uses only the drive's own
   SMART/NVMe wear value.
 - **Lifetime writes reach 80% of the TBW rating** (accepted range 1-1000%). With a configured
@@ -286,7 +286,7 @@ Each condition uses the most specific evidence available:
 |---|---|
 | SMART-reported endurance remaining | The drive's SMART wear only. Drives that do not report wear never trigger it. |
 | Lifetime writes vs TBW | This drive's configured rating. The assumed default range is used only when the drive reports no SMART wear. |
-| Projected remaining life | This drive's configured rating; otherwise the drive's SMART wear rate extrapolated to 100%; otherwise the assumed default range. |
+| Projected time to the endurance limit | This drive's configured rating; otherwise 100% SMART wear, extrapolated from the drive's wear rate; otherwise the assumed default range. |
 
 NVMe drives keep counting wear past 100% once their rated endurance is exceeded (up to 255%), and
 those values are kept: a drive reporting 115% used has 0% remaining.
@@ -302,7 +302,12 @@ TBW rating is a write budget rather than an end-of-life point, so TBW-based noti
 backing up and watching SMART health instead. When the only evidence is an assumed TBW rating, the
 notification suggests setting the drive's rated TBW (or using **Look up rated TBW**).
 
-The remaining-life value accepts **days**, **months**, or **years**. Select **All disks** before
+When lifetime writes have already passed a TBW target, the notification and dashboard say so
+("Reached") instead of predicting a remaining time, and with a rating range they report the time
+to the upper bound once the lower bound is passed. Reaching a TBW rating is not end of life; check
+SMART wear for the drive's own measurement.
+
+The time value accepts **days**, **months**, or **years**. Select **All disks** before
 opening Settings to edit the default profile. Select one disk and enable **Override defaults for
 this disk** to define different conditions for only that drive. Removing the override immediately
 returns it to the global profile.
@@ -405,7 +410,7 @@ The collector can raise alerts for:
 - High process-level writes in one hour.
 - High combined process writes.
 - SMART-reported endurance remaining, lifetime writes reaching a share of the TBW rating, or
-  projected remaining life falling below the configured thresholds.
+  projected time to the endurance limit falling below the configured thresholds.
 - Repeated Windows Disk event 11 controller errors.
 
 The cooldown prevents the same rule and scope from creating alerts continuously.
@@ -725,7 +730,7 @@ Machine-wide collector settings are stored in `%ProgramData%\DiskActivityMonitor
 | `defaultSsdTbwUpper` | `600` | Upper bound of the estimate used when TBW is unknown. |
 | `diskTbwRatings` | empty | Per-disk lower/exact TBW values. |
 | `diskTbwRatingsUpper` | empty | Per-disk upper TBW values. |
-| `defaultEnduranceAlert` | 1 year / 20% / 80% | Global profile: projected remaining life, SMART-reported endurance remaining, and lifetime writes as a share of the TBW rating (`enableTbwConsumed`, `tbwConsumedPercent`). |
+| `defaultEnduranceAlert` | 1 year / 20% / 80% | Global profile: projected time to the endurance limit, SMART-reported endurance remaining, and lifetime writes as a share of the TBW rating (`enableTbwConsumed`, `tbwConsumedPercent`). |
 | `diskEnduranceAlertOverrides` | empty | Full per-disk profiles that replace the global endurance conditions. |
 | `highCoveragePercent` | `90` | Minimum monitoring coverage required for calendar-rate and endurance projection claims. |
 | `enduranceCoverageWindowDays` | `7` | Rolling history window used to validate endurance projections (1-365 days). |

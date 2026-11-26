@@ -259,7 +259,7 @@
                             <TextBlock Text="SSD ENDURANCE" Style="{StaticResource Caption}" />
                             <TextBlock x:Name="WearMetric" Style="{StaticResource Metric}" Text="-" Margin="0,4,0,0" />
                             <TextBlock x:Name="WearSub" Style="{StaticResource Caption}" TextWrapping="Wrap"
-                                       Text="Projected lifespan at the current write rate." Margin="0,2,0,0" />
+                                       Text="Projected time to the TBW rating at the current write rate." Margin="0,2,0,0" />
                         </StackPanel>
                     </Border>
                 </Grid>
@@ -331,7 +331,7 @@
                             </Button>
                         </Grid>
 
-                        <!-- Two headline metrics: lifetime wear (SMART) and projected lifespan -->
+                        <!-- Two headline metrics: lifetime wear (SMART) and projected time to the TBW rating -->
                         <Grid Margin="0,18,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
@@ -368,7 +368,7 @@
                             </StackPanel>
 
                             <StackPanel Grid.Column="2">
-                                <TextBlock Text="PROJECTED LIFESPAN" Style="{StaticResource Caption}" />
+                                <TextBlock Text="TIME TO TBW RATING" Style="{StaticResource Caption}" />
                                 <TextBlock x:Name="EnduranceProjValue" Style="{StaticResource Metric}" Text="-" Margin="0,4,0,10" />
                                 <TextBlock x:Name="EnduranceProjSub" Style="{StaticResource Caption}" TextWrapping="Wrap"
                                            Text="at the current write rate" />
@@ -979,7 +979,7 @@
                                 </Grid>
                                 <UniformGrid Columns="2" Margin="0,14,0,0">
                                     <StackPanel Style="{StaticResource SettingsField}">
-                                        <CheckBox x:Name="ChkEnduranceLife" Content="Projected remaining life falls below"
+                                        <CheckBox x:Name="ChkEnduranceLife" Content="Projected time to the endurance limit falls below"
                                                   Foreground="{StaticResource TextPrimary}" />
                                         <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                                             <TextBox x:Name="TxtEnduranceLifeValue" Style="{StaticResource DarkTextBox}" />
@@ -1011,7 +1011,7 @@
                                     </StackPanel>
                                 </UniformGrid>
                                 <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,0,0,8"
-                                           Text="SMART wear is the drive's own measurement and is used whenever the drive reports it. TBW checks use this drive's configured rating; the assumed default TBW range is used only when the drive reports no SMART wear. Projections use the configured rating, then the drive's SMART wear rate, then the default range." />
+                                           Text="SMART wear is the drive's own measurement and is used whenever the drive reports it. TBW checks use this drive's configured rating; the assumed default TBW range is used only when the drive reports no SMART wear. The endurance limit for projections is the configured rating, then 100% SMART wear (extrapolated from the drive's wear rate), then the default range." />
                                 <TextBlock x:Name="EnduranceAlertInheritanceText" Style="{StaticResource Caption}"
                                            TextWrapping="Wrap" Margin="0,0,0,2" />
                             </StackPanel>

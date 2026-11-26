@@ -130,7 +130,8 @@ public static class SmartHealthScanner
             PowerOnHours = direct?.PowerOnHours, UnsafeShutdowns = direct?.UnsafeShutdowns, MediaErrors = direct?.MediaErrors,
             ReadErrorsTotal = evidence.ReadErrorsTotal, ReadErrorsUncorrected = evidence.ReadErrorsUncorrected,
             WriteErrorsTotal = evidence.WriteErrorsTotal, WriteErrorsUncorrected = evidence.WriteErrorsUncorrected,
-            LifetimeBytesWritten = direct?.BytesWritten, LifetimeBytesRead = direct?.BytesRead,
+            LifetimeBytesWritten = direct is { BytesWritten: > 0 } written ? written.BytesWritten : null,
+            LifetimeBytesRead = direct is { BytesRead: > 0 } read ? read.BytesRead : null,
             Grade = grade, Headline = headline, Summary = summary, Findings = findings,
         };
     }

@@ -1632,6 +1632,10 @@ public sealed class MainWindowCoverageTests : IDisposable
         Assert.Equal(1, disabledJunk.RemainingLifeValue);
         Assert.Equal(80, disabledJunk.TbwConsumedPercent);
         Assert.True(MainWindow.TryParseEnduranceAlert(
+            false, "junk", EnduranceAlertTimeUnit.Days, true, "20", false, "80", out EnduranceAlertThreshold disabledDays, out _));
+        Assert.Equal(1, disabledDays.RemainingLifeValue);
+        Assert.Equal(EnduranceAlertTimeUnit.Years, disabledDays.RemainingLifeUnit);
+        Assert.True(MainWindow.TryParseEnduranceAlert(
             true, "2", EnduranceAlertTimeUnit.Years, false, "NaN", false, "", out EnduranceAlertThreshold disabledPercent, out _));
         Assert.Equal(20, disabledPercent.RemainingPercent);
 
@@ -1920,6 +1924,23 @@ public sealed class MainWindowCoverageTests : IDisposable
                 }, end);
                 Assert.Equal("0.0 to 2.7 yrs", window.EnduranceProjValue.Text);
                 Assert.Contains("writes before monitoring began are unknown, so this may be optimistic", window.EnduranceProjSub.Text);
+
+                // A TBW target that is already behind the drive is reported as reached, not as future time.
+                config.Update(value => value.DiskTbwRatings[disk.DiskId] = 5);
+                Invoke(window, "UpdateEndurance", new DiskInfo
+                {
+                    DiskId = disk.DiskId, InstanceName = disk.InstanceName, MediaType = DiskMediaType.Ssd,
+                }, end);
+                Assert.StartsWith("past the 5 TBW lower bound; reaches 1000 TBW at", window.EnduranceProjSub.Text);
+                config.Update(value => value.DiskTbwRatingsUpper.Remove(disk.DiskId));
+                Invoke(window, "UpdateEndurance", new DiskInfo
+                {
+                    DiskId = disk.DiskId, InstanceName = disk.InstanceName, MediaType = DiskMediaType.Ssd,
+                }, end);
+                Assert.Equal("Reached", window.EnduranceProjValue.Text);
+                Assert.Equal("Reached", window.WearMetric.Text);
+                Assert.StartsWith("lifetime writes already exceed 5 TBW", window.EnduranceProjSub.Text);
+                Assert.StartsWith("lifetime writes already exceed 5 TBW", window.WearSub.Text);
 
                 foreach (System.Windows.Controls.Primitives.ToggleButton button in new[] { window.TpBtn1h, window.TpBtn24h, window.TpBtn7d, window.TpBtn30d })
                     Invoke(window, "ThroughputRange_Click", button, new RoutedEventArgs());

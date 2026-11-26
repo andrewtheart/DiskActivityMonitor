@@ -192,9 +192,10 @@ public class AlertEngineTests : IDisposable
 
         var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "endurance-health:0");
         Assert.Equal(AlertSeverity.Warning, alert.Severity);
-        Assert.Contains("Projected remaining life", alert.Message);
-        Assert.Contains("to", alert.Message);
-        Assert.Contains("Writes made before monitoring began are unknown", alert.Message);
+        Assert.Contains("Lifetime writes have already passed the assumed 150 to 600 TBW default rating.", alert.Message);
+        Assert.Contains("The projected-time warning threshold is", alert.Message);
+        Assert.DoesNotContain("remaining life is", alert.Message);
+        Assert.DoesNotContain("Writes made before monitoring began", alert.Message);
     }
 
     [Fact]
@@ -265,7 +266,8 @@ public class AlertEngineTests : IDisposable
         {
             Assert.NotNull(projection);
             Assert.Equal(AlertSeverity.Warning, projection.Severity);
-            Assert.Contains("Projected remaining life", projection.Message);
+            Assert.Contains("the assumed 150 TBW default rating is reached in", projection.Message);
+            Assert.Contains("Writes made before monitoring began are unknown, so the actual time may be shorter.", projection.Message);
         }
     }
 
@@ -365,7 +367,7 @@ public class AlertEngineTests : IDisposable
         var alerts = _engine.Evaluate([MakeSsd(lifetimeWritten: 900_000_000_000)], cfg, now);
 
         Assert.Contains(alerts, alert => alert.RuleKey == "endurance-health:0"
-            && alert.Message.Contains("Projected remaining life", StringComparison.Ordinal));
+            && alert.Message.Contains("the assumed 1 TBW default rating is reached in", StringComparison.Ordinal));
     }
 
     // ────────────────────────────────────────── Endurance sources: SMART wear vs configured vs assumed TBW
@@ -504,10 +506,65 @@ public class AlertEngineTests : IDisposable
 
         // 100 TB at 50-51% used leaves about 96-100 TB, roughly 3 months at 1 TB/day.
         var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "endurance-health:0");
-        Assert.Contains("until the drive's SMART wear reaches 100%, extrapolated from 50% used after 100 TB written", alert.Message);
+        Assert.Contains("At 1 TB/day, the drive's SMART wear reaches 100% in 3.2 months to 3.3 months, extrapolated from 50% used after 100 TB written.", alert.Message);
+        Assert.InRange(alert.Value, 95.5, 96.5);
         Assert.DoesNotContain("assumed", alert.Message);
         Assert.Equal(1, alert.Message.Split("SMART").Length - 1);
         Assert.Contains("plan drive replacement", alert.Message);
+    }
+
+    [Theory]
+    [InlineData(98, true)]     // only the conservative 96-day end is inside the window
+    [InlineData(95, false)]
+    public void Evaluate_SmartProjection_ComparesConservativeBoundWithThreshold(double warningDays, bool expectedAlert)
+    {
+        DateTime now = new(2026, 11, 25, 12, 0, 0, DateTimeKind.Utc);
+        AddSevenDaysOfCoverage(now, 7_000_000_000_000);
+        var cfg = EnduranceOnlyConfig();
+        cfg.DefaultEnduranceAlert.RemainingLifeValue = warningDays;
+        cfg.DefaultEnduranceAlert.RemainingLifeUnit = EnduranceAlertTimeUnit.Days;
+        var disk = MakeSsd(wearPercent: 50, lifetimeWritten: 100_000_000_000_000);
+
+        var alerts = _engine.Evaluate([disk], cfg, now);
+
+        Assert.Equal(expectedAlert, alerts.Any(candidate => candidate.RuleKey == "endurance-health:0"));
+    }
+
+    [Fact]
+    public void Evaluate_ConfiguredTbwAlreadyPassed_SaysSoInsteadOfZeroRemainingLife()
+    {
+        DateTime now = new(2026, 11, 25, 12, 0, 0, DateTimeKind.Utc);
+        AddSevenDaysOfCoverage(now, 7_000_000_000);   // about 1 GB/day
+        var cfg = EnduranceOnlyConfig();
+        cfg.DiskTbwRatings["0"] = 300;
+        cfg.DefaultEnduranceAlert.EnableTbwConsumed = false;
+        var disk = MakeSsd(wearPercent: 37, lifetimeWritten: 310_000_000_000_000);
+
+        var alerts = _engine.Evaluate([disk], cfg, now);
+
+        var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "endurance-health:0");
+        Assert.StartsWith("Lifetime writes have already passed this drive's configured 300 TBW rating.", alert.Message);
+        Assert.DoesNotContain("0 days", alert.Message);
+        Assert.Contains("SMART data reports 37% of its endurance used.", alert.Message);
+        Assert.DoesNotContain("plan drive replacement", alert.Message);
+        Assert.Equal(0, alert.Value);
+    }
+
+    [Fact]
+    public void Evaluate_ConfiguredTbwRangeLowerBoundPassed_ReportsTimeToUpperBound()
+    {
+        DateTime now = new(2026, 11, 25, 12, 0, 0, DateTimeKind.Utc);
+        AddSevenDaysOfCoverage(now, 7_000_000_000_000);   // about 1 TB/day
+        var cfg = EnduranceOnlyConfig();
+        cfg.DiskTbwRatings["0"] = 300;
+        cfg.DiskTbwRatingsUpper["0"] = 600;
+        cfg.DefaultEnduranceAlert.EnableTbwConsumed = false;
+        var disk = MakeSsd(wearPercent: null, lifetimeWritten: 400_000_000_000_000);
+
+        var alerts = _engine.Evaluate([disk], cfg, now);
+
+        var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "endurance-health:0");
+        Assert.StartsWith("Lifetime writes have passed the lower bound of this drive's configured 300 to 600 TBW rating; at 1 TB/day the upper bound is reached in 6.6 months.", alert.Message);
     }
 
     [Fact]
@@ -523,7 +580,7 @@ public class AlertEngineTests : IDisposable
         var alerts = _engine.Evaluate([disk], cfg, now);
 
         var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "endurance-health:0");
-        Assert.Contains("until this drive's configured 150 TBW rating is reached", alert.Message);
+        Assert.Contains("At 1 TB/day, this drive's configured 150 TBW rating is reached in 50 days.", alert.Message);
         Assert.Contains("SMART data reports 5% of its endurance used.", alert.Message);
         Assert.DoesNotContain("Writes made before monitoring began", alert.Message);
         Assert.Contains("Drives often keep working past their rated TBW", alert.Message);
@@ -541,7 +598,7 @@ public class AlertEngineTests : IDisposable
         var alerts = _engine.Evaluate([disk], cfg, now);
 
         var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "endurance-health:0");
-        Assert.Contains("until the assumed 150 to 600 TBW default rating is reached", alert.Message);
+        Assert.Contains("At 1 TB/day, the assumed 150 to 600 TBW default rating is reached in 50 days to 16.4 months.", alert.Message);
         Assert.Contains("Look up rated TBW", alert.Message);
     }
 

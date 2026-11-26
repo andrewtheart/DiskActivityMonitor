@@ -323,7 +323,8 @@ public sealed class AlertEngine
             {
                 double daysLow;
                 double daysHigh;
-                string target;
+                string rate = ByteFormat.Humanize(avgPerDay);
+                Func<string, string> describe;
                 bool smartProjection = !ratingConfigured && smartWear is > 0 && lifetimeWritten is not null;
                 if (smartProjection)
                 {
@@ -332,7 +333,9 @@ public sealed class AlertEngine
                     double lifetime = lifetimeWritten!.Value;
                     daysLow = Math.Max(0, lifetime * (100.0 / (w + 1) - 1)) / avgPerDay;
                     daysHigh = Math.Max(0, lifetime * (100.0 / w - 1)) / avgPerDay;
-                    target = $"until the drive's SMART wear reaches 100%, extrapolated from {w}% used after {ByteFormat.Humanize(lifetime)} written";
+                    describe = span => daysHigh <= 0
+                        ? $"The drive's SMART wear has already reached {w}%."
+                        : $"At {rate}/day, the drive's SMART wear reaches 100% in {span}, extrapolated from {w}% used after {ByteFormat.Humanize(lifetime)} written.";
                 }
                 else
                 {
@@ -340,18 +343,22 @@ public sealed class AlertEngine
                         ?? _repo.GetDiskTotals(disk.DiskId, first, nowUtc).Write;
                     daysLow = Math.Max(0, tbwLowBytes - consumed) / avgPerDay;
                     daysHigh = Math.Max(0, tbwHighBytes - consumed) / avgPerDay;
-                    target = $"until {ratingText} is reached";
+                    describe = span => daysHigh <= 0
+                        ? $"Lifetime writes have already passed {ratingText}."
+                        : daysLow <= 0
+                            ? $"Lifetime writes have passed the lower bound of {ratingText}; at {rate}/day the upper bound is reached in {FormatRemainingTime(daysHigh)}."
+                            : $"At {rate}/day, {ratingText} is reached in {span}.";
                 }
 
                 if (daysLow <= threshold.RemainingLifeDays)
                 {
-                    string projection = FormatRemainingTime(daysLow);
+                    string span = FormatRemainingTime(daysLow);
                     string upper = FormatRemainingTime(daysHigh);
-                    if (upper != projection)
-                        projection += $" to {upper}";
-                    reasons.Add($"Projected remaining life is {projection} at {ByteFormat.Humanize(avgPerDay)}/day {target}; the warning threshold is {FormatRemainingTime(threshold.RemainingLifeDays)}."
-                        + (lifetimeWritten is null
-                            ? " Writes made before monitoring began are unknown, so the actual remaining life may be shorter."
+                    if (upper != span)
+                        span += $" to {upper}";
+                    reasons.Add($"{describe(span)} The projected-time warning threshold is {FormatRemainingTime(threshold.RemainingLifeDays)}."
+                        + (lifetimeWritten is null && daysHigh > 0
+                            ? " Writes made before monitoring began are unknown, so the actual time may be shorter."
                             : ""));
                     alertValue = daysLow;
                     alertThreshold = threshold.RemainingLifeDays;

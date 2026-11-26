@@ -136,12 +136,14 @@ public static class SmartLifetimeReader
 
         ulong unitsRead = BinaryPrimitives.ReadUInt64LittleEndian(log[32..40]);
         ulong unitsWritten = BinaryPrimitives.ReadUInt64LittleEndian(log[48..56]);
-        if (unitsRead == 0 && unitsWritten == 0) return null;
 
         int kelvin = BinaryPrimitives.ReadUInt16LittleEndian(log[1..3]);
         int? temperature = kelvin is > 200 and < 500 ? kelvin - 273 : null;
         int used = log[5];
         int spare = log[3];
+        // A zero-filled page is unpopulated; zero I/O counters alone must not discard health fields.
+        if (unitsRead == 0 && unitsWritten == 0 && used == 0 && spare == 0 && temperature is null && log[0] == 0)
+            return null;
 
         return new SmartLifetime(
             SaturatingBytes(unitsWritten),

@@ -895,8 +895,8 @@ public partial class MainWindow : Window
 
         WearMetric.Text = $"{disks.Count:N0} disks";
         WearSub.Text = perDay > 0
-            ? $"combined {ByteFormat.Humanize(perDay)}/day; lifespan remains drive-specific"
-            : "Combined physical activity; lifespan remains drive-specific.";
+            ? $"combined {ByteFormat.Humanize(perDay)}/day; time to TBW remains drive-specific"
+            : "Combined physical activity; time to TBW remains drive-specific.";
         EnduranceDiskText.Text = "All disks selected";
         EnduranceRatedText.Text = "Per-disk ratings";
         EnduranceRatedBadge.IsEnabled = false;
@@ -929,7 +929,7 @@ public partial class MainWindow : Window
             lifetimeReadCount);
         SmartWearLifeText.Visibility = Visibility.Visible;
         EnduranceProjValue.Text = "Per drive";
-        EnduranceProjSub.Text = "select a disk for its projected lifespan";
+        EnduranceProjSub.Text = "select a disk for its projected time to TBW";
         EnduranceAvgHour.Text = perHour > 0 ? ByteFormat.Humanize(perHour) : "-";
         EnduranceAvgDay.Text = perDay > 0 ? ByteFormat.Humanize(perDay) : "-";
         EnduranceAvgWeek.Text = perDay > 0 ? ByteFormat.Humanize(perDay * 7) : "-";
@@ -1005,10 +1005,13 @@ public partial class MainWindow : Window
         double pctLow = tbwHighBytes > 0 ? consumedBytes / tbwHighBytes * 100.0 : pctHigh;
 
         // Years to reach TBW at the recent rate: a higher rating yields more years.
-        double yearsLow = canProject ? Math.Max(tbwLowBytes - consumedBytes, tbwLowBytes * 0.001) / (avgPerDay * 365.0) : double.NaN;
-        double yearsHigh = canProject ? Math.Max(tbwHighBytes - consumedBytes, tbwHighBytes * 0.001) / (avgPerDay * 365.0) : double.NaN;
+        double yearsLow = canProject ? Math.Max(0, tbwLowBytes - consumedBytes) / (avgPerDay * 365.0) : double.NaN;
+        double yearsHigh = canProject ? Math.Max(0, tbwHighBytes - consumedBytes) / (avgPerDay * 365.0) : double.NaN;
+        bool tbwReached = consumedBytes >= tbwHighBytes;
+        bool lowerTbwReached = consumedBytes >= tbwLowBytes;
         string yearsText;
         if (double.IsNaN(yearsLow)) yearsText = "-";
+        else if (tbwReached) yearsText = "Reached";
         else if (!ranged) yearsText = $"{FormatYearsShort(yearsLow)} yrs";
         else if (yearsLow >= 100 && yearsHigh >= 100) yearsText = "100+ yrs";
         else yearsText = $"{FormatYearsShort(yearsLow)} to {FormatYearsShort(yearsHigh)} yrs";
@@ -1017,13 +1020,15 @@ public partial class MainWindow : Window
         if (avgPerDay > 0 && !double.IsNaN(yearsLow))
         {
             WearMetric.Text = yearsText;
-            WearSub.Text = $"using {tbwBasisLabel} at {ByteFormat.Humanize(avgPerDay)}/day";
+            WearSub.Text = tbwReached
+                ? $"lifetime writes already exceed {tbwBasisLabel}"
+                : $"to {tbwBasisLabel} at {ByteFormat.Humanize(avgPerDay)}/day";
         }
         else
         {
             WearMetric.Text = "-";
             WearSub.Text = recentRate.MonitoredMinutes == 0
-                ? $"Using {tbwBasisLabel}. Collecting data to project lifespan."
+                ? $"Using {tbwBasisLabel}. Collecting data to project the time to TBW."
                 : $"Projection withheld. {FormatRecentCoverage(recentRate, cfg.EnduranceCoverageWindowDays)} Requires {cfg.HighCoveragePercent:0.#}%.";
         }
 
@@ -1080,20 +1085,24 @@ public partial class MainWindow : Window
             SmartWearLifeText.Visibility = Visibility.Collapsed;
         }
 
-        // Headline 2: projected lifespan at the recent average write rate.
+        // Headline 2: projected time to the TBW rating at the recent average write rate.
         if (avgPerDay > 0 && !double.IsNaN(yearsLow))
         {
             EnduranceProjValue.Text = yearsText;
-            EnduranceProjSub.Text = (ranged
-                ? $"reaches {tbwBasisLabel} at {ByteFormat.Humanize(avgPerDay)}/day"
-                : $"reaches {tbwLabel} about {DateTime.Now.AddDays(Math.Min(yearsLow, 5000) * 365.0):MMM yyyy}, at {ByteFormat.Humanize(avgPerDay)}/day")
-                + (lifeWritten is null ? "; writes before monitoring began are unknown, so this may be optimistic" : "");
+            EnduranceProjSub.Text = (tbwReached
+                ? $"lifetime writes already exceed {tbwBasisLabel}; a TBW rating is a write budget, so check SMART wear for remaining life"
+                : lowerTbwReached
+                    ? $"past the {tbwLow:0.#} TBW lower bound; reaches {tbwHigh:0.#} TBW at {ByteFormat.Humanize(avgPerDay)}/day"
+                    : ranged
+                        ? $"reaches {tbwBasisLabel} at {ByteFormat.Humanize(avgPerDay)}/day"
+                        : $"reaches {tbwLabel} about {DateTime.Now.AddDays(Math.Min(yearsLow, 5000) * 365.0):MMM yyyy}, at {ByteFormat.Humanize(avgPerDay)}/day")
+                + (lifeWritten is null && !tbwReached ? "; writes before monitoring began are unknown, so this may be optimistic" : "");
         }
         else
         {
             EnduranceProjValue.Text = "-";
             EnduranceProjSub.Text = recentRate.MonitoredMinutes == 0
-                ? "collecting data to project a lifespan"
+                ? "collecting data to project the time to TBW"
                 : $"withheld; {FormatRecentCoverage(recentRate, cfg.EnduranceCoverageWindowDays)} Requires {cfg.HighCoveragePercent:0.#}%.";
         }
 
@@ -2232,7 +2241,7 @@ public partial class MainWindow : Window
         bool editable = disk is null || hasOverride;
         SetEnduranceAlertEditorEnabled(editable);
         EnduranceAlertInheritanceText.Text = disk is null
-            ? "Default: warn below 1 year projected remaining life, at or below 20% SMART-reported endurance remaining, or when lifetime writes reach 80% of the TBW rating."
+            ? "Default: warn when the projected time to the endurance limit falls below 1 year, at or below 20% SMART-reported endurance remaining, or when lifetime writes reach 80% of the TBW rating."
             : hasOverride
                 ? "This disk uses the values above instead of the all-disks default."
                 : "Inherited from the all-disks default. Enable the override to set different thresholds for this disk.";
@@ -2306,7 +2315,7 @@ public partial class MainWindow : Window
         bool lifeReadable = TryReadNumber(lifeValueText, out double lifeValue);
         if (enableLife && (!lifeReadable || lifeValue <= 0))
         {
-            error = "Projected remaining life must be greater than 0.";
+            error = "Projected time to the endurance limit must be greater than 0.";
             return false;
         }
         bool percentReadable = TryReadNumber(percentText, out double percent);
@@ -2324,6 +2333,8 @@ public partial class MainWindow : Window
             return false;
         }
         threshold.RemainingLifeValue = lifeReadable ? Math.Max(0, lifeValue) : 1;
+        if (!lifeReadable)
+            threshold.RemainingLifeUnit = EnduranceAlertTimeUnit.Years;
         threshold.RemainingPercent = percentReadable ? Math.Clamp(percent, 0, 100) : 20;
         threshold.TbwConsumedPercent = tbwReadable
             ? Math.Clamp(tbwPercent, AppConfig.MinTbwConsumedPercent, AppConfig.MaxTbwConsumedPercent)
@@ -2993,7 +3004,7 @@ public partial class MainWindow : Window
         TbwEditUpperPanel.Visibility = useRange ? Visibility.Visible : Visibility.Collapsed;
         TbwEditLowerLabel.Text = useRange ? "Minimum TBW (TB)" : "Rated TBW (TB)";
         TbwEditModeHint.Text = useRange
-            ? "Use a range when credible sources publish different ratings. Wear and lifespan will be shown as ranges."
+            ? "Use a range when credible sources publish different ratings. Wear and time to TBW will be shown as ranges."
             : "Use a single value when the manufacturer publishes one rating for this exact drive capacity.";
         UpdateTbwEditPreview();
     }
@@ -3026,8 +3037,8 @@ public partial class MainWindow : Window
         }
 
         TbwEditPreviewText.Text = upper.HasValue
-            ? $"The dashboard will use {lower:0.#} to {upper:0.#} TBW and immediately recalculate wear and lifespan as ranges."
-            : $"The dashboard will use {lower:0.#} TBW and immediately recalculate wear and projected lifespan.";
+            ? $"The dashboard will use {lower:0.#} to {upper:0.#} TBW and immediately recalculate wear and time to TBW as ranges."
+            : $"The dashboard will use {lower:0.#} TBW and immediately recalculate wear and time to TBW.";
         TbwEditPreviewText.Foreground = (Brush)FindResource("TextPrimary");
     }
 
@@ -3385,7 +3396,7 @@ public partial class MainWindow : Window
         TbwLookupAction.Visibility = Visibility.Collapsed;
         SetTbwLookupOutcome(
             $"Applied {tbw:0.#} TBW",
-            "The selected endurance rating is now used for lifespan and wear projections. You can change it anytime in Settings.",
+            "The selected endurance rating is now used for wear and time-to-TBW projections. You can change it anytime in Settings.",
             TbwLookupOutcome.Success);
         LoadTbwField();
         RefreshAll();
@@ -3402,7 +3413,7 @@ public partial class MainWindow : Window
         TbwLookupAction.Visibility = Visibility.Collapsed;
         SetTbwLookupOutcome(
             $"Applied {lowerTbw:0.#} to {upperTbw:0.#} TBW",
-            "The selected endurance range is now used for lifespan and wear projections. You can change it anytime in Settings.",
+            "The selected endurance range is now used for wear and time-to-TBW projections. You can change it anytime in Settings.",
             TbwLookupOutcome.Success);
         LoadTbwField();
         RefreshAll();

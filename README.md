@@ -33,7 +33,7 @@ warns you when a drive or process crosses a threshold you set.
     </td>
     <td width="33%" align="center">
       <h3>💾 SSD Endurance</h3>
-      Combine rated TBW, lifetime writes, SMART wear, and current activity into a lifespan projection.
+      Combine rated TBW, lifetime writes, SMART wear, and current activity into an endurance projection.
     </td>
   </tr>
   <tr>
@@ -191,7 +191,7 @@ keys remain under `%LOCALAPPDATA%\DiskActivityMonitor\`.
 - **Disk selector** (top right): choose one tagged physical disk or **All disks**. Aggregate mode
   sums physical totals, cumulative writes, and throughput across every disk. The live chart keeps
   separate read/write lines and legend colors for each disk. SMART wear, TBW percentage, and
-  projected lifespan remain explicitly per-drive because combining them would be misleading.
+  time to TBW remain explicitly per-drive because combining them would be misleading.
 - **Summary cards**: written today, last 24h, last 7 days, and an endurance/projection card.
 - **Rated-TBW pill**: right-click the **TBW rated/estimated** badge in SSD endurance and choose
   **Look up rated TBW**. This forces a fresh lookup even if the drive already has a configured
@@ -219,12 +219,12 @@ keys remain under `%LOCALAPPDATA%\DiskActivityMonitor\`.
   choose **Configure chart** to set colors per visible disk/metric (or per aggregate metric). Colors
   are saved for the current Windows user. Hover any line vertex, bar, or donut segment to see its
   exact timestamp/label and numeric value.
-- **Endurance alerts**: the all-disks default warns when any SSD has less than **1 year** of projected
-  remaining life, when the drive's own **SMART wear** leaves at most **20% endurance remaining**, or
-  when **lifetime writes reach 80%** of the TBW rating. SMART wear is preferred whenever the drive
-  reports it; the assumed 150 to 600 TBW default is used only for drives without SMART wear, and
-  notifications say which measurement fired and whether the rating is configured or assumed.
-  Remaining-life units can be days, months, or years, and each disk can override every condition.
+- **Endurance alerts**: the all-disks default warns when any SSD's projected time to its endurance
+  limit falls below **1 year**, when the drive's own **SMART wear** leaves at most **20% endurance
+  remaining**, or when **lifetime writes reach 80%** of the TBW rating. SMART wear is preferred
+  whenever the drive reports it; the assumed 150 to 600 TBW default is used only for drives without
+  SMART wear, and notifications say which measurement fired and whether the rating is configured or
+  assumed. Time units can be days, months, or years, and each disk can override every condition.
   Alerts appear in Alert center and as native Windows notifications; snoozing one suppresses only
   that disk's endurance rule for the selected duration.
 - **Collapsible panels**: use the quiet chevron at the top right of any dashboard or settings card
@@ -267,7 +267,7 @@ drive capacities and TBW ratings (1 GB = 1,000,000,000 bytes); only the live-tai
 | `defaultSsdTbw` / `defaultSsdTbwUpper` | Estimated SSD TBW range when the rating is unknown | 150 / 600 |
 | `diskTbwRatings` | Per-disk TBW endurance rating (TB) | none |
 | `diskTbwRatingsUpper` | Optional per-disk upper TBW; when set, endurance %/projection are shown as a range | none |
-| `defaultEnduranceAlert` | All-disks profile: remaining-life value/unit, SMART-reported remaining %, and lifetime writes as % of TBW | 1 year / 20% remaining / 80% of TBW |
+| `defaultEnduranceAlert` | All-disks profile: time-to-endurance-limit value/unit, SMART-reported remaining %, and lifetime writes as % of TBW | 1 year / 20% remaining / 80% of TBW |
 | `diskEnduranceAlertOverrides` | Optional full endurance-alert profile keyed by disk ID | none |
 | `tailMaxReadKb` | Maximum decoded data per live-tail poll; total file size is unrestricted | 512 |
 | `tailMaxBufferKb` | Maximum decoded text retained by the live-tail viewer | 1024 |

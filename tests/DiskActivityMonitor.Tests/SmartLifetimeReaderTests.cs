@@ -46,6 +46,20 @@ public class SmartLifetimeReaderTests
     }
 
     [Theory]
+    [InlineData(0)]
+    [InlineData(95)]
+    public void ParseNvmeHealthLog_ZeroIoCounters_KeepHealthFields(byte used)
+    {
+        // Zero data-unit counters alone (new drive, or a bridge that zeroes them) are not an empty page.
+        var parsed = SmartLifetimeReader.ParseNvmeHealthLog(Log(unitsRead: 0, unitsWritten: 0, used: used));
+
+        Assert.NotNull(parsed);
+        Assert.Equal(used, parsed.Value.PercentUsed);
+        Assert.Equal(0, parsed.Value.BytesWritten);
+        Assert.Equal(27, parsed.Value.TemperatureC);
+    }
+
+    [Theory]
     [InlineData(0, 0, 0)]
     [InlineData(100, 100, 100)]
     [InlineData(101, 101, null)]

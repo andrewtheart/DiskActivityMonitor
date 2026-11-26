@@ -85,7 +85,7 @@ repository preserves the last known lifetime byte totals when a later scan canno
 The disk selector determines the scope of physical-disk cards. A single selection queries one
 `disk_id`; **All disks** sums the selected interval across every detected disk. The live graph is
 the exception: All disks keeps separate read and write series per disk. Per-drive SMART wear,
-rated TBW, and lifespan are never combined into a synthetic all-disk percentage.
+rated TBW, and time to TBW are never combined into a synthetic all-disk percentage.
 
 ### Written today
 
@@ -118,12 +118,13 @@ time and is therefore lower when the collector was stopped.
 
 ### SSD endurance summary
 
-For one selected disk, the headline is the same projected lifespan calculated by the detailed
-SSD endurance card. Its inputs are the effective rated TBW, the direct lifetime-written total
-when available, and the recent physical write rate from `disk_minute`.
+For one selected disk, the headline is the same projected time to the TBW rating calculated by the
+detailed SSD endurance card. Its inputs are the effective rated TBW, the direct lifetime-written
+total when available (otherwise writes recorded since monitoring began), and the recent physical
+write rate from `disk_minute`.
 
 For All disks, the card shows the number of disks and their combined recent physical writes per
-day. It intentionally says that lifespan remains drive-specific.
+day. It intentionally says that time to TBW remains drive-specific.
 
 ### SSD endurance detail
 
@@ -134,13 +135,13 @@ day. It intentionally says that lifespan remains drive-specific.
 | Wear bar | The same percentage as Drive Life Used, clamped visually to 0 through 100 percent. For a TBW range, the lower rating determines the conservative fill. |
 | SMART context | `Percentage Used` from NVMe log page `0x02`, or `MSFT_StorageReliabilityCounter.Wear`, when available. |
 | Lifetime written/read | Direct NVMe Data Units Written/Read or ATA SMART 241/242. These are whole-drive lifetime values, not sums from SQLite. |
-| Projected lifespan | Remaining rated bytes divided by the recent physical write rate. The display uses a small 0.1 percent-of-TBW remaining floor and is withheld when the write rate is zero or monitoring coverage is below the configured high-coverage threshold. |
+| Time to TBW rating | Remaining rated bytes (rating minus lifetime writes, or minus recorded writes when the drive exposes no lifetime counter) divided by the recent physical write rate. Shows **Reached** when writes already exceed the rating, notes when only a range's lower bound has been passed, and says the value may be optimistic when it relies on recorded writes. Withheld when the write rate is zero or monitoring coverage is below the configured high-coverage threshold. A TBW rating is a write budget, not an end-of-life prediction. |
 | Average per hour/day/week | Physical writes from the most recent seven days, or all history when less than seven days exists, divided by monitored minutes. Day and week values are scaled from the monitored-hour rate. |
 | Recorded-by-this-app footnote | Sum of `disk_minute.write_bytes` from the disk's earliest retained sample through now. |
 | Monitoring coverage | Distinct completed minutes in `collector_minute` or `disk_minute`, divided by requested calendar minutes. |
 
-For a configured TBW range, the consumed percentage and projected lifespan are displayed as
-ranges. The lower TBW rating gives the higher consumed percentage and shorter projected life.
+For a configured TBW range, the consumed percentage and time to TBW are displayed as
+ranges. The lower TBW rating gives the higher consumed percentage and shorter time.
 The card uses decimal bytes for manufacturer TBW ratings: `1 TBW = 1,000,000,000,000 bytes`.
 Every displayed size uses the same decimal units (1 TB = 10^12 bytes), so lifetime writes compare
 directly with the rating.
