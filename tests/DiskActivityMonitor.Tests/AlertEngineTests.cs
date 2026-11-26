@@ -554,6 +554,40 @@ public class AlertEngineTests : IDisposable
     }
 
     [Fact]
+    public void Evaluate_SmartLimitReachedWithoutAnyTbwRating_ProjectionOnlyStillWarns()
+    {
+        var cfg = EnduranceOnlyConfig();
+        cfg.DefaultSsdTbw = 0;
+        cfg.DefaultSsdTbwUpper = null;
+        cfg.DefaultEnduranceAlert.EnableRemainingPercent = false;
+        cfg.DefaultEnduranceAlert.EnableTbwConsumed = false;
+        var disk = MakeSsd(wearPercent: 105, lifetimeWritten: null);
+
+        var alerts = _engine.Evaluate([disk], cfg, DateTime.UtcNow);
+
+        var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "endurance-health:0");
+        Assert.StartsWith("The drive's SMART wear has already reached 105%.", alert.Message);
+    }
+
+    [Fact]
+    public void Evaluate_LowerBoundPassedOnIdleFullyMonitoredDrive_DoesNotBlameCoverage()
+    {
+        DateTime now = new(2026, 11, 25, 12, 0, 0, DateTimeKind.Utc);
+        AddSevenDaysOfCoverage(now, 0);
+        var cfg = EnduranceOnlyConfig();
+        cfg.DiskTbwRatings["0"] = 300;
+        cfg.DiskTbwRatingsUpper["0"] = 600;
+        cfg.DefaultEnduranceAlert.EnableTbwConsumed = false;
+        var disk = MakeSsd(wearPercent: null, lifetimeWritten: 400_000_000_000_000);
+
+        var alerts = _engine.Evaluate([disk], cfg, now);
+
+        var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "endurance-health:0");
+        Assert.Contains("no writes were recorded recently, so the time to its upper bound cannot be projected", alert.Message);
+        Assert.DoesNotContain("coverage", alert.Message);
+    }
+
+    [Fact]
     public void Evaluate_SmartLimitReachedWithoutLifetimeCounter_ProjectionOnlyStillWarns()
     {
         var cfg = EnduranceOnlyConfig();

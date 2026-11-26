@@ -375,17 +375,21 @@ internal static class CliRunner
                 double avgPerDay = recentRate.MonitoredBytesPerHour * 24.0;
                 double yearsLow = avgPerDay > 0 ? Math.Max(0, tbwLowBytes - consumed) / (avgPerDay * 365.0) : double.PositiveInfinity;
                 double yearsHigh = avgPerDay > 0 ? Math.Max(0, tbwHighBytes - consumed) / (avgPerDay * 365.0) : double.PositiveInfinity;
-                string projText = lowerTbwReached
-                    ? $"lower bound already reached; upper bound in ~{FormatYears(yearsHigh)} at the monitored rate"
-                    : ranged
-                        ? $"~{FormatYears(yearsLow)} to {FormatYears(yearsHigh)} at the monitored rate"
-                        : $"~{FormatYears(yearsLow)} at the monitored rate";
+                string projText = avgPerDay <= 0
+                    ? lowerTbwReached
+                        ? "lower bound already reached; no recent writes to project the upper bound"
+                        : "no recent writes to project"
+                    : lowerTbwReached
+                        ? $"lower bound already reached; upper bound in ~{FormatYears(yearsHigh)} at the monitored rate"
+                        : ranged
+                            ? $"~{FormatYears(yearsLow)} to {FormatYears(yearsHigh)} at the monitored rate"
+                            : $"~{FormatYears(yearsLow)} at the monitored rate";
                 Console.WriteLine($"  Monitored average : {ByteFormat.Humanize(avgPerDay)}/day");
                 Console.WriteLine($"  Coverage ({cfg.EnduranceCoverageWindowDays}d) : {recentRate.CoveragePercent:0.#}% ({recentRate.MonitoredMinutes:N0}/{recentRate.RequestedMinutes:N0} min)");
                 if (highCoverage)
                     Console.WriteLine($"  Calendar average  : {ByteFormat.Humanize(recentRate.CalendarBytesPerHour * 24.0)}/day");
                 if (!tbwReached && highCoverage)
-                    Console.WriteLine($"  Projected to TBW  : {projText}{(disk.LifetimeBytesWritten is null ? " (excludes writes before monitoring began; may be optimistic)" : "")}");
+                    Console.WriteLine($"  Projected to TBW  : {projText}{(disk.LifetimeBytesWritten is null && avgPerDay > 0 ? " (excludes writes before monitoring began; may be optimistic)" : "")}");
                 else if (!tbwReached && !lowerTbwReached)
                     Console.WriteLine($"  Projected to TBW  : withheld below {cfg.HighCoveragePercent:0.#}% coverage");
             }

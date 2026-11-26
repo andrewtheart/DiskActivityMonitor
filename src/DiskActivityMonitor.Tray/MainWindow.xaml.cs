@@ -1011,6 +1011,10 @@ public partial class MainWindow : Window
         bool lowerTbwReached = tbwLowBytes > 0 && consumedBytes >= tbwLowBytes;
         string rateText = ByteFormat.Humanize(avgPerDay);
         string recordedOnlyNote = lifeWritten is null ? "; writes before monitoring began are unknown, so this may be optimistic" : "";
+        bool idleWithCoverage = recentRate.HasHighCoverage && avgPerDay <= 0;
+        string upperTimeUnavailable = idleWithCoverage
+            ? $"no recent writes to project the time to {tbwHigh:0.#} TBW"
+            : $"the time to {tbwHigh:0.#} TBW needs more monitoring coverage";
         string yearsText;
         if (double.IsNaN(yearsLow)) yearsText = "-";
         else if (!ranged) yearsText = $"{FormatYearsShort(yearsLow)} yrs";
@@ -1033,14 +1037,16 @@ public partial class MainWindow : Window
         else if (lowerTbwReached)
         {
             WearMetric.Text = "Lower bound reached";
-            WearSub.Text = $"past the {tbwLow:0.#} TBW lower bound; the time to {tbwHigh:0.#} TBW needs more monitoring coverage";
+            WearSub.Text = $"past the {tbwLow:0.#} TBW lower bound; {upperTimeUnavailable}";
         }
         else
         {
             WearMetric.Text = "-";
-            WearSub.Text = recentRate.MonitoredMinutes == 0
-                ? $"Using {tbwBasisLabel}. Collecting data to project the time to TBW."
-                : $"Projection withheld. {FormatRecentCoverage(recentRate, cfg.EnduranceCoverageWindowDays)} Requires {cfg.HighCoveragePercent:0.#}%.";
+            WearSub.Text = idleWithCoverage
+                ? $"Using {tbwBasisLabel}. No writes recorded recently, so there is nothing to project."
+                : recentRate.MonitoredMinutes == 0
+                    ? $"Using {tbwBasisLabel}. Collecting data to project the time to TBW."
+                    : $"Projection withheld. {FormatRecentCoverage(recentRate, cfg.EnduranceCoverageWindowDays)} Requires {cfg.HighCoveragePercent:0.#}%.";
         }
 
         // Endurance panel.
@@ -1115,14 +1121,16 @@ public partial class MainWindow : Window
         else if (lowerTbwReached)
         {
             EnduranceProjValue.Text = "Lower bound reached";
-            EnduranceProjSub.Text = $"past the {tbwLow:0.#} TBW lower bound; the time to {tbwHigh:0.#} TBW needs more monitoring coverage";
+            EnduranceProjSub.Text = $"past the {tbwLow:0.#} TBW lower bound; {upperTimeUnavailable}";
         }
         else
         {
             EnduranceProjValue.Text = "-";
-            EnduranceProjSub.Text = recentRate.MonitoredMinutes == 0
-                ? "collecting data to project the time to TBW"
-                : $"withheld; {FormatRecentCoverage(recentRate, cfg.EnduranceCoverageWindowDays)} Requires {cfg.HighCoveragePercent:0.#}%.";
+            EnduranceProjSub.Text = idleWithCoverage
+                ? "no writes recorded recently, so there is nothing to project"
+                : recentRate.MonitoredMinutes == 0
+                    ? "collecting data to project the time to TBW"
+                    : $"withheld; {FormatRecentCoverage(recentRate, cfg.EnduranceCoverageWindowDays)} Requires {cfg.HighCoveragePercent:0.#}%.";
         }
 
         // Averages.

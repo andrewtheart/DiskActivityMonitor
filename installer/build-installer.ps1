@@ -114,7 +114,7 @@ foreach ($rid in $runtimes) {
 
     $setup = Join-Path $installerDir "Output\DiskActivityMonitor-Setup-$Version-$arch.exe"
     if (Test-Path $setup) {
-        Write-Host "Installer built: $setup ($([math]::Round((Get-Item $setup).Length/1MB,1)) MB)" -ForegroundColor Green
+        Write-Host "Installer built: $setup ($([math]::Round((Get-Item $setup).Length/1000000,1)) MB)" -ForegroundColor Green
         $builtInstallers += $setup
     }
     else {

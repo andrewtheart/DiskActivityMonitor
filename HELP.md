@@ -308,7 +308,9 @@ When lifetime writes have already passed a TBW target, the notification and dash
 crossing is a known fact, so it is reported even before there is enough monitoring coverage for a
 write-rate projection; likewise a drive whose SMART wear is already at or above 100% triggers the
 projected-time condition without needing a lifetime-write counter. Reaching a TBW rating is not
-end of life; check SMART wear for the drive's own measurement.
+end of life; check SMART wear for the drive's own measurement. A fully monitored drive that wrote
+nothing recently has no write rate to project, and the dashboard, CLI, and notifications say so
+rather than asking for more monitoring coverage.
 
 The time value accepts **days**, **months**, or **years**. Select **All disks** before
 opening Settings to edit the default profile. Select one disk and enable **Override defaults for

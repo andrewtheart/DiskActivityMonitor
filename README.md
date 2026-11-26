@@ -221,10 +221,11 @@ keys remain under `%LOCALAPPDATA%\DiskActivityMonitor\`.
   exact timestamp/label and numeric value.
 - **Endurance alerts**: the all-disks default warns when any SSD's projected time to its endurance
   limit falls below **1 year**, when the drive's own **SMART wear** leaves at most **20% endurance
-  remaining**, or when **lifetime writes reach 80%** of the TBW rating. SMART wear is preferred
-  whenever the drive reports it; the assumed 150 to 600 TBW default is used only for drives without
-  SMART wear, and notifications say which measurement fired and whether the rating is configured or
-  assumed. Time units can be days, months, or years, and each disk can override every condition.
+  remaining**, or when **lifetime writes reach 80%** of the TBW rating. The TBW check uses the
+  drive's configured rating, falling back to the assumed 150 to 600 TBW default only for drives
+  without SMART wear; projections use the configured rating, then the drive's SMART wear rate,
+  then the assumed default. Notifications say which measurement fired and whether the rating is
+  configured or assumed. Time units can be days, months, or years, and each disk can override every condition.
   Alerts appear in Alert center and as native Windows notifications; snoozing one suppresses only
   that disk's endurance rule for the selected duration.
 - **Collapsible panels**: use the quiet chevron at the top right of any dashboard or settings card

@@ -308,7 +308,7 @@ function New-AssetTableMarkdown {
   )
   foreach ($asset in $Assets) {
     $hash = (Get-FileHash -LiteralPath $asset.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-    $lines += "| $($asset.Name) | $($asset.Length) | $([math]::Round($asset.Length / 1MB, 2)) | $hash |"
+    $lines += "| $($asset.Name) | $($asset.Length) | $([math]::Round($asset.Length / 1000000, 2)) | $hash |"
   }
   return ($lines -join "`r`n")
 }
@@ -678,7 +678,7 @@ Write-Host '==================== Build summary ====================' -Foreground
 foreach ($result in $results) {
   if ($result.Success) {
     $file = $result.InstallerFile
-    Write-Host ("  [OK]   {0,-4} -> {1} ({2} MB)" -f $result.Variant, $file.Name, [math]::Round($file.Length / 1MB, 1)) -ForegroundColor Green
+    Write-Host ("  [OK]   {0,-4} -> {1} ({2} MB)" -f $result.Variant, $file.Name, [math]::Round($file.Length / 1000000, 1)) -ForegroundColor Green
   }
   else {
     Write-Host ("  [FAIL] {0,-4} -> {1}" -f $result.Variant, $result.Error) -ForegroundColor Red

@@ -309,17 +309,19 @@ public sealed class AlertEngine
         }
 
         DateTime? earliest = _repo.GetEarliestSample(disk.DiskId);
-        if (threshold.EnableProjectedLife && tbwLowBytes > 0)
+        if (threshold.EnableProjectedLife)
         {
             // A limit that has already been passed is known without a write rate or coverage.
             bool smartProjection = !ratingConfigured && smartWear is > 0 && (lifetimeWritten is not null || smartWear >= 100);
-            double? consumed = smartProjection
-                ? null
-                : lifetimeWritten ?? (earliest is DateTime since ? _repo.GetDiskTotals(disk.DiskId, since, nowUtc).Write : null);
-            bool limitReached = smartProjection ? smartWear >= 100 : consumed >= tbwHighBytes;
-            bool lowerBoundReached = !smartProjection && consumed >= tbwLowBytes;
+            bool tbwProjection = !smartProjection && tbwLowBytes > 0;
+            double? consumed = tbwProjection
+                ? lifetimeWritten ?? (earliest is DateTime since ? _repo.GetDiskTotals(disk.DiskId, since, nowUtc).Write : null)
+                : null;
+            bool limitReached = smartProjection ? smartWear >= 100 : tbwProjection && consumed >= tbwHighBytes;
+            bool lowerBoundReached = tbwProjection && consumed >= tbwLowBytes;
 
             double avgPerDay = 0;
+            bool highCoverage = false;
             if (earliest is DateTime first && nowUtc - first >= TimeSpan.FromHours(24))
             {
                 MonitoringRateStats recentRate = _repo.GetRecentDiskWriteRate(
@@ -327,11 +329,12 @@ public sealed class AlertEngine
                     nowUtc,
                     highCoveragePercent,
                     config.EnduranceCoverageWindowDays);
-                if (recentRate.HasHighCoverage)
+                highCoverage = recentRate.HasHighCoverage;
+                if (highCoverage)
                     avgPerDay = recentRate.MonitoredBytesPerHour * 24.0;
             }
 
-            if (limitReached || lowerBoundReached || avgPerDay > 0)
+            if ((smartProjection || tbwProjection) && (limitReached || lowerBoundReached || avgPerDay > 0))
             {
                 string rate = ByteFormat.Humanize(avgPerDay);
                 double daysLow;
@@ -365,7 +368,9 @@ public sealed class AlertEngine
                     daysHigh = avgPerDay > 0 ? (tbwHighBytes - consumed!.Value) / avgPerDay : double.NaN;
                     description = avgPerDay > 0
                         ? $"Lifetime writes have passed the lower bound of {ratingText}; at {rate}/day the upper bound is reached in {FormatRemainingTime(daysHigh)}."
-                        : $"Lifetime writes have passed the lower bound of {ratingText}; the time to its upper bound needs more monitoring coverage.";
+                        : highCoverage
+                            ? $"Lifetime writes have passed the lower bound of {ratingText}; no writes were recorded recently, so the time to its upper bound cannot be projected."
+                            : $"Lifetime writes have passed the lower bound of {ratingText}; the time to its upper bound needs more monitoring coverage.";
                 }
                 else
                 {

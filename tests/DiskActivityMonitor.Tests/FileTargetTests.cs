@@ -86,6 +86,25 @@ public sealed class FileTargetTests : IDisposable
     }
 
     [Fact]
+    public void SelectFileTargets_PerFileFloorUsesDecimalKilobytes()
+    {
+        // Issue #3: a 100 KB floor is 100,000 bytes, not 102,400.
+        var minute = new DateTime(2026, 8, 4, 12, 0, 0, DateTimeKind.Utc);
+        var cfg = new AppConfig { FileTargetsPerProcessPerMinute = 10, FileTargetMinKbPerMinute = 100 };
+        var accumulated = new Dictionary<(string Process, string Path), (long Read, long Write)>
+        {
+            [("writer", @"C:\at-floor.bin")] = (0, 100_000),
+            [("writer", @"C:\below-floor.bin")] = (0, 99_999),
+        };
+
+        var samples = CollectorWorker.SelectFileTargets(accumulated, minute, cfg);
+
+        Assert.Contains(samples, s => s.Path == @"C:\at-floor.bin" && s.WriteBytes == 100_000);
+        Assert.DoesNotContain(samples, s => s.Path == @"C:\below-floor.bin");
+        Assert.Contains(samples, s => s.Path == FileTargetNormalizer.OtherFilesPath && s.WriteBytes == 99_999);
+    }
+
+    [Fact]
     public void SelectFileTargets_KeepsBusiestFilesPerProcessAboveTheFloor()
     {
         var minute = new DateTime(2026, 8, 4, 12, 0, 0, DateTimeKind.Utc);

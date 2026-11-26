@@ -106,18 +106,29 @@ public sealed class CliCoverageTests : IDisposable
                 DiskId = "3", InstanceName = "3 F:", FriendlyName = "New install SSD", Volumes = "F:",
                 MediaType = DiskMediaType.Ssd, LifetimeBytesWritten = 6_000_000_000_000,
             },
+            new DiskInfo
+            {
+                DiskId = "4", InstanceName = "4 G:", FriendlyName = "Idle SSD", Volumes = "G:",
+                MediaType = DiskMediaType.Ssd, LifetimeBytesWritten = 400_000_000_000_000,
+            },
         ]);
         repo.AddDiskSamples([
             new DiskSample { TimestampUtc = end.AddDays(-8), DiskId = "1", WriteBytes = 1 },
             new DiskSample { TimestampUtc = end.AddMinutes(-1), DiskId = "1", WriteBytes = 7_000_000_000_000 },
             new DiskSample { TimestampUtc = end.AddDays(-8), DiskId = "2", WriteBytes = 1 },
             new DiskSample { TimestampUtc = end.AddMinutes(-1), DiskId = "2", WriteBytes = 7_000_000_000_000 },
+            new DiskSample { TimestampUtc = end.AddDays(-8), DiskId = "4", WriteBytes = 1 },
         ]);
         for (int minute = 7 * 24 * 60; minute >= 1; minute--)
             repo.AddCollectorHeartbeat(end.AddMinutes(-minute));
 
         CliRunner.RepositoryFactory = () => new MonitorRepository(_db);
-        CliRunner.ConfigFactory = () => new AppConfig { HighCoveragePercent = 90, DiskTbwRatings = new() { ["2"] = 5, ["3"] = 5 } };
+        CliRunner.ConfigFactory = () => new AppConfig
+        {
+            HighCoveragePercent = 90,
+            DiskTbwRatings = new() { ["2"] = 5, ["3"] = 5, ["4"] = 300 },
+            DiskTbwRatingsUpper = new() { ["4"] = 600 },
+        };
         var output = new StringWriter();
         TextWriter original = Console.Out;
         try
@@ -132,13 +143,15 @@ public sealed class CliCoverageTests : IDisposable
 
         string text = output.ToString();
         Assert.DoesNotContain("estimated from lifetime", text);
-        Assert.Equal(4, text.Split("SMART wear        : not reported by this drive").Length - 1);
+        Assert.Equal(5, text.Split("SMART wear        : not reported by this drive").Length - 1);
         Assert.Contains("252.21 TB written  (42.035% to 168.14% of assumed TBW)", text);
         Assert.Contains("of assumed TBW since", text);
         Assert.Contains("at the monitored rate (excludes writes before monitoring began; may be optimistic)", text);
         Assert.Contains("Projected to TBW  : already reached" + Environment.NewLine, text);
         // Disk 2 (history) and disk 3 (lifetime counter, no history) both report the known crossing.
         Assert.Equal(2, text.Split("Projected to TBW  : already reached").Length - 1);
+        Assert.Contains("Projected to TBW  : lower bound already reached; no recent writes to project the upper bound" + Environment.NewLine, text);
+        Assert.DoesNotContain("an unknown time", text);
     }
 
     [Fact]

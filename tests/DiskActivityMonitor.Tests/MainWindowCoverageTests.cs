@@ -1959,6 +1959,29 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Assert.StartsWith("lifetime writes already exceed 5 TBW", window.EnduranceProjSub.Text);
                 Assert.StartsWith("lifetime writes already exceed 5 TBW", window.WearSub.Text);
 
+                // A fully monitored but idle drive has no rate; that is not a coverage problem.
+                repo.AddDiskSamples([new DiskSample { TimestampUtc = end.AddDays(-8), DiskId = "idle", WriteBytes = 1 }]);
+                config.Update(value =>
+                {
+                    value.DiskTbwRatings["idle"] = 300;
+                    value.DiskTbwRatingsUpper["idle"] = 600;
+                });
+                Invoke(window, "UpdateEndurance", new DiskInfo
+                {
+                    DiskId = "idle", InstanceName = "idle D:", MediaType = DiskMediaType.Ssd,
+                    LifetimeBytesWritten = 400_000_000_000_000,
+                }, end);
+                Assert.Equal("Lower bound reached", window.EnduranceProjValue.Text);
+                Assert.Equal("past the 300 TBW lower bound; no recent writes to project the time to 600 TBW", window.EnduranceProjSub.Text);
+                Assert.Equal("past the 300 TBW lower bound; no recent writes to project the time to 600 TBW", window.WearSub.Text);
+                Invoke(window, "UpdateEndurance", new DiskInfo
+                {
+                    DiskId = "idle", InstanceName = "idle D:", MediaType = DiskMediaType.Ssd,
+                }, end);
+                Assert.Equal("-", window.EnduranceProjValue.Text);
+                Assert.Equal("no writes recorded recently, so there is nothing to project", window.EnduranceProjSub.Text);
+                Assert.Contains("No writes recorded recently", window.WearSub.Text);
+
                 foreach (System.Windows.Controls.Primitives.ToggleButton button in new[] { window.TpBtn1h, window.TpBtn24h, window.TpBtn7d, window.TpBtn30d })
                     Invoke(window, "ThroughputRange_Click", button, new RoutedEventArgs());
                 Assert.Contains("Monitoring coverage:", window.ThroughputCoverageText.Text);

@@ -48,8 +48,8 @@ try {
     $x86Path = Join-Path $root "installer\Output\$x86Installer"
     if (-not (Test-Path $x64Path)) { throw "x64 installer not found: $x64Path" }
     if (-not (Test-Path $x86Path)) { throw "x86 installer not found: $x86Path" }
-    $x64SizeMB = [math]::Round((Get-Item $x64Path).Length / 1MB, 1)
-    $x86SizeMB = [math]::Round((Get-Item $x86Path).Length / 1MB, 1)
+    $x64SizeMB = [math]::Round((Get-Item $x64Path).Length / 1000000, 1)
+    $x86SizeMB = [math]::Round((Get-Item $x86Path).Length / 1000000, 1)
 
     # ── Step 2: Create portable ZIP (self-contained x64) ─────────────────────
     Write-Host "`n=== Step 2: Create portable ZIP ===" -ForegroundColor Cyan
@@ -74,7 +74,7 @@ try {
     $zipName = "DiskActivityMonitor-$Version-x64-portable.zip"
     $zipPath = Join-Path $tempRoot $zipName
     Compress-Archive -Path "$publishDir\*" -DestinationPath $zipPath -CompressionLevel Optimal
-    $zipSizeMB = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)
+    $zipSizeMB = [math]::Round((Get-Item $zipPath).Length / 1000000, 1)
     Write-Host "  $zipName - $zipSizeMB MB" -ForegroundColor Green
 
     # ── Step 3: Upload to private downloads container ────────────────────────
