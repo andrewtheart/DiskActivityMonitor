@@ -454,14 +454,12 @@ So the process name cannot identify the work - the target file can.
 
 ### Which files a process wrote
 
-Hover over a process bar or click any row in **Top application write requests** to open the per-file breakdown for that
-process. Each file shows its size share, a classification (NTFS metadata, paging file, registry
+Hover over the small info icon on a row in **Top application write requests** to open the per-file
+breakdown for that process. You can also click the icon or focus it and press Enter. Each file shows
+its size share, a classification (NTFS metadata, paging file, registry
 hive, virtual disk, search index, Defender, event log, shadow copy, temporary, log, database,
 network path) and one line explaining what causes that kind of write. Opening it for `System`
 also shows the kernel explanation above.
-
-After closing a hover-opened breakdown with Enter, Escape, or Close, it stays closed until the
-pointer leaves that bar. This prevents a stationary pointer from immediately reopening it.
 
 The same data is available from the CLI:
 

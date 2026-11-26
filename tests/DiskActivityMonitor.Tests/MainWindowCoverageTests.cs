@@ -676,8 +676,9 @@ public sealed class MainWindowCoverageTests : IDisposable
                 var alertDismissButton = Assert.IsType<Button>(alertTemplateRoot.FindName("AlertDismissButton"));
                 Assert.Equal(28, alertDismissButton.Width);
                 Assert.Equal(28, alertDismissButton.Height);
-                Assert.Equal(new Thickness(1), alertDismissButton.BorderThickness);
-                Assert.Equal(Color.FromRgb(0x3B, 0x24, 0x28), Assert.IsType<SolidColorBrush>(alertDismissButton.Background).Color);
+                Assert.Equal(new Thickness(0), alertDismissButton.BorderThickness);
+                Assert.Equal(0, Assert.IsType<SolidColorBrush>(alertDismissButton.Background).Color.A);
+                Assert.Equal(Color.FromRgb(0xE0, 0x4A, 0x4A), Assert.IsType<SolidColorBrush>(alertDismissButton.Foreground).Color);
                 Assert.Equal("\u2715", alertDismissButton.Content);
                 Assert.Equal("Segoe UI", alertDismissButton.FontFamily.Source);
                 Assert.Equal("\u2715", window.AlertSearchClearButton.Content);
@@ -1676,7 +1677,7 @@ public sealed class MainWindowCoverageTests : IDisposable
     }
 
     [Fact]
-    public void FileTargets_EnterClose_DoesNotReopenUntilPointerLeavesBar()
+    public void FileTargets_InfoButtonIsOnlyProcessRowOpener()
     {
         RunStaAsync(() =>
         {
@@ -1687,21 +1688,35 @@ public sealed class MainWindowCoverageTests : IDisposable
             try
             {
                 object processRow = CreateProcessRow("System");
-                var bar = new Border { DataContext = processRow };
-                var mouse = new System.Windows.Input.MouseEventArgs(
+                var processTemplateRoot = Assert.IsType<Grid>(window.ProcessList.ItemTemplate.LoadContent());
+                processTemplateRoot.DataContext = processRow;
+                var bar = Assert.IsType<Border>(processTemplateRoot.FindName("ProcessWriteBar"));
+                var infoButton = Assert.IsType<Button>(processTemplateRoot.FindName("ProcessInfoButton"));
+                var infoGlyph = Assert.IsType<TextBlock>(infoButton.Content);
+
+                Assert.Equal(22, infoButton.Width);
+                Assert.Equal(22, infoButton.Height);
+                Assert.Equal(new Thickness(0), infoButton.BorderThickness);
+                Assert.Equal("\uE946", infoGlyph.Text);
+                Assert.Equal("Segoe MDL2 Assets", infoGlyph.FontFamily.Source);
+
+                var mouseEnter = new System.Windows.Input.MouseEventArgs(
                     System.Windows.Input.Mouse.PrimaryDevice,
                     Environment.TickCount)
                 { RoutedEvent = UIElement.MouseEnterEvent };
 
-                Invoke(window, "ProcessBar_MouseEnter", bar, mouse);
-                Assert.Equal(Visibility.Visible, window.FileTargetsOverlay.Visibility);
-
-                var visibleLeave = new System.Windows.Input.MouseEventArgs(
+                bar.RaiseEvent(mouseEnter);
+                Assert.Equal(Visibility.Collapsed, window.FileTargetsOverlay.Visibility);
+                processTemplateRoot.RaiseEvent(new System.Windows.Input.MouseEventArgs(
                     System.Windows.Input.Mouse.PrimaryDevice,
                     Environment.TickCount)
-                { RoutedEvent = UIElement.MouseLeaveEvent };
-                Invoke(window, "ProcessBar_MouseLeave", bar, visibleLeave);
-                Assert.False(window.IsFileTargetsHoverSuppressed(bar));
+                { RoutedEvent = UIElement.MouseEnterEvent });
+                Assert.Equal(Visibility.Collapsed, window.FileTargetsOverlay.Visibility);
+                infoButton.RaiseEvent(new System.Windows.Input.MouseEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice,
+                    Environment.TickCount)
+                { RoutedEvent = UIElement.MouseEnterEvent });
+                Assert.Equal(Visibility.Visible, window.FileTargetsOverlay.Visibility);
 
                 var enter = new System.Windows.Input.KeyEventArgs(
                     System.Windows.Input.Keyboard.PrimaryDevice,
@@ -1712,23 +1727,25 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Invoke(window, "FileTargetsOverlay_PreviewKeyDown", window.FileTargetsOverlay, enter);
                 Assert.True(enter.Handled);
                 Assert.Equal(Visibility.Collapsed, window.FileTargetsOverlay.Visibility);
-                Assert.True(window.IsFileTargetsHoverSuppressed(bar));
+                Assert.True(window.IsFileTargetsHoverSuppressed(infoButton));
 
-                Invoke(window, "ProcessBar_MouseEnter", bar, mouse);
+                infoButton.RaiseEvent(new System.Windows.Input.MouseEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice,
+                    Environment.TickCount)
+                { RoutedEvent = UIElement.MouseEnterEvent });
                 Assert.Equal(Visibility.Collapsed, window.FileTargetsOverlay.Visibility);
 
-                var unrelated = new Border { DataContext = processRow };
-                Invoke(window, "ProcessBar_MouseLeave", unrelated, visibleLeave);
-                Assert.True(window.IsFileTargetsHoverSuppressed(bar));
-
-                var leave = new System.Windows.Input.MouseEventArgs(
+                var mouseLeave = new System.Windows.Input.MouseEventArgs(
                     System.Windows.Input.Mouse.PrimaryDevice,
                     Environment.TickCount)
                 { RoutedEvent = UIElement.MouseLeaveEvent };
-                Invoke(window, "ProcessBar_MouseLeave", bar, leave);
-                Assert.False(window.IsFileTargetsHoverSuppressed(bar));
+                infoButton.RaiseEvent(mouseLeave);
+                Assert.False(window.IsFileTargetsHoverSuppressed(infoButton));
 
-                Invoke(window, "ProcessBar_MouseEnter", bar, mouse);
+                infoButton.RaiseEvent(new System.Windows.Input.MouseEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice,
+                    Environment.TickCount)
+                { RoutedEvent = UIElement.MouseEnterEvent });
                 Assert.Equal(Visibility.Visible, window.FileTargetsOverlay.Visibility);
 
                 var escape = new System.Windows.Input.KeyEventArgs(
@@ -1739,6 +1756,9 @@ public sealed class MainWindowCoverageTests : IDisposable
                 { RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent };
                 Invoke(window, "FileTargetsOverlay_PreviewKeyDown", window.FileTargetsOverlay, escape);
                 Assert.True(escape.Handled);
+
+                infoButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.Equal(Visibility.Visible, window.FileTargetsOverlay.Visibility);
 
                 window.ShowFileTargets("System");
                 var otherKey = new System.Windows.Input.KeyEventArgs(
@@ -1751,17 +1771,9 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Assert.False(otherKey.Handled);
                 Assert.Equal(Visibility.Visible, window.FileTargetsOverlay.Visibility);
 
-                var rowGrid = new Grid { DataContext = processRow };
-                var click = new System.Windows.Input.MouseButtonEventArgs(
-                    System.Windows.Input.Mouse.PrimaryDevice,
-                    Environment.TickCount,
-                    System.Windows.Input.MouseButton.Left)
-                { RoutedEvent = UIElement.MouseLeftButtonUpEvent };
-                Invoke(window, "ProcessRow_Click", rowGrid, click);
-                Assert.Equal(Visibility.Visible, window.FileTargetsOverlay.Visibility);
-                Invoke(window, "ProcessRow_Click", new Grid(), click);
-                Invoke(window, "ProcessRow_Click", new object(), click);
-                Invoke(window, "ProcessBar_MouseLeave", new object(), leave);
+                Invoke(window, "ProcessInfo_Open", new Button(), new RoutedEventArgs());
+                Invoke(window, "ProcessInfo_Open", new object(), new RoutedEventArgs());
+                Invoke(window, "ProcessInfo_MouseLeave", new object(), mouseLeave);
             }
             finally { window.ForceClose(); }
             return Task.CompletedTask;

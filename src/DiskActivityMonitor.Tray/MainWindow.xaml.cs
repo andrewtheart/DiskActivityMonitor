@@ -1459,16 +1459,11 @@ public partial class MainWindow : Window
         ProcessEmpty.Visibility = top.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void ProcessRow_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
-    {
-        if ((sender as FrameworkElement)?.DataContext is ProcessRow row)
-            ShowFileTargets(row.Name);
-    }
-
-    private void ProcessBar_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
+    private void ProcessInfo_Open(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement element
-            || ReferenceEquals(element, _suppressedFileTargetsHoverSource)
+            || (e.RoutedEvent == UIElement.MouseEnterEvent
+                && ReferenceEquals(element, _suppressedFileTargetsHoverSource))
             || element.DataContext is not ProcessRow row)
         {
             return;
@@ -1478,7 +1473,7 @@ public partial class MainWindow : Window
         ShowFileTargets(row.Name);
     }
 
-    private void ProcessBar_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+    private void ProcessInfo_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
     {
         if (sender is not FrameworkElement element || FileTargetsOverlay.Visibility == Visibility.Visible)
             return;

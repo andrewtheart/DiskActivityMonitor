@@ -595,27 +595,23 @@
                                 </StackPanel>
                             </Grid>
                             <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
-                                       Text="Logical file-write bytes requested by each process - useful for finding culprits, but not physical disk writes or SSD wear. svchost shows its hosted service when known. Hover over a bar or click a row to see which files it wrote."
+                                       Text="Logical file-write bytes requested by each process - useful for finding culprits, but not physical disk writes or SSD wear. svchost shows its hosted service when known. Hover over the info icon to see which files a process wrote."
                                        Margin="0,2,0,10" />
                             <ItemsControl x:Name="ProcessList">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Grid Margin="0,3" Background="Transparent" Cursor="Hand"
-                                              MouseLeftButtonUp="ProcessRow_Click"
-                                              ToolTip="Click to see which files this process wrote"
-                                              AutomationProperties.Name="{Binding AutomationName}">
+                                        <Grid x:Name="ProcessRowContainer" Margin="0,3" Background="Transparent">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="150" />
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Text="{Binding Name}" ToolTip="{Binding Name}"
                                                        TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                                            <Border Grid.Column="1" Height="14" CornerRadius="3" HorizontalAlignment="Left"
-                                                    Width="{Binding BarWidth}" VerticalAlignment="Center"
-                                                    MouseEnter="ProcessBar_MouseEnter"
-                                                    MouseLeave="ProcessBar_MouseLeave"
-                                                    ToolTip="Hover to see which files this process wrote">
+                                            <Border x:Name="ProcessWriteBar" Grid.Column="1" Height="14" CornerRadius="3"
+                                                    HorizontalAlignment="Left" Width="{Binding BarWidth}"
+                                                    VerticalAlignment="Center">
                                                 <Border.Background>
                                                     <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
                                                         <GradientStop Color="#4FC3F7" Offset="0" />
@@ -625,6 +621,17 @@
                                             </Border>
                                             <TextBlock Grid.Column="2" Text="{Binding WriteText}" VerticalAlignment="Center"
                                                        Margin="8,0,0,0" Foreground="{StaticResource TextSecondary}" />
+                                            <Button x:Name="ProcessInfoButton" Grid.Column="3" Width="22" Height="22"
+                                                    Margin="5,0,-2,0" Padding="0" Background="Transparent"
+                                                    BorderThickness="0" Cursor="Hand"
+                                                    ToolTip="Show files written by this process"
+                                                    AutomationProperties.Name="{Binding AutomationName}"
+                                                    MouseEnter="ProcessInfo_Open" MouseLeave="ProcessInfo_MouseLeave"
+                                                    Click="ProcessInfo_Open">
+                                                <TextBlock Text="&#xE946;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                                                           Foreground="{StaticResource Accent}"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                            </Button>
                                         </Grid>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
