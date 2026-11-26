@@ -1356,6 +1356,22 @@ public sealed class MainWindowCoverageTests : IDisposable
                     LifetimeBytesWritten = 70_800_000_000_000,
                 }, DateTime.UtcNow);
                 Assert.Contains("no SMART wear attribute", window.SmartWearText.Text);
+
+                // A zero effective rating has no time to TBW; it must not show zero years or "Reached".
+                config.Update(settings =>
+                {
+                    settings.DiskTbwRatings.Remove("0");
+                    settings.DiskTbwRatingsUpper.Remove("0");
+                    settings.DefaultSsdTbw = 0;
+                    settings.DefaultSsdTbwUpper = null;
+                });
+                Invoke(window, "UpdateEndurance", repo.GetDisks().Single(), coverageEnd);
+                Assert.Equal("-", window.EnduranceProjValue.Text);
+                Assert.StartsWith("no TBW rating is set", window.EnduranceProjSub.Text);
+                Assert.Equal("-", window.WearMetric.Text);
+                Assert.StartsWith("No TBW rating is set", window.WearSub.Text);
+                Assert.Equal("2%", window.SmartWearValue.Text);
+                Assert.DoesNotContain("of 0 TBW", window.EnduranceConsumedText.Text);
             }
             finally { window.ForceClose(); }
 

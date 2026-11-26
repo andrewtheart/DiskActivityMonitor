@@ -1005,8 +1005,9 @@ public partial class MainWindow : Window
         double pctLow = tbwHighBytes > 0 ? consumedBytes / tbwHighBytes * 100.0 : pctHigh;
 
         // Years to reach TBW at the recent rate: a higher rating yields more years.
-        double yearsLow = canProject ? Math.Max(0, tbwLowBytes - consumedBytes) / (avgPerDay * 365.0) : double.NaN;
-        double yearsHigh = canProject ? Math.Max(0, tbwHighBytes - consumedBytes) / (avgPerDay * 365.0) : double.NaN;
+        bool hasTbwRating = tbwLowBytes > 0;
+        double yearsLow = canProject && hasTbwRating ? Math.Max(0, tbwLowBytes - consumedBytes) / (avgPerDay * 365.0) : double.NaN;
+        double yearsHigh = canProject && hasTbwRating ? Math.Max(0, tbwHighBytes - consumedBytes) / (avgPerDay * 365.0) : double.NaN;
         bool tbwReached = tbwHighBytes > 0 && consumedBytes >= tbwHighBytes;
         bool lowerTbwReached = tbwLowBytes > 0 && consumedBytes >= tbwLowBytes;
         string rateText = ByteFormat.Humanize(avgPerDay);
@@ -1022,7 +1023,12 @@ public partial class MainWindow : Window
         else yearsText = $"{FormatYearsShort(yearsLow)} to {FormatYearsShort(yearsHigh)} yrs";
 
         // A crossing already behind the drive is known without a write rate or coverage.
-        if (tbwReached)
+        if (!hasTbwRating)
+        {
+            WearMetric.Text = "-";
+            WearSub.Text = "No TBW rating is set, so there is no time to TBW to project.";
+        }
+        else if (tbwReached)
         {
             WearMetric.Text = "Reached";
             WearSub.Text = $"lifetime writes already exceed {tbwBasisLabel}";
@@ -1103,7 +1109,12 @@ public partial class MainWindow : Window
         }
 
         // Headline 2: projected time to the TBW rating at the recent average write rate.
-        if (tbwReached)
+        if (!hasTbwRating)
+        {
+            EnduranceProjValue.Text = "-";
+            EnduranceProjSub.Text = "no TBW rating is set; SMART wear above is the drive's own measurement";
+        }
+        else if (tbwReached)
         {
             EnduranceProjValue.Text = "Reached";
             EnduranceProjSub.Text = $"lifetime writes already exceed {tbwBasisLabel}; a TBW rating is a write budget, so check SMART wear for remaining life";
@@ -1144,7 +1155,9 @@ public partial class MainWindow : Window
         {
             string readPart = disk.LifetimeBytesRead is long lr ? $", {ByteFormat.Humanize(lr)} read" : "";
             string pctText = ranged ? $"{FormatPercent(pctLow)} to {FormatPercent(pctHigh)}" : FormatPercent(pctHigh);
-            lifeLine = $"Lifetime (from the drive): {ByteFormat.Humanize(lw)} written{readPart} \u2014 {pctText} of {tbwBasisLabel}. ";
+            lifeLine = hasTbwRating
+                ? $"Lifetime (from the drive): {ByteFormat.Humanize(lw)} written{readPart} \u2014 {pctText} of {tbwBasisLabel}. "
+                : $"Lifetime (from the drive): {ByteFormat.Humanize(lw)} written{readPart}. ";
         }
         string sinceLine = earliest is null
             ? "No history recorded yet."

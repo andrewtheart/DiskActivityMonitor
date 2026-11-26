@@ -344,7 +344,8 @@ internal static class CliRunner
             long writtenObserved = earliest is null ? 0 : repo.GetDiskTotals(disk.DiskId, earliest.Value, nowUtc).Write;
             long consumed = disk.LifetimeBytesWritten ?? writtenObserved;
 
-            Console.WriteLine($"  {(estimatedTbw ? "TBW estimate" : "TBW rating"),-18}: {tbwLabel}");
+            Console.WriteLine($"  {(estimatedTbw ? "TBW estimate" : "TBW rating"),-18}: {(tbwLowBytes > 0 ? tbwLabel : "not set")}");
+            bool hasTbwRating = tbwLowBytes > 0;
             string tbwName = estimatedTbw ? "assumed TBW" : "TBW";
             string wearText = disk.WearPercent is int w
                 ? $"{w}% used"
@@ -354,12 +355,15 @@ internal static class CliRunner
             {
                 string pctText = ranged ? $"{lifeW / tbwHighBytes * 100:0.###}% to {lifeW / tbwLowBytes * 100:0.###}%" : $"{lifeW / tbwLowBytes * 100:0.###}%";
                 string readPart = disk.LifetimeBytesRead is long lifeR ? $", {ByteFormat.Humanize(lifeR)} read" : "";
-                Console.WriteLine($"  Lifetime (drive)  : {ByteFormat.Humanize(lifeW)} written{readPart}  ({pctText} of {tbwName})");
+                Console.WriteLine($"  Lifetime (drive)  : {ByteFormat.Humanize(lifeW)} written{readPart}{(hasTbwRating ? $"  ({pctText} of {tbwName})" : "")}");
             }
             string trackedPct = ranged
                 ? $"{writtenObserved / tbwHighBytes * 100:0.###}% to {writtenObserved / tbwLowBytes * 100:0.###}%"
                 : $"{writtenObserved / tbwLowBytes * 100:0.###}%";
-            Console.WriteLine($"  Written (tracked) : {ByteFormat.Humanize(writtenObserved)}  ({trackedPct} of {tbwName} since {(earliest is null ? "n/a" : LocalTimeDisplay.FormatUtcWithZone(earliest.Value, "d"))})");
+            string since = earliest is null ? "n/a" : LocalTimeDisplay.FormatUtcWithZone(earliest.Value, "d");
+            Console.WriteLine(hasTbwRating
+                ? $"  Written (tracked) : {ByteFormat.Humanize(writtenObserved)}  ({trackedPct} of {tbwName} since {since})"
+                : $"  Written (tracked) : {ByteFormat.Humanize(writtenObserved)}  (since {since})");
 
             bool tbwReached = tbwHighBytes > 0 && consumed >= tbwHighBytes;
             bool lowerTbwReached = tbwLowBytes > 0 && consumed >= tbwLowBytes;
@@ -388,13 +392,15 @@ internal static class CliRunner
                 Console.WriteLine($"  Coverage ({cfg.EnduranceCoverageWindowDays}d) : {recentRate.CoveragePercent:0.#}% ({recentRate.MonitoredMinutes:N0}/{recentRate.RequestedMinutes:N0} min)");
                 if (highCoverage)
                     Console.WriteLine($"  Calendar average  : {ByteFormat.Humanize(recentRate.CalendarBytesPerHour * 24.0)}/day");
-                if (!tbwReached && highCoverage)
+                if (!tbwReached && highCoverage && hasTbwRating)
                     Console.WriteLine($"  Projected to TBW  : {projText}{(disk.LifetimeBytesWritten is null && avgPerDay > 0 ? " (excludes writes before monitoring began; may be optimistic)" : "")}");
-                else if (!tbwReached && !lowerTbwReached)
+                else if (!tbwReached && !lowerTbwReached && hasTbwRating)
                     Console.WriteLine($"  Projected to TBW  : withheld below {cfg.HighCoveragePercent:0.#}% coverage");
             }
             // A crossing already behind the drive is known without history or coverage.
-            if (tbwReached)
+            if (!hasTbwRating)
+                Console.WriteLine("  Projected to TBW  : no TBW rating set");
+            else if (tbwReached)
                 Console.WriteLine("  Projected to TBW  : already reached");
             else if (lowerTbwReached && !highCoverage)
                 Console.WriteLine("  Projected to TBW  : lower bound already reached; upper-bound time withheld until monitoring coverage is sufficient");

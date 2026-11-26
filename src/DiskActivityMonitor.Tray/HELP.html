@@ -956,13 +956,17 @@ using <strong>Look up rated TBW</strong>).</p>
 notification and dashboard say so (“Reached”, or “Lower bound reached”
 for a range) instead of predicting a remaining time. A crossing is a
 known fact, so it is reported even before there is enough monitoring
-coverage for a write-rate projection; likewise a drive whose SMART wear
-is already at or above 100% triggers the projected-time condition
-without needing a lifetime-write counter. Reaching a TBW rating is not
-end of life; check SMART wear for the drive’s own measurement. A fully
-monitored drive that wrote nothing recently has no write rate to
-project, and the dashboard, CLI, and notifications say so rather than
-asking for more monitoring coverage.</p>
+coverage for a write-rate projection; likewise, when no per-drive TBW
+rating is configured, a drive whose SMART wear is already at or above
+100% triggers the projected-time condition without needing a
+lifetime-write counter. Reaching a TBW rating is not end of life; check
+SMART wear for the drive’s own measurement. A fully monitored drive that
+wrote nothing recently has no write rate to project, and the dashboard,
+CLI, and notifications say so rather than asking for more monitoring
+coverage. If the effective TBW rating is 0 (for example
+<code>defaultSsdTbw</code> set to 0 with no per-drive rating), TBW
+percentages and time-to-TBW are not shown and only SMART-based
+conditions can trigger.</p>
 <p>The time value accepts <strong>days</strong>,
 <strong>months</strong>, or <strong>years</strong>. Select <strong>All
 disks</strong> before opening Settings to edit the default profile.

@@ -155,6 +155,39 @@ public sealed class CliCoverageTests : IDisposable
     }
 
     [Fact]
+    public void Endurance_ZeroTbwRating_ShowsNoTbwFiguresInsteadOfDividingByZero()
+    {
+        var repo = new MonitorRepository(_db);
+        repo.EnsureSchema();
+        repo.UpsertDisks([new DiskInfo
+        {
+            DiskId = "0", InstanceName = "0 C:", FriendlyName = "Unrated SSD", Volumes = "C:",
+            MediaType = DiskMediaType.Ssd, WearPercent = 12, LifetimeBytesWritten = 50_000_000_000_000,
+        }]);
+        CliRunner.RepositoryFactory = () => new MonitorRepository(_db);
+        CliRunner.ConfigFactory = () => new AppConfig { DefaultSsdTbw = 0, DefaultSsdTbwUpper = null };
+        var output = new StringWriter();
+        TextWriter original = Console.Out;
+        try
+        {
+            Console.SetOut(output);
+            Assert.Equal(0, CliRunner.Run(["endurance", "--all"]));
+        }
+        finally
+        {
+            Console.SetOut(original);
+        }
+
+        string text = output.ToString();
+        Assert.Contains("TBW estimate      : not set", text);
+        Assert.Contains("Lifetime (drive)  : 50 TB written" + Environment.NewLine, text);
+        Assert.Contains("Projected to TBW  : no TBW rating set", text);
+        Assert.DoesNotContain("NaN", text);
+        Assert.DoesNotContain("\u221E", text);
+        Assert.DoesNotContain("Infinity", text);
+    }
+
+    [Fact]
     public void StatusAlertsAndOneWatchIteration_RenderStandardTimes()
     {
         var repo = new MonitorRepository(_db);
@@ -182,7 +215,7 @@ public sealed class CliCoverageTests : IDisposable
 
         CliRunner.RepositoryFactory = () => new MonitorRepository(_db);
         CliRunner.ConfigFactory = () => new AppConfig { DashboardRefreshSeconds = 2 };
-        CliRunner.DatabaseStatusProvider = () => (true, 1024 * 1024, now);
+        CliRunner.DatabaseStatusProvider = () => (true, 10_000_000, now);
         int watchChecks = 0;
         CliRunner.WatchIterationRequested = () => watchChecks++ == 0;
         CliRunner.WatchDelay = _ => { };
@@ -205,7 +238,7 @@ public sealed class CliCoverageTests : IDisposable
         }
 
         string text = output.ToString();
-        Assert.Contains("Database          : 1.0 MB, updated", text);
+        Assert.Contains("Database          : 10.0 MB, updated", text);
         Assert.Contains("CLI alert", text);
         Assert.Contains("Disk Activity Monitor — live", text);
         Assert.Matches(@"\b(?:AM|PM)\b", text);

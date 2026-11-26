@@ -292,6 +292,22 @@ public sealed class CollectorWorkerControllerTests : IDisposable
         Assert.Equal(60, Assert.Single(harness.Repo.GetTopFileTargets("writer", minute, minute.AddMinutes(1), 5)).WriteBytes);
     }
 
+    [Fact]
+    public void FlushBuckets_ProcessFloorUsesDecimalMegabytes()
+    {
+        // Issue #3: a 1 MB/min floor is 1,000,000 bytes, not 1,048,576.
+        using var harness = Create(new FakeReader([]));
+        DateTime minute = new(2026, 8, 5, 12, 34, 0, DateTimeKind.Utc);
+        var procAccum = GetField<Dictionary<string, (long Read, long Write)>>(harness.Worker, "_procAccum");
+        procAccum["at-floor"] = (0, 1_000_000);
+        procAccum["below-floor"] = (0, 999_999);
+
+        harness.Worker.FlushBuckets(new AppConfig { ProcessMinMbPerMinute = 1, TrackFileTargets = false }, minute);
+
+        Assert.Equal(1_000_000, harness.Repo.GetProcessWrite("at-floor", minute, minute.AddMinutes(1)));
+        Assert.Equal(0, harness.Repo.GetProcessWrite("below-floor", minute, minute.AddMinutes(1)));
+    }
+
     private static T GetField<T>(CollectorWorker worker, string name)
         => (T)typeof(CollectorWorker).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(worker)!;
 
