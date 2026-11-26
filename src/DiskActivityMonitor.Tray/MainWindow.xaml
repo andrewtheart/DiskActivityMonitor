@@ -1011,7 +1011,7 @@
                                     </StackPanel>
                                 </UniformGrid>
                                 <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,0,0,8"
-                                           Text="SMART wear is the drive's own measurement and is used whenever the drive reports it. TBW checks use this drive's configured rating; the assumed default TBW range is used only when the drive reports no SMART wear. The endurance limit for projections is the configured rating, then 100% SMART wear (extrapolated from the drive's wear rate), then the default range." />
+                                           Text="SMART wear is the drive's own measurement and is used whenever the drive reports it. The lifetime-writes check uses this drive's configured TBW rating, and uses the assumed default range only when the drive reports no SMART wear. The endurance limit for projections is the configured rating; otherwise 100% SMART wear when it can be extrapolated (wear above 0% with a lifetime-write counter, or wear already at 100%); otherwise the assumed default range." />
                                 <TextBlock x:Name="EnduranceAlertInheritanceText" Style="{StaticResource Caption}"
                                            TextWrapping="Wrap" Margin="0,0,0,2" />
                             </StackPanel>

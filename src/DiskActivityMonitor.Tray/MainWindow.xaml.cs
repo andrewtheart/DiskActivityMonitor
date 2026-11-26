@@ -995,6 +995,7 @@ public partial class MainWindow : Window
         double tbwHighBytes = (tbwHigh ?? tbwLow) * 1_000_000_000_000d;
         string tbwLabel = ranged ? $"{tbwLow:0.#} to {tbwHigh:0.#} TBW" : $"{tbwLow:0.#} TBW";
         string tbwBasisLabel = estimatedTbw ? $"{tbwLabel} default estimate" : tbwLabel;
+        string lowerBoundLabel = $"{(estimatedTbw ? "assumed " : "")}{tbwLow:0.#} TBW lower bound";
 
         // Prefer the drive's own lifetime-written total (from SMART) over what we've observed.
         long? lifeWritten = disk.LifetimeBytesWritten;
@@ -1037,13 +1038,13 @@ public partial class MainWindow : Window
         {
             WearMetric.Text = yearsText;
             WearSub.Text = (lowerTbwReached
-                ? $"past the {tbwLow:0.#} TBW lower bound; to {tbwHigh:0.#} TBW at {rateText}/day"
+                ? $"past the {lowerBoundLabel}; to {tbwHigh:0.#} TBW at {rateText}/day"
                 : $"to {tbwBasisLabel} at {rateText}/day") + recordedOnlyNote;
         }
         else if (lowerTbwReached)
         {
             WearMetric.Text = "Lower bound reached";
-            WearSub.Text = $"past the {tbwLow:0.#} TBW lower bound; {upperTimeUnavailable}";
+            WearSub.Text = $"past the {lowerBoundLabel}; {upperTimeUnavailable}";
         }
         else
         {
@@ -1057,7 +1058,7 @@ public partial class MainWindow : Window
 
         // Endurance panel.
         EnduranceDiskText.Text = disk.DisplayName;
-        EnduranceRatedText.Text = estimatedTbw ? $"{tbwLabel} estimated" : $"{tbwLabel} rated";
+        EnduranceRatedText.Text = !hasTbwRating ? "TBW not set" : estimatedTbw ? $"{tbwLabel} estimated" : $"{tbwLabel} rated";
 
         // Headline 1: precise lifetime writes / configured TBW when available. Drive SMART wear is
         // typically reported only as a whole percentage, so retain it as supporting context rather
@@ -1123,7 +1124,7 @@ public partial class MainWindow : Window
         {
             EnduranceProjValue.Text = yearsText;
             EnduranceProjSub.Text = (lowerTbwReached
-                    ? $"past the {tbwLow:0.#} TBW lower bound; reaches {tbwHigh:0.#} TBW at {rateText}/day"
+                    ? $"past the {lowerBoundLabel}; reaches {tbwHigh:0.#} TBW at {rateText}/day"
                     : ranged
                         ? $"reaches {tbwBasisLabel} at {rateText}/day"
                         : $"reaches {tbwLabel} about {DateTime.Now.AddDays(Math.Min(yearsLow, 5000) * 365.0):MMM yyyy}, at {rateText}/day")
@@ -1132,7 +1133,7 @@ public partial class MainWindow : Window
         else if (lowerTbwReached)
         {
             EnduranceProjValue.Text = "Lower bound reached";
-            EnduranceProjSub.Text = $"past the {tbwLow:0.#} TBW lower bound; {upperTimeUnavailable}";
+            EnduranceProjSub.Text = $"past the {lowerBoundLabel}; {upperTimeUnavailable}";
         }
         else
         {

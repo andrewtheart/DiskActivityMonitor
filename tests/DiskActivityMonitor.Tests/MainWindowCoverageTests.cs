@@ -1363,15 +1363,52 @@ public sealed class MainWindowCoverageTests : IDisposable
                     settings.DiskTbwRatings.Remove("0");
                     settings.DiskTbwRatingsUpper.Remove("0");
                     settings.DefaultSsdTbw = 0;
-                    settings.DefaultSsdTbwUpper = null;
+                    settings.DefaultSsdTbwUpper = 600;
                 });
                 Invoke(window, "UpdateEndurance", repo.GetDisks().Single(), coverageEnd);
+                Assert.Equal("TBW not set", window.EnduranceRatedText.Text);
                 Assert.Equal("-", window.EnduranceProjValue.Text);
                 Assert.StartsWith("no TBW rating is set", window.EnduranceProjSub.Text);
                 Assert.Equal("-", window.WearMetric.Text);
                 Assert.StartsWith("No TBW rating is set", window.WearSub.Text);
                 Assert.Equal("2%", window.SmartWearValue.Text);
                 Assert.DoesNotContain("of 0 TBW", window.EnduranceConsumedText.Text);
+            }
+            finally { window.ForceClose(); }
+
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public void Dashboard_Issue2Drive_ShowsSmartWearAndLabelsTheAssumedLowerBound()
+    {
+        RunStaAsync(() =>
+        {
+            EnsureApplication();
+            var repo = new MonitorRepository(_db); repo.EnsureSchema();
+            repo.UpsertDisks([new DiskInfo
+            {
+                DiskId = "0", InstanceName = "0 C:", FriendlyName = "NVMe SAMSUNG MZVLQ1T0HBLB-00B00", Volumes = "C:",
+                MediaType = DiskMediaType.Ssd, WearPercent = 37, LifetimeBytesWritten = 252_210_000_000_000,
+            }]);
+            var now = DateTime.UtcNow;
+            var end = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
+            repo.AddDiskSamples([new DiskSample { TimestampUtc = end.AddMinutes(-4), DiskId = "0", WriteBytes = 1_000_000 }]);
+            repo.AddCollectorHeartbeat(end.AddMinutes(-4));
+            using var config = new ConfigStore(_cfg);
+            var window = new MainWindow(repo, config, new UserSettingsStore(_userSettings));
+            try
+            {
+                Invoke(window, "UpdateEndurance", repo.GetDisks().Single(), end);
+
+                Assert.Equal("37%", window.SmartWearValue.Text);
+                Assert.Contains("lifetime writes are 42.04% to 168.14% of the 150 to 600 TBW default estimate, which is not this drive's rating", window.SmartWearText.Text);
+                Assert.Contains("252.21 TB written total", window.SmartWearLifeText.Text);
+                Assert.Equal("150 to 600 TBW estimated", window.EnduranceRatedText.Text);
+                Assert.Equal("Lower bound reached", window.EnduranceProjValue.Text);
+                Assert.StartsWith("past the assumed 150 TBW lower bound;", window.EnduranceProjSub.Text);
+                Assert.StartsWith("past the assumed 150 TBW lower bound;", window.WearSub.Text);
             }
             finally { window.ForceClose(); }
 
