@@ -43,6 +43,19 @@ Two numbers that look similar have different meanings:
 
 The collector aggregates samples into one-minute SQLite buckets. The dashboard then rolls those buckets into hourly, daily, and weekly views.
 
+### Units
+
+Every data size and transfer rate uses decimal SI units, the same convention as drive capacities
+and manufacturer TBW ratings: 1 KB = 1,000 bytes, 1 MB = 1,000,000 bytes, 1 GB = 10^9 bytes, and
+1 TB = 10^12 bytes. Lifetime writes can therefore be compared directly with a TBW rating. Size
+settings such as the write-alert thresholds, the process noise floor, the per-file floor, the
+database-size warning, and the maximum installer size use the same units. The only exceptions
+are the two live-tail memory limits, which are labelled KiB (1 KiB = 1,024 bytes).
+
+Versions before 1.4.18 displayed binary quantities with decimal labels, so the same lifetime
+writes looked about 9% smaller in TB, and a `10` GB threshold actually meant 10.74 decimal GB.
+Threshold values in existing settings are kept as entered and now mean the decimal amount shown.
+
 ---
 
 ## Install and start
@@ -232,7 +245,13 @@ $$
 
 The dashboard shows up to two decimal places. For example, it may show `~10.38%`.
 
-Many drives expose their native SMART wear field only as a whole integer. In that case the precise lifetime-writes/TBW calculation is the headline and the whole-percent SMART value is shown as supporting context. If lifetime writes are unavailable, the dashboard falls back to the drive's SMART whole-percent wear value.
+Many drives expose their native SMART wear field only as a whole integer. When this drive's TBW
+rating is configured, the precise lifetime-writes/TBW calculation is the headline and the
+whole-percent SMART value is shown as supporting context. When the rating is only the assumed
+default range, the drive's own SMART wear is the headline instead, and the share of the assumed
+range is shown as context, because a generic rating is not evidence about this drive. If lifetime
+writes are unavailable, the dashboard uses the drive's SMART whole-percent wear value; if SMART wear
+is unavailable, it uses lifetime writes against whatever rating is in effect.
 
 ### Projection caveats
 
@@ -250,18 +269,38 @@ percentage and monitored/requested minute counts so this behavior is visible.
 
 ### Endurance alerts
 
-The default profile applies to every SSD and warns when either condition is true:
+The default profile applies to every SSD and has three independently enabled conditions:
 
-- Projected remaining life falls below **1 year**.
-- Endurance remaining falls to **20% or less**, equivalent to more than 80% used.
+- **Projected remaining life** falls below **1 year**.
+- **SMART-reported endurance remaining** falls to **20% or less**. This uses only the drive's own
+  SMART/NVMe wear value.
+- **Lifetime writes reach 80% of the TBW rating** (accepted range 1-1000%). With a configured
+  rating range, the percentage is measured against the lower bound.
+
+Each condition uses the most specific evidence available:
+
+| Condition | Source, in order of preference |
+|---|---|
+| SMART-reported endurance remaining | The drive's SMART wear only. Drives that do not report wear never trigger it. |
+| Lifetime writes vs TBW | This drive's configured rating. The assumed default range is used only when the drive reports no SMART wear. |
+| Projected remaining life | This drive's configured rating; otherwise the drive's SMART wear rate extrapolated to 100%; otherwise the assumed default range. |
+
+The SMART extrapolation divides lifetime writes by the reported wear. Because drives report whole
+percentages, the projection is shown as a range between `w%` and `w+1%` used, and the shorter end is
+compared with the threshold.
+
+Every notification names the measurement that triggered it, says whether a TBW rating is
+configured or assumed, and includes the drive's SMART wear when it is reported. When the only
+evidence is an assumed TBW rating, the notification suggests setting the drive's rated TBW (or using
+**Look up rated TBW**) instead of recommending replacement.
 
 The remaining-life value accepts **days**, **months**, or **years**. Select **All disks** before
 opening Settings to edit the default profile. Select one disk and enable **Override defaults for
 this disk** to define different conditions for only that drive. Removing the override immediately
 returns it to the global profile.
 
-The projection subtracts lifetime writes when the drive exposes them, otherwise writes observed
-since monitoring began. It is evaluated only with sufficient monitoring coverage. A crossed
+TBW-based projections subtract lifetime writes when the drive exposes them, otherwise writes observed
+since monitoring began. Projections are evaluated only with sufficient monitoring coverage. A crossed
 condition creates an Alert center row and a native Windows notification. Both surfaces offer the
 same 5-minute, 30-minute, 1-hour, 1-day, and 1-week snooze choices. This snooze is scoped to that
 disk's endurance rule; other disks and alert families continue normally.
@@ -355,8 +394,8 @@ The collector can raise alerts for:
 - High or critical SSD writes in 24 hours.
 - High process-level writes in one hour.
 - High combined process writes.
-- SMART wear reaching the configured threshold.
-- Projected time to TBW falling below warning or critical thresholds.
+- SMART-reported endurance remaining, lifetime writes reaching a share of the TBW rating, or
+  projected remaining life falling below the configured thresholds.
 - Repeated Windows Disk event 11 controller errors.
 
 The cooldown prevents the same rule and scope from creating alerts continuously.
@@ -661,12 +700,12 @@ Machine-wide collector settings are stored in `%ProgramData%\DiskActivityMonitor
 | `sampleIntervalSeconds` | `5` | Physical-disk sampling interval. |
 | `dashboardRefreshSeconds` | `15` | Dashboard refresh interval. |
 | `retentionDays` | `365` | Age at which minute samples and alert history are pruned. |
-| `processMinMbPerMinute` | `0.5` | Process noise floor. |
-| `ssdWarnGbPerHour` | `10` | SSD one-hour warning threshold. |
-| `ssdWarnGbPerDay` | `100` | SSD 24-hour warning threshold. |
-| `ssdCriticalGbPerDay` | `250` | SSD 24-hour critical threshold. |
-| `processWarnGbPerHour` | `5` | Single-process logical-write threshold. |
-| `allProcessesWarnGbPerHour` | `20` | Combined logical-write threshold. |
+| `processMinMbPerMinute` | `0.5` | Process noise floor, in decimal MB per minute. |
+| `ssdWarnGbPerHour` | `10` | SSD one-hour warning threshold, in decimal GB. |
+| `ssdWarnGbPerDay` | `100` | SSD 24-hour warning threshold, in decimal GB. |
+| `ssdCriticalGbPerDay` | `250` | SSD 24-hour critical threshold, in decimal GB. |
+| `processWarnGbPerHour` | `5` | Single-process logical-write threshold, in decimal GB. |
+| `allProcessesWarnGbPerHour` | `20` | Combined logical-write threshold, in decimal GB. |
 | `alertCooldownMinutes` | `5` | Minimum repeat interval for one rule/scope. |
 | `enableControllerErrorAlerts` | `true` | Monitor System log provider `disk`, event 11. |
 | `controllerErrorWindowDays` | `14` | Event 11 aggregation window. |
@@ -676,17 +715,17 @@ Machine-wide collector settings are stored in `%ProgramData%\DiskActivityMonitor
 | `defaultSsdTbwUpper` | `600` | Upper bound of the estimate used when TBW is unknown. |
 | `diskTbwRatings` | empty | Per-disk lower/exact TBW values. |
 | `diskTbwRatingsUpper` | empty | Per-disk upper TBW values. |
-| `defaultEnduranceAlert` | 1 year / 20% | Global enabled conditions for projected remaining life and endurance remaining. |
+| `defaultEnduranceAlert` | 1 year / 20% / 80% | Global profile: projected remaining life, SMART-reported endurance remaining, and lifetime writes as a share of the TBW rating (`enableTbwConsumed`, `tbwConsumedPercent`). |
 | `diskEnduranceAlertOverrides` | empty | Full per-disk profiles that replace the global endurance conditions. |
 | `highCoveragePercent` | `90` | Minimum monitoring coverage required for calendar-rate and endurance projection claims. |
 | `enduranceCoverageWindowDays` | `7` | Rolling history window used to validate endurance projections (1-365 days). |
 | `trackFileTargets` | `true` | Master switch for per-file attribution. |
 | `fileTargetsPerProcessPerMinute` | `15` | Busiest files stored per process per minute. |
-| `fileTargetMinKbPerMinute` | `64` | Per-file size floor for a minute to be stored. |
+| `fileTargetMinKbPerMinute` | `64` | Per-file size floor, in decimal KB, for a minute to be stored. |
 | `fileTargetRetentionDays` | `30` | Age at which per-file rows are pruned (1-365). |
 | `fileTargetTrackingLimit` | `20000` | Distinct files tracked in memory between samples. |
 | `fileTargetPageSize` | `100` | Rows appended per page in all-disk file activity (25-1000). |
-| `databaseSizeWarnGb` | `1` | Warn when the database, WAL, and index together exceed this size. `0` disables. |
+| `databaseSizeWarnGb` | `1` | Warn when the database, WAL, and index together exceed this many decimal GB. `0` disables. |
 | `databaseSizeAlertCooldownHours` | `12` | Minimum gap between repeat database-size warnings. |
 | `binaryExtensions` | see below | Extensions never opened as text by the live tail. |
 | `tailInitialLines` | `200` | Trailing lines seeded when a live tail opens. |

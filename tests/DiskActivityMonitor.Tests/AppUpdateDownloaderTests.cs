@@ -64,10 +64,10 @@ public sealed class AppUpdateDownloaderTests : IDisposable
     [Fact]
     public void InstallerSizeLimitBytes_UsesDefaultForNonPositiveValues()
     {
-        long expected = (long)AppUpdateDownloader.DefaultMaxInstallerSizeMb * 1024 * 1024;
+        long expected = (long)AppUpdateDownloader.DefaultMaxInstallerSizeMb * 1_000_000;
         Assert.Equal(expected, AppUpdateDownloader.InstallerSizeLimitBytes(0));
         Assert.Equal(expected, AppUpdateDownloader.InstallerSizeLimitBytes(-1));
-        Assert.Equal(5L * 1024 * 1024, AppUpdateDownloader.InstallerSizeLimitBytes(5));
+        Assert.Equal(5_000_000L, AppUpdateDownloader.InstallerSizeLimitBytes(5));
     }
 
     [Fact]

@@ -384,7 +384,10 @@ Guide</a>
 <li><a href="#contents" id="toc-contents">Contents</a></li>
 <li><a href="#what-disk-activity-monitor-measures"
 id="toc-what-disk-activity-monitor-measures">What Disk Activity Monitor
-measures</a></li>
+measures</a>
+<ul>
+<li><a href="#units" id="toc-units">Units</a></li>
+</ul></li>
 <li><a href="#install-and-start" id="toc-install-and-start">Install and
 start</a>
 <ul>
@@ -649,6 +652,21 @@ activity can make these totals differ from physical disk writes.</li>
 <p>The collector aggregates samples into one-minute SQLite buckets. The
 dashboard then rolls those buckets into hourly, daily, and weekly
 views.</p>
+<h3 id="units">Units</h3>
+<p>Every data size and transfer rate uses decimal SI units, the same
+convention as drive capacities and manufacturer TBW ratings: 1 KB =
+1,000 bytes, 1 MB = 1,000,000 bytes, 1 GB = 10^9 bytes, and 1 TB = 10^12
+bytes. Lifetime writes can therefore be compared directly with a TBW
+rating. Size settings such as the write-alert thresholds, the process
+noise floor, the per-file floor, the database-size warning, and the
+maximum installer size use the same units. The only exceptions are the
+two live-tail memory limits, which are labelled KiB (1 KiB = 1,024
+bytes).</p>
+<p>Versions before 1.4.18 displayed binary quantities with decimal
+labels, so the same lifetime writes looked about 9% smaller in TB, and a
+<code>10</code> GB threshold actually meant 10.74 decimal GB. Threshold
+values in existing settings are kept as entered and now mean the decimal
+amount shown.</p>
 <hr />
 <h2 id="install-and-start">Install and start</h2>
 <h3 id="recommended-self-contained-installer">Recommended:
@@ -844,10 +862,15 @@ Drive Life Used is calculated as:</p>
 <p>The dashboard shows up to two decimal places. For example, it may
 show <code>~10.38%</code>.</p>
 <p>Many drives expose their native SMART wear field only as a whole
-integer. In that case the precise lifetime-writes/TBW calculation is the
-headline and the whole-percent SMART value is shown as supporting
-context. If lifetime writes are unavailable, the dashboard falls back to
-the drive’s SMART whole-percent wear value.</p>
+integer. When this drive’s TBW rating is configured, the precise
+lifetime-writes/TBW calculation is the headline and the whole-percent
+SMART value is shown as supporting context. When the rating is only the
+assumed default range, the drive’s own SMART wear is the headline
+instead, and the share of the assumed range is shown as context, because
+a generic rating is not evidence about this drive. If lifetime writes
+are unavailable, the dashboard uses the drive’s SMART whole-percent wear
+value; if SMART wear is unavailable, it uses lifetime writes against
+whatever rating is in effect.</p>
 <h3 id="projection-caveats">Projection caveats</h3>
 <p>The projected years-to-TBW value uses the recent average per
 monitored time and is shown only when recent monitoring coverage reaches
@@ -865,26 +888,71 @@ old missing minute leaves the window. The dashboard shows both the
 percentage and monitored/requested minute counts so this behavior is
 visible.</p>
 <h3 id="endurance-alerts">Endurance alerts</h3>
-<p>The default profile applies to every SSD and warns when either
-condition is true:</p>
+<p>The default profile applies to every SSD and has three independently
+enabled conditions:</p>
 <ul>
-<li>Projected remaining life falls below <strong>1 year</strong>.</li>
-<li>Endurance remaining falls to <strong>20% or less</strong>,
-equivalent to more than 80% used.</li>
+<li><strong>Projected remaining life</strong> falls below <strong>1
+year</strong>.</li>
+<li><strong>SMART-reported endurance remaining</strong> falls to
+<strong>20% or less</strong>. This uses only the drive’s own SMART/NVMe
+wear value.</li>
+<li><strong>Lifetime writes reach 80% of the TBW rating</strong>
+(accepted range 1-1000%). With a configured rating range, the percentage
+is measured against the lower bound.</li>
 </ul>
+<p>Each condition uses the most specific evidence available:</p>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>Condition</th>
+<th>Source, in order of preference</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SMART-reported endurance remaining</td>
+<td>The drive’s SMART wear only. Drives that do not report wear never
+trigger it.</td>
+</tr>
+<tr>
+<td>Lifetime writes vs TBW</td>
+<td>This drive’s configured rating. The assumed default range is used
+only when the drive reports no SMART wear.</td>
+</tr>
+<tr>
+<td>Projected remaining life</td>
+<td>This drive’s configured rating; otherwise the drive’s SMART wear
+rate extrapolated to 100%; otherwise the assumed default range.</td>
+</tr>
+</tbody>
+</table>
+<p>The SMART extrapolation divides lifetime writes by the reported wear.
+Because drives report whole percentages, the projection is shown as a
+range between <code>w%</code> and <code>w+1%</code> used, and the
+shorter end is compared with the threshold.</p>
+<p>Every notification names the measurement that triggered it, says
+whether a TBW rating is configured or assumed, and includes the drive’s
+SMART wear when it is reported. When the only evidence is an assumed TBW
+rating, the notification suggests setting the drive’s rated TBW (or
+using <strong>Look up rated TBW</strong>) instead of recommending
+replacement.</p>
 <p>The remaining-life value accepts <strong>days</strong>,
 <strong>months</strong>, or <strong>years</strong>. Select <strong>All
 disks</strong> before opening Settings to edit the default profile.
 Select one disk and enable <strong>Override defaults for this
 disk</strong> to define different conditions for only that drive.
 Removing the override immediately returns it to the global profile.</p>
-<p>The projection subtracts lifetime writes when the drive exposes them,
-otherwise writes observed since monitoring began. It is evaluated only
-with sufficient monitoring coverage. A crossed condition creates an
-Alert center row and a native Windows notification. Both surfaces offer
-the same 5-minute, 30-minute, 1-hour, 1-day, and 1-week snooze choices.
-This snooze is scoped to that disk’s endurance rule; other disks and
-alert families continue normally.</p>
+<p>TBW-based projections subtract lifetime writes when the drive exposes
+them, otherwise writes observed since monitoring began. Projections are
+evaluated only with sufficient monitoring coverage. A crossed condition
+creates an Alert center row and a native Windows notification. Both
+surfaces offer the same 5-minute, 30-minute, 1-hour, 1-day, and 1-week
+snooze choices. This snooze is scoped to that disk’s endurance rule;
+other disks and alert families continue normally.</p>
 <hr />
 <h2 id="rated-tbw-lookup">Rated-TBW lookup</h2>
 <h3 id="guided-setup">Guided setup</h3>
@@ -981,9 +1049,9 @@ snoozing</h2>
 <li>High or critical SSD writes in 24 hours.</li>
 <li>High process-level writes in one hour.</li>
 <li>High combined process writes.</li>
-<li>SMART wear reaching the configured threshold.</li>
-<li>Projected time to TBW falling below warning or critical
-thresholds.</li>
+<li>SMART-reported endurance remaining, lifetime writes reaching a share
+of the TBW rating, or projected remaining life falling below the
+configured thresholds.</li>
 <li>Repeated Windows Disk event 11 controller errors.</li>
 </ul>
 <p>The cooldown prevents the same rule and scope from creating alerts
@@ -1512,32 +1580,32 @@ settings.</p>
 <tr>
 <td><code>processMinMbPerMinute</code></td>
 <td style="text-align: right;"><code>0.5</code></td>
-<td>Process noise floor.</td>
+<td>Process noise floor, in decimal MB per minute.</td>
 </tr>
 <tr>
 <td><code>ssdWarnGbPerHour</code></td>
 <td style="text-align: right;"><code>10</code></td>
-<td>SSD one-hour warning threshold.</td>
+<td>SSD one-hour warning threshold, in decimal GB.</td>
 </tr>
 <tr>
 <td><code>ssdWarnGbPerDay</code></td>
 <td style="text-align: right;"><code>100</code></td>
-<td>SSD 24-hour warning threshold.</td>
+<td>SSD 24-hour warning threshold, in decimal GB.</td>
 </tr>
 <tr>
 <td><code>ssdCriticalGbPerDay</code></td>
 <td style="text-align: right;"><code>250</code></td>
-<td>SSD 24-hour critical threshold.</td>
+<td>SSD 24-hour critical threshold, in decimal GB.</td>
 </tr>
 <tr>
 <td><code>processWarnGbPerHour</code></td>
 <td style="text-align: right;"><code>5</code></td>
-<td>Single-process logical-write threshold.</td>
+<td>Single-process logical-write threshold, in decimal GB.</td>
 </tr>
 <tr>
 <td><code>allProcessesWarnGbPerHour</code></td>
 <td style="text-align: right;"><code>20</code></td>
-<td>Combined logical-write threshold.</td>
+<td>Combined logical-write threshold, in decimal GB.</td>
 </tr>
 <tr>
 <td><code>alertCooldownMinutes</code></td>
@@ -1586,9 +1654,10 @@ settings.</p>
 </tr>
 <tr>
 <td><code>defaultEnduranceAlert</code></td>
-<td style="text-align: right;">1 year / 20%</td>
-<td>Global enabled conditions for projected remaining life and endurance
-remaining.</td>
+<td style="text-align: right;">1 year / 20% / 80%</td>
+<td>Global profile: projected remaining life, SMART-reported endurance
+remaining, and lifetime writes as a share of the TBW rating
+(<code>enableTbwConsumed</code>, <code>tbwConsumedPercent</code>).</td>
 </tr>
 <tr>
 <td><code>diskEnduranceAlertOverrides</code></td>
@@ -1621,7 +1690,7 @@ days).</td>
 <tr>
 <td><code>fileTargetMinKbPerMinute</code></td>
 <td style="text-align: right;"><code>64</code></td>
-<td>Per-file size floor for a minute to be stored.</td>
+<td>Per-file size floor, in decimal KB, for a minute to be stored.</td>
 </tr>
 <tr>
 <td><code>fileTargetRetentionDays</code></td>
@@ -1641,8 +1710,8 @@ days).</td>
 <tr>
 <td><code>databaseSizeWarnGb</code></td>
 <td style="text-align: right;"><code>1</code></td>
-<td>Warn when the database, WAL, and index together exceed this size.
-<code>0</code> disables.</td>
+<td>Warn when the database, WAL, and index together exceed this many
+decimal GB. <code>0</code> disables.</td>
 </tr>
 <tr>
 <td><code>databaseSizeAlertCooldownHours</code></td>

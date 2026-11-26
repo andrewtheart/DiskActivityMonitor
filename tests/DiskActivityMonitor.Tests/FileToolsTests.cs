@@ -534,7 +534,7 @@ public sealed class FileToolsTests : IDisposable
     [Fact]
     public void ThresholdBytes_ConvertsGigabytes()
     {
-        Assert.Equal(1024L * 1024 * 1024, DatabaseMaintenance.ThresholdBytes(1));
+        Assert.Equal(1_000_000_000L, DatabaseMaintenance.ThresholdBytes(1));
         Assert.Equal(0, DatabaseMaintenance.ThresholdBytes(0));
         Assert.Equal(0, DatabaseMaintenance.ThresholdBytes(-5));
     }

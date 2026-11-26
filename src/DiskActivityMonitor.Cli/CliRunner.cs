@@ -143,7 +143,7 @@ internal static class CliRunner
         var database = DatabaseStatusProvider();
         if (database.Exists)
         {
-            Console.WriteLine($"  Database          : {database.Length / 1024.0 / 1024.0:0.0} MB, updated {LocalTimeDisplay.FormatUtcWithZone(database.LastWriteTimeUtc, "g")}");
+            Console.WriteLine($"  Database          : {database.Length / ByteFormat.MB:0.0} MB, updated {LocalTimeDisplay.FormatUtcWithZone(database.LastWriteTimeUtc, "g")}");
         }
         else
         {
@@ -336,7 +336,7 @@ internal static class CliRunner
             double tbwLow = cfg.EffectiveTbw(disk.DiskId);
             double? tbwHigh = cfg.EffectiveTbwUpper(disk.DiskId);
             bool ranged = tbwHigh.HasValue;
-            bool estimatedTbw = !cfg.DiskTbwRatings.ContainsKey(disk.DiskId);
+            bool estimatedTbw = !cfg.HasConfiguredTbw(disk.DiskId);
             double tbwLowBytes = tbwLow * 1e12;
             double tbwHighBytes = (tbwHigh ?? tbwLow) * 1e12;
             string tbwLabel = ranged ? $"{tbwLow:0.#} to {tbwHigh:0.#} TBW" : $"{tbwLow:0.#} TBW";
@@ -356,7 +356,7 @@ internal static class CliRunner
             {
                 string pctText = ranged ? $"{lifeW / tbwHighBytes * 100:0.###}% to {lifeW / tbwLowBytes * 100:0.###}%" : $"{lifeW / tbwLowBytes * 100:0.###}%";
                 string readPart = disk.LifetimeBytesRead is long lifeR ? $", {ByteFormat.Humanize(lifeR)} read" : "";
-                Console.WriteLine($"  Lifetime (drive)  : {ByteFormat.Humanize(lifeW)} written{readPart}  ({pctText} of TBW)");
+                Console.WriteLine($"  Lifetime (drive)  : {ByteFormat.Humanize(lifeW)} written{readPart}  ({pctText} of {(estimatedTbw ? "assumed " : "")}TBW)");
             }
             string trackedPct = ranged
                 ? $"{writtenObserved / tbwHighBytes * 100:0.###}% to {writtenObserved / tbwLowBytes * 100:0.###}%"

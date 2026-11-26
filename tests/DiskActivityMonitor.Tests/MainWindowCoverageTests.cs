@@ -508,28 +508,37 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Assert.Equal(Visibility.Collapsed, window.ChkEnduranceAlertOverride.Visibility);
                 Assert.Equal("1", window.TxtEnduranceLifeValue.Text);
                 Assert.Equal("20", window.TxtEnduranceRemainingPercent.Text);
+                Assert.True(window.ChkEnduranceTbw.IsChecked);
+                Assert.Equal("80", window.TxtEnduranceTbwPercent.Text);
                 window.TxtEnduranceLifeValue.Text = "6";
                 window.EnduranceLifeUnitSelector.SelectedIndex = 1;
                 window.TxtEnduranceRemainingPercent.Text = "15";
+                window.TxtEnduranceTbwPercent.Text = "120";
                 Invoke(window, "Save_Click", window, new RoutedEventArgs());
 
                 Assert.Equal(6, config.Current.DefaultEnduranceAlert.RemainingLifeValue);
                 Assert.Equal(EnduranceAlertTimeUnit.Months, config.Current.DefaultEnduranceAlert.RemainingLifeUnit);
                 Assert.Equal(15, config.Current.DefaultEnduranceAlert.RemainingPercent);
+                Assert.True(config.Current.DefaultEnduranceAlert.EnableTbwConsumed);
+                Assert.Equal(120, config.Current.DefaultEnduranceAlert.TbwConsumedPercent);
 
                 window.DiskSelector.SelectedItem = physicalDisk;
                 Assert.False(window.ChkEnduranceAlertOverride.IsChecked);
                 Assert.False(window.TxtEnduranceLifeValue.IsEnabled);
+                Assert.False(window.ChkEnduranceTbw.IsEnabled);
                 window.ChkEnduranceAlertOverride.IsChecked = true;
+                Assert.True(window.TxtEnduranceTbwPercent.IsEnabled);
                 window.TxtEnduranceLifeValue.Text = "45";
                 window.EnduranceLifeUnitSelector.SelectedIndex = 0;
                 window.TxtEnduranceRemainingPercent.Text = "5";
+                window.ChkEnduranceTbw.IsChecked = false;
                 Invoke(window, "Save_Click", window, new RoutedEventArgs());
 
                 EnduranceAlertThreshold diskThreshold = config.Current.EffectiveEnduranceAlert("0");
                 Assert.Equal(45, diskThreshold.RemainingLifeValue);
                 Assert.Equal(EnduranceAlertTimeUnit.Days, diskThreshold.RemainingLifeUnit);
                 Assert.Equal(5, diskThreshold.RemainingPercent);
+                Assert.False(diskThreshold.EnableTbwConsumed);
 
                 window.ChkEnduranceAlertOverride.IsChecked = false;
                 Invoke(window, "Save_Click", window, new RoutedEventArgs());
@@ -557,7 +566,7 @@ public sealed class MainWindowCoverageTests : IDisposable
                     new Button { CommandParameter = CreateAlertRow("0", true) }, new RoutedEventArgs());
 
                 Assert.False(MainWindow.TryParseEnduranceAlert(
-                    false, "1", EnduranceAlertTimeUnit.Years, false, "20", out _, out string validationError));
+                    false, "1", EnduranceAlertTimeUnit.Years, false, "20", false, "80", out _, out string validationError));
                 Assert.Contains("at least one", validationError);
                 AssertEnduranceAlertValidationBranches();
 
@@ -1279,7 +1288,7 @@ public sealed class MainWindowCoverageTests : IDisposable
             }]);
             repo.AddCollectorHeartbeat(monitoredMinute);
             using var config = new ConfigStore(_cfg);
-            config.Update(settings => settings.DefaultSsdTbw = 750);
+            config.Update(settings => settings.DiskTbwRatings["0"] = 750);
 
             var window = new MainWindow(repo, config, new UserSettingsStore(_userSettings));
             try
@@ -1298,9 +1307,26 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Assert.Equal("~9.44%", window.SmartWearValue.Text);
                 Assert.Contains("drive SMART reports 2% used", window.SmartWearText.Text);
 
-                config.Update(settings => settings.DefaultSsdTbwUpper = 1_000);
+                config.Update(settings => settings.DiskTbwRatingsUpper["0"] = 1_000);
                 Invoke(window, "UpdateEndurance", repo.GetDisks().Single(), DateTime.UtcNow);
                 Assert.Equal("~7.08% to 9.44%", window.SmartWearValue.Text);
+
+                // An assumed default rating does not outrank the drive's own SMART wear.
+                config.Update(settings =>
+                {
+                    settings.DiskTbwRatings.Remove("0");
+                    settings.DiskTbwRatingsUpper.Remove("0");
+                    settings.DefaultSsdTbw = 150;
+                    settings.DefaultSsdTbwUpper = 600;
+                });
+                Invoke(window, "UpdateEndurance", repo.GetDisks().Single(), DateTime.UtcNow);
+                Assert.Equal("2%", window.SmartWearValue.Text);
+                Assert.Contains("98% endurance remaining, from the drive's SMART data", window.SmartWearText.Text);
+                Assert.Contains("lifetime writes are 11.8% to 47.2% of the 150 to 600 TBW default estimate, which is not this drive's rating", window.SmartWearText.Text);
+
+                config.Update(settings => settings.DefaultSsdTbwUpper = null);
+                Invoke(window, "UpdateEndurance", repo.GetDisks().Single(), DateTime.UtcNow);
+                Assert.Contains("lifetime writes are 47.2% of the 150 TBW default estimate", window.SmartWearText.Text);
 
                 Invoke(window, "UpdateEndurance", new DiskInfo
                 {
@@ -1530,25 +1556,39 @@ public sealed class MainWindowCoverageTests : IDisposable
     private static void AssertEnduranceAlertValidationBranches()
     {
         Assert.False(MainWindow.TryParseEnduranceAlert(
-            true, "bad", EnduranceAlertTimeUnit.Years, false, "20", out _, out _));
+            true, "bad", EnduranceAlertTimeUnit.Years, false, "20", false, "80", out _, out _));
         Assert.False(MainWindow.TryParseEnduranceAlert(
-            true, "NaN", EnduranceAlertTimeUnit.Years, false, "20", out _, out _));
+            true, "NaN", EnduranceAlertTimeUnit.Years, false, "20", false, "80", out _, out _));
         Assert.False(MainWindow.TryParseEnduranceAlert(
-            true, "0", EnduranceAlertTimeUnit.Years, false, "20", out _, out _));
+            true, "0", EnduranceAlertTimeUnit.Years, false, "20", false, "80", out _, out _));
         Assert.False(MainWindow.TryParseEnduranceAlert(
-            false, "-1", EnduranceAlertTimeUnit.Years, true, "bad", out _, out _));
+            false, "-1", EnduranceAlertTimeUnit.Years, true, "bad", false, "80", out _, out _));
         Assert.False(MainWindow.TryParseEnduranceAlert(
-            false, "-1", EnduranceAlertTimeUnit.Years, true, "NaN", out _, out _));
+            false, "-1", EnduranceAlertTimeUnit.Years, true, "NaN", false, "80", out _, out _));
         Assert.False(MainWindow.TryParseEnduranceAlert(
-            false, "-1", EnduranceAlertTimeUnit.Years, true, "-1", out _, out _));
+            false, "-1", EnduranceAlertTimeUnit.Years, true, "-1", false, "80", out _, out _));
         Assert.False(MainWindow.TryParseEnduranceAlert(
-            false, "-1", EnduranceAlertTimeUnit.Years, true, "101", out _, out _));
+            false, "-1", EnduranceAlertTimeUnit.Years, true, "101", false, "80", out _, out _));
+        Assert.False(MainWindow.TryParseEnduranceAlert(
+            false, "-1", EnduranceAlertTimeUnit.Years, false, "-1", true, "bad", out _, out _));
+        Assert.False(MainWindow.TryParseEnduranceAlert(
+            false, "-1", EnduranceAlertTimeUnit.Years, false, "-1", true, "NaN", out _, out _));
+        Assert.False(MainWindow.TryParseEnduranceAlert(
+            false, "-1", EnduranceAlertTimeUnit.Years, false, "-1", true, "0", out _, out string tbwError));
+        Assert.Contains("TBW rating", tbwError);
+        Assert.False(MainWindow.TryParseEnduranceAlert(
+            false, "-1", EnduranceAlertTimeUnit.Years, false, "-1", true, "1001", out _, out _));
         Assert.True(MainWindow.TryParseEnduranceAlert(
-            false, "-1", EnduranceAlertTimeUnit.Years, true, "10", out EnduranceAlertThreshold percentOnly, out _));
+            false, "-1", EnduranceAlertTimeUnit.Years, true, "10", false, "80", out EnduranceAlertThreshold percentOnly, out _));
         Assert.Equal(0, percentOnly.RemainingLifeValue);
+        Assert.False(percentOnly.EnableTbwConsumed);
         Assert.True(MainWindow.TryParseEnduranceAlert(
-            true, "2", EnduranceAlertTimeUnit.Months, false, "-1", out EnduranceAlertThreshold lifeOnly, out _));
+            true, "2", EnduranceAlertTimeUnit.Months, false, "-1", false, "80", out EnduranceAlertThreshold lifeOnly, out _));
         Assert.Equal(0, lifeOnly.RemainingPercent);
+        Assert.True(MainWindow.TryParseEnduranceAlert(
+            false, "-1", EnduranceAlertTimeUnit.Years, false, "-1", true, "150", out EnduranceAlertThreshold tbwOnly, out _));
+        Assert.True(tbwOnly.EnableTbwConsumed);
+        Assert.Equal(150, tbwOnly.TbwConsumedPercent);
 
         Assert.False(MainWindow.TryParseChartColor(null, out _));
         Assert.False(MainWindow.TryParseChartColor("#123", out _));
@@ -1816,7 +1856,7 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Invoke(window, "UpdateEndurance", disk, end);
                 Assert.NotEqual("-", window.EnduranceProjValue.Text);
                 Assert.Contains("reaches 150 to 600 TBW", window.EnduranceProjSub.Text);
-                Assert.Contains("18.63 GB read", window.SmartWearLifeText.Text);
+                Assert.Contains("20 GB read", window.SmartWearLifeText.Text);
                 Assert.Contains("Rolling 7-day monitoring coverage: 100%", window.EnduranceConsumedText.Text);
                 Assert.Contains("10,080 of 10,080 min", window.EnduranceConsumedText.Text);
                 Assert.Contains("enter or leave the rolling window", window.EnduranceConsumedText.Text);

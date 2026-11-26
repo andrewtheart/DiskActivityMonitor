@@ -99,6 +99,29 @@ public class AlertEngineTests : IDisposable
         Assert.Contains(alerts, a => a.RuleKey == "ssd-1h:0" && a.Severity == AlertSeverity.Warning);
     }
 
+    [Theory]
+    [InlineData(10_000_000_000, true)]
+    [InlineData(9_999_999_999, false)]
+    public void Evaluate_WriteThresholds_UseDecimalGigabytes(long hourWrite, bool expectedAlert)
+    {
+        // Issue #3: a 10 GB setting previously meant 10 GiB (10.74 decimal GB).
+        var cfg = new AppConfig { SsdWarnGbPerHour = 10 };
+        var now = new DateTime(2025, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+        _repo.AddDiskSamples([
+            new DiskSample { TimestampUtc = now.AddMinutes(-30), DiskId = "0", WriteBytes = hourWrite },
+        ]);
+
+        var alerts = _engine.Evaluate([MakeSsd()], cfg, now);
+
+        var alert = alerts.SingleOrDefault(a => a.RuleKey == "ssd-1h:0");
+        Assert.Equal(expectedAlert, alert is not null);
+        if (alert is not null)
+        {
+            Assert.Equal(10_000_000_000, alert.Threshold);
+            Assert.Contains("10 GB written in the last hour (threshold 10 GB)", alert.Message);
+        }
+    }
+
     // ────────────────────────────────────────── SSD 24-hour threshold (warning vs critical)
 
     [Fact]
@@ -344,6 +367,145 @@ public class AlertEngineTests : IDisposable
             && alert.Message.Contains("Projected remaining life", StringComparison.Ordinal));
     }
 
+    // ────────────────────────────────────────── Endurance sources: SMART wear vs configured vs assumed TBW
+
+    private void AddSevenDaysOfCoverage(DateTime now, long sevenDayBytes)
+    {
+        _repo.AddDiskSamples([
+            new DiskSample { TimestampUtc = now.AddDays(-8), DiskId = "0", WriteBytes = 1 },
+            new DiskSample { TimestampUtc = now.AddMinutes(-1), DiskId = "0", WriteBytes = sevenDayBytes },
+        ]);
+        for (int minute = 7 * 24 * 60; minute >= 1; minute--)
+            _repo.AddCollectorHeartbeat(now.AddMinutes(-minute));
+    }
+
+    private static AppConfig EnduranceOnlyConfig() => new()
+    {
+        SsdWarnGbPerHour = 0,
+        SsdWarnGbPerDay = 0,
+        SsdCriticalGbPerDay = 0,
+    };
+
+    [Fact]
+    public void Evaluate_AssumedTbwExceededButSmartReportsLowWear_DoesNotWarn()
+    {
+        // Issue #2: 252 TB written against the assumed 150-600 TBW default, while SMART reports 37% used.
+        var disk = MakeSsd(wearPercent: 37, lifetimeWritten: 252_210_000_000_000);
+
+        var alerts = _engine.Evaluate([disk], EnduranceOnlyConfig(), DateTime.UtcNow);
+
+        Assert.DoesNotContain(alerts, alert => alert.RuleKey == "endurance-health:0");
+    }
+
+    [Fact]
+    public void Evaluate_HighSmartWearWithFewLifetimeWrites_WarnsFromSmart()
+    {
+        // Only 40% of the assumed lower bound, but the drive itself reports 95% used.
+        var disk = MakeSsd(wearPercent: 95, lifetimeWritten: 60_000_000_000_000);
+
+        var alerts = _engine.Evaluate([disk], EnduranceOnlyConfig(), DateTime.UtcNow);
+
+        var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "endurance-health:0");
+        Assert.Contains("SMART data reports 95% of its endurance used (5% remaining)", alert.Message);
+        Assert.DoesNotContain("assumed", alert.Message);
+        Assert.Contains("plan drive replacement", alert.Message);
+        Assert.Equal(5, alert.Value);
+        Assert.Equal(20, alert.Threshold);
+    }
+
+    [Fact]
+    public void Evaluate_ConfiguredTbwConsumed_WarnsWithRatingAndSmartContext()
+    {
+        var cfg = EnduranceOnlyConfig();
+        cfg.DiskTbwRatings["0"] = 300;
+        var disk = MakeSsd(wearPercent: 10, lifetimeWritten: 250_000_000_000_000);
+
+        var alerts = _engine.Evaluate([disk], cfg, DateTime.UtcNow);
+
+        var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "endurance-health:0");
+        Assert.Contains("Lifetime writes of 250 TB are 83.33% of this drive's configured 300 TBW rating", alert.Message);
+        Assert.Contains("the warning threshold is 80% of the rating", alert.Message);
+        Assert.Contains("SMART data reports 10% of its endurance used.", alert.Message);
+        Assert.Contains("plan drive replacement", alert.Message);
+    }
+
+    [Fact]
+    public void Evaluate_AssumedTbwWithoutSmart_WarnsAsLabelledEstimate()
+    {
+        var disk = MakeSsd(wearPercent: null, lifetimeWritten: 200_000_000_000_000);
+
+        var alerts = _engine.Evaluate([disk], EnduranceOnlyConfig(), DateTime.UtcNow);
+
+        var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "endurance-health:0");
+        Assert.Contains("are 33.33% to 133.33% of the assumed 150 to 600 TBW default rating", alert.Message);
+        Assert.Contains("of the rating's lower bound", alert.Message);
+        Assert.Contains("only an estimate", alert.Message);
+        Assert.Contains("Look up rated TBW", alert.Message);
+        Assert.DoesNotContain("plan drive replacement", alert.Message);
+    }
+
+    [Fact]
+    public void Evaluate_TbwConsumedDisabled_SuppressesTbwOnlyWarning()
+    {
+        var cfg = EnduranceOnlyConfig();
+        cfg.DefaultEnduranceAlert.EnableTbwConsumed = false;
+        var disk = MakeSsd(wearPercent: null, lifetimeWritten: 200_000_000_000_000);
+
+        var alerts = _engine.Evaluate([disk], cfg, DateTime.UtcNow);
+
+        Assert.DoesNotContain(alerts, alert => alert.RuleKey == "endurance-health:0");
+    }
+
+    [Fact]
+    public void Evaluate_ProjectionWithAssumedTbwAndSmartWear_ExtrapolatesSmartWearRate()
+    {
+        DateTime now = new(2026, 11, 25, 12, 0, 0, DateTimeKind.Utc);
+        AddSevenDaysOfCoverage(now, 7_000_000_000_000);   // about 1 TB/day
+        var disk = MakeSsd(wearPercent: 50, lifetimeWritten: 100_000_000_000_000);
+
+        var alerts = _engine.Evaluate([disk], EnduranceOnlyConfig(), now);
+
+        // 100 TB at 50-51% used leaves about 96-100 TB, roughly 3 months at 1 TB/day.
+        var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "endurance-health:0");
+        Assert.Contains("until the drive's SMART wear reaches 100%, extrapolated from 50% used after 100 TB written", alert.Message);
+        Assert.DoesNotContain("assumed", alert.Message);
+        Assert.Equal(1, alert.Message.Split("SMART").Length - 1);
+        Assert.Contains("plan drive replacement", alert.Message);
+    }
+
+    [Fact]
+    public void Evaluate_ProjectionWithConfiguredTbw_PrefersRatingOverSmartWear()
+    {
+        DateTime now = new(2026, 11, 25, 12, 0, 0, DateTimeKind.Utc);
+        AddSevenDaysOfCoverage(now, 7_000_000_000_000);
+        var cfg = EnduranceOnlyConfig();
+        cfg.DiskTbwRatings["0"] = 150;
+        cfg.DefaultEnduranceAlert.EnableTbwConsumed = false;
+        var disk = MakeSsd(wearPercent: 5, lifetimeWritten: 100_000_000_000_000);
+
+        var alerts = _engine.Evaluate([disk], cfg, now);
+
+        var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "endurance-health:0");
+        Assert.Contains("until this drive's configured 150 TBW rating is reached", alert.Message);
+        Assert.Contains("SMART data reports 5% of its endurance used.", alert.Message);
+    }
+
+    [Fact]
+    public void Evaluate_ProjectionWithAssumedTbwAndNoSmart_LabelsAssumedRating()
+    {
+        DateTime now = new(2026, 11, 25, 12, 0, 0, DateTimeKind.Utc);
+        AddSevenDaysOfCoverage(now, 7_000_000_000_000);
+        var cfg = EnduranceOnlyConfig();
+        cfg.DefaultEnduranceAlert.EnableTbwConsumed = false;
+        var disk = MakeSsd(wearPercent: null, lifetimeWritten: 100_000_000_000_000);
+
+        var alerts = _engine.Evaluate([disk], cfg, now);
+
+        var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "endurance-health:0");
+        Assert.Contains("until the assumed 150 to 600 TBW default rating is reached", alert.Message);
+        Assert.Contains("Look up rated TBW", alert.Message);
+    }
+
     [Theory]
     [InlineData(double.NaN, "an unknown time")]
     [InlineData(-1, "an unknown time")]
@@ -469,11 +631,11 @@ public class AlertEngineTests : IDisposable
         var now = new DateTime(2025, 6, 1, 12, 0, 0, DateTimeKind.Utc);
 
         _repo.AddProcessSamples([
-            new ProcessIoSample { TimestampUtc = now.AddMinutes(-10), ProcessName = "backup", WriteBytes = (long)(10 * ByteFormat.GiB) },
+            new ProcessIoSample { TimestampUtc = now.AddMinutes(-10), ProcessName = "backup", WriteBytes = (long)(10 * ByteFormat.GB) },
         ]);
         _repo.AddDiskSamples([
-            new DiskSample { TimestampUtc = now.AddMinutes(-10), DiskId = "0", WriteBytes = (long)(2 * ByteFormat.GiB) },
-            new DiskSample { TimestampUtc = now.AddMinutes(-10), DiskId = "1", WriteBytes = (long)(9 * ByteFormat.GiB) },
+            new DiskSample { TimestampUtc = now.AddMinutes(-10), DiskId = "0", WriteBytes = (long)(2 * ByteFormat.GB) },
+            new DiskSample { TimestampUtc = now.AddMinutes(-10), DiskId = "1", WriteBytes = (long)(9 * ByteFormat.GB) },
         ]);
 
         var alerts = _engine.Evaluate([MakeSsd(), MakeHdd()], cfg, now);

@@ -17,7 +17,7 @@ public static class AppUpdateDownloader
         int megabytes = maximumInstallerSizeMb > 0
             ? maximumInstallerSizeMb
             : DefaultMaxInstallerSizeMb;
-        return checked((long)megabytes * 1024 * 1024);
+        return checked((long)megabytes * 1_000_000L);
     }
 
     public static async Task<string> DownloadAsync(

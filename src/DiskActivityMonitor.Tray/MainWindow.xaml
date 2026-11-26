@@ -903,8 +903,8 @@
                 <Border Style="{StaticResource Card}" Margin="0,0,0,4" Tag="settings">
                     <StackPanel>
                         <TextBlock Style="{StaticResource H2}" Text="Settings &amp; thresholds" />
-                        <TextBlock Style="{StaticResource Caption}" Margin="0,2,0,12"
-                                   Text="Write thresholds are in GB; controller-error thresholds are Windows event counts." />
+                        <TextBlock Style="{StaticResource Caption}" Margin="0,2,0,12" TextWrapping="Wrap"
+                                   Text="Sizes use decimal units, like drive capacities and TBW ratings (1 GB = 1,000,000,000 bytes); the live-tail limits are KiB (1,024 bytes). Controller-error thresholds are Windows event counts." />
                         <Border Style="{StaticResource SettingsSection}">
                             <StackPanel>
                                 <TextBlock Style="{StaticResource H2}" Text="Write activity alerts" />
@@ -991,7 +991,7 @@
                                         </StackPanel>
                                     </StackPanel>
                                     <StackPanel Style="{StaticResource SettingsField}">
-                                        <CheckBox x:Name="ChkEndurancePercent" Content="Drive endurance remaining falls below"
+                                        <CheckBox x:Name="ChkEndurancePercent" Content="SMART-reported endurance remaining falls below"
                                                   Foreground="{StaticResource TextPrimary}" />
                                         <DockPanel LastChildFill="False" Margin="0,8,0,0">
                                             <TextBox x:Name="TxtEnduranceRemainingPercent" Style="{StaticResource DarkTextBox}" />
@@ -999,7 +999,19 @@
                                                        Margin="8,0,0,0" VerticalAlignment="Center" />
                                         </DockPanel>
                                     </StackPanel>
+                                    <StackPanel Style="{StaticResource SettingsField}">
+                                        <CheckBox x:Name="ChkEnduranceTbw" Content="Lifetime writes reach"
+                                                  Foreground="{StaticResource TextPrimary}" />
+                                        <DockPanel LastChildFill="False" Margin="0,8,0,0">
+                                            <TextBox x:Name="TxtEnduranceTbwPercent" Style="{StaticResource DarkTextBox}"
+                                                     ToolTip="1 to 1000% of the TBW rating's lower bound." />
+                                            <TextBlock Text="% of the TBW rating" Style="{StaticResource Caption}"
+                                                       Margin="8,0,0,0" VerticalAlignment="Center" />
+                                        </DockPanel>
+                                    </StackPanel>
                                 </UniformGrid>
+                                <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,0,0,8"
+                                           Text="SMART wear is the drive's own measurement and is used whenever the drive reports it. TBW checks use this drive's configured rating; the assumed default TBW range is used only when the drive reports no SMART wear. Projections use the configured rating, then the drive's SMART wear rate, then the default range." />
                                 <TextBlock x:Name="EnduranceAlertInheritanceText" Style="{StaticResource Caption}"
                                            TextWrapping="Wrap" Margin="0,0,0,2" />
                             </StackPanel>

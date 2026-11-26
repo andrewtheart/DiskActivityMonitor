@@ -33,11 +33,41 @@ public class AppConfigTests
         Assert.Equal(EnduranceAlertTimeUnit.Years, cfg.DefaultEnduranceAlert.RemainingLifeUnit);
         Assert.True(cfg.DefaultEnduranceAlert.EnableRemainingPercent);
         Assert.Equal(20, cfg.DefaultEnduranceAlert.RemainingPercent);
+        Assert.True(cfg.DefaultEnduranceAlert.EnableTbwConsumed);
+        Assert.Equal(80, cfg.DefaultEnduranceAlert.TbwConsumedPercent);
         Assert.Equal(1, cfg.TbwProjectionCriticalYears);
         Assert.Equal(90, cfg.HighCoveragePercent);
         Assert.Equal(7, cfg.EnduranceCoverageWindowDays);
         Assert.Equal(512, cfg.TailMaxReadKb);
         Assert.Equal(1024, cfg.TailMaxBufferKb);
+    }
+
+    [Fact]
+    public void EnduranceAlert_ConfigWrittenBeforeTbwCondition_LoadsDefaultsAndSanitizes()
+    {
+        var cfg = JsonSerializer.Deserialize<AppConfig>(
+            """{ "defaultEnduranceAlert": { "enableRemainingPercent": true, "remainingPercent": 10 } }""",
+            AppConfig.SerializerOptions)!;
+
+        Assert.True(cfg.DefaultEnduranceAlert.EnableTbwConsumed);
+        Assert.Equal(80, cfg.DefaultEnduranceAlert.TbwConsumedPercent);
+        Assert.Equal(10, cfg.DefaultEnduranceAlert.RemainingPercent);
+
+        Assert.Equal(80, AppConfig.CloneEnduranceAlert(new EnduranceAlertThreshold { TbwConsumedPercent = double.NaN }).TbwConsumedPercent);
+        Assert.Equal(80, AppConfig.CloneEnduranceAlert(new EnduranceAlertThreshold { TbwConsumedPercent = 0 }).TbwConsumedPercent);
+        Assert.Equal(AppConfig.MaxTbwConsumedPercent, AppConfig.CloneEnduranceAlert(new EnduranceAlertThreshold { TbwConsumedPercent = 5000 }).TbwConsumedPercent);
+    }
+
+    [Fact]
+    public void HasConfiguredTbw_RequiresPositivePerDiskRating()
+    {
+        var cfg = new AppConfig();
+        cfg.DiskTbwRatings["a"] = 600;
+        cfg.DiskTbwRatings["b"] = 0;
+
+        Assert.True(cfg.HasConfiguredTbw("a"));
+        Assert.False(cfg.HasConfiguredTbw("b"));
+        Assert.False(cfg.HasConfiguredTbw("c"));
     }
 
     [Fact]

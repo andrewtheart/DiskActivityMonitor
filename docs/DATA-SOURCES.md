@@ -130,7 +130,7 @@ day. It intentionally says that lifespan remains drive-specific.
 | Display | Source and calculation |
 |---|---|
 | Rated TBW badge | Per-disk TBW or TBW range in configuration. If none is confirmed, the configured default SSD rating is used and labeled estimated. A web lookup changes this input only after the user applies a candidate. |
-| Drive Life Used | Preferred: direct lifetime bytes written divided by effective rated TBW. Fallback: direct or WMI SMART wear percentage. |
+| Drive Life Used | With a configured TBW rating: direct lifetime bytes written divided by that rating. With only the assumed default rating: the drive's SMART wear percentage when reported, with the assumed-range share as context. Otherwise: lifetime bytes against the effective rating, or the SMART wear percentage. |
 | Wear bar | The same percentage as Drive Life Used, clamped visually to 0 through 100 percent. For a TBW range, the lower rating determines the conservative fill. |
 | SMART context | `Percentage Used` from NVMe log page `0x02`, or `MSFT_StorageReliabilityCounter.Wear`, when available. |
 | Lifetime written/read | Direct NVMe Data Units Written/Read or ATA SMART 241/242. These are whole-drive lifetime values, not sums from SQLite. |
@@ -142,6 +142,8 @@ day. It intentionally says that lifespan remains drive-specific.
 For a configured TBW range, the consumed percentage and projected lifespan are displayed as
 ranges. The lower TBW rating gives the higher consumed percentage and shorter projected life.
 The card uses decimal bytes for manufacturer TBW ratings: `1 TBW = 1,000,000,000,000 bytes`.
+Every displayed size uses the same decimal units (1 TB = 10^12 bytes), so lifetime writes compare
+directly with the rating.
 
 In All disks mode, lifetime written/read totals are summed only across drives that expose each
 value. SMART wear, TBW percentages, and projections remain labeled per drive.
@@ -229,7 +231,7 @@ Alert inputs are:
 | Alert family | Underlying source |
 |---|---|
 | SSD 1-hour and 24-hour write alerts | Physical `disk_minute.write_bytes`. |
-| Endurance alerts | Direct lifetime bytes or SMART wear, configured TBW, recent physical `disk_minute` write rate, and monitoring coverage. |
+| Endurance alerts | SMART-reported endurance remaining uses only the drive's SMART wear. Lifetime writes vs TBW uses the configured rating, or the assumed default only when the drive reports no SMART wear. Projections use the configured rating, else the SMART wear rate extrapolated from lifetime writes, else the assumed default, with the recent physical `disk_minute` write rate and monitoring coverage. |
 | Per-process and all-process write alerts | Logical `proc_minute.write_bytes`, or fallback Win32 process I/O counters. Messages also include separate per-drive physical writes for comparison. |
 | Controller-error alerts | Windows System log, provider `disk`, event ID 11, counted over the configured trailing-day window and correlated to the current physical-disk map. |
 

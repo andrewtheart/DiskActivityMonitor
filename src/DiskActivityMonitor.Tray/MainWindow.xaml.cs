@@ -990,7 +990,7 @@ public partial class MainWindow : Window
         double tbwLow = cfg.EffectiveTbw(disk.DiskId);
         double? tbwHigh = cfg.EffectiveTbwUpper(disk.DiskId);
         bool ranged = tbwHigh.HasValue;
-        bool estimatedTbw = !cfg.DiskTbwRatings.ContainsKey(disk.DiskId);
+        bool estimatedTbw = !cfg.HasConfiguredTbw(disk.DiskId);
         double tbwLowBytes = tbwLow * 1_000_000_000_000d;            // TBW specs use decimal terabytes.
         double tbwHighBytes = (tbwHigh ?? tbwLow) * 1_000_000_000_000d;
         string tbwLabel = ranged ? $"{tbwLow:0.#} to {tbwHigh:0.#} TBW" : $"{tbwLow:0.#} TBW";
@@ -1033,8 +1033,9 @@ public partial class MainWindow : Window
 
         // Headline 1: precise lifetime writes / configured TBW when available. Drive SMART wear is
         // typically reported only as a whole percentage, so retain it as supporting context rather
-        // than rounding away the more precise lifetime-write calculation.
-        if (lifeWritten is not null && tbwLowBytes > 0)
+        // than rounding away the more precise lifetime-write calculation. An assumed default TBW is
+        // not evidence about this drive, so the drive's own SMART wear outranks it.
+        if (lifeWritten is not null && tbwLowBytes > 0 && (!estimatedTbw || disk.WearPercent is null))
         {
             double fill = Math.Clamp(pctHigh, 0, 100);
             SmartWearValue.Text = ranged
@@ -1053,7 +1054,10 @@ public partial class MainWindow : Window
             SmartWearValue.Text = FormatPercent(wear);
             SmartWearFillCol.Width = new GridLength(wc, GridUnitType.Star);
             SmartWearRestCol.Width = new GridLength(100 - wc, GridUnitType.Star);
-            SmartWearText.Text = $"{100 - wear}% endurance remaining, from the drive's SMART data (whole-percent precision)";
+            string assumedContext = lifeWritten is not null && tbwLowBytes > 0
+                ? $"; lifetime writes are {(ranged ? $"{FormatPercent(pctLow)} to {FormatPercent(pctHigh)}" : FormatPercent(pctHigh))} of the {tbwBasisLabel}, which is not this drive's rating"
+                : "";
+            SmartWearText.Text = $"{Math.Max(0, 100 - wear)}% endurance remaining, from the drive's SMART data (whole-percent precision){assumedContext}";
         }
         else
         {
@@ -2220,12 +2224,14 @@ public partial class MainWindow : Window
         TxtEnduranceLifeValue.Text = threshold.RemainingLifeValue.ToString(CultureInfo.InvariantCulture);
         ChkEndurancePercent.IsChecked = threshold.EnableRemainingPercent;
         TxtEnduranceRemainingPercent.Text = threshold.RemainingPercent.ToString(CultureInfo.InvariantCulture);
+        ChkEnduranceTbw.IsChecked = threshold.EnableTbwConsumed;
+        TxtEnduranceTbwPercent.Text = threshold.TbwConsumedPercent.ToString(CultureInfo.InvariantCulture);
         SelectEnduranceUnit(threshold.RemainingLifeUnit);
 
         bool editable = disk is null || hasOverride;
         SetEnduranceAlertEditorEnabled(editable);
         EnduranceAlertInheritanceText.Text = disk is null
-            ? "Default: warn below 1 year projected remaining life or at/below 20% endurance remaining (above 80% used)."
+            ? "Default: warn below 1 year projected remaining life, at or below 20% SMART-reported endurance remaining, or when lifetime writes reach 80% of the TBW rating."
             : hasOverride
                 ? "This disk uses the values above instead of the all-disks default."
                 : "Inherited from the all-disks default. Enable the override to set different thresholds for this disk.";
@@ -2252,6 +2258,8 @@ public partial class MainWindow : Window
         EnduranceLifeUnitSelector.IsEnabled = enabled;
         ChkEndurancePercent.IsEnabled = enabled;
         TxtEnduranceRemainingPercent.IsEnabled = enabled;
+        ChkEnduranceTbw.IsEnabled = enabled;
+        TxtEnduranceTbwPercent.IsEnabled = enabled;
     }
 
     private void EnduranceAlertOverride_Changed(object sender, RoutedEventArgs e)
@@ -2271,6 +2279,8 @@ public partial class MainWindow : Window
         EnduranceAlertTimeUnit unit,
         bool enablePercent,
         string percentText,
+        bool enableTbw,
+        string tbwPercentText,
         out EnduranceAlertThreshold threshold,
         out string error)
     {
@@ -2279,8 +2289,9 @@ public partial class MainWindow : Window
             EnableProjectedLife = enableLife,
             RemainingLifeUnit = unit,
             EnableRemainingPercent = enablePercent,
+            EnableTbwConsumed = enableTbw,
         };
-        if (!enableLife && !enablePercent)
+        if (!enableLife && !enablePercent && !enableTbw)
         {
             error = "Enable at least one endurance alert condition.";
             return false;
@@ -2299,8 +2310,16 @@ public partial class MainWindow : Window
             error = "Endurance remaining must be between 0 and 100%.";
             return false;
         }
+        if (!double.TryParse(tbwPercentText, NumberStyles.Float, CultureInfo.InvariantCulture, out double tbwPercent)
+            || !double.IsFinite(tbwPercent)
+            || (enableTbw && tbwPercent is < 1 or > AppConfig.MaxTbwConsumedPercent))
+        {
+            error = "Lifetime writes must be between 1 and 1000% of the TBW rating.";
+            return false;
+        }
         threshold.RemainingLifeValue = Math.Max(0, lifeValue);
         threshold.RemainingPercent = Math.Clamp(percent, 0, 100);
+        threshold.TbwConsumedPercent = Math.Clamp(tbwPercent, 1, AppConfig.MaxTbwConsumedPercent);
         error = "";
         return true;
     }
@@ -2442,6 +2461,8 @@ public partial class MainWindow : Window
                 SelectedEnduranceUnit(),
                 ChkEndurancePercent.IsChecked == true,
                 TxtEnduranceRemainingPercent.Text,
+                ChkEnduranceTbw.IsChecked == true,
+                TxtEnduranceTbwPercent.Text,
                 out enduranceAlert,
                 out string enduranceError))
         {

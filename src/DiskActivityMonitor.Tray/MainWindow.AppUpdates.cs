@@ -3,6 +3,7 @@ using System.IO;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using DiskActivityMonitor.Core;
 using DiskActivityMonitor.Core.Configuration;
 using DiskActivityMonitor.Core.Updates;
 
@@ -457,7 +458,7 @@ public partial class MainWindow
         AppUpdatePrimaryButton.IsEnabled = true;
     }
 
-    private static string FormatMegabytes(long bytes) => (bytes / 1024d / 1024d).ToString("0.##");
+    private static string FormatMegabytes(long bytes) => (bytes / ByteFormat.MB).ToString("0.##");
 
     internal static double AppUpdateProgressPercent(AppUpdateDownloadProgress value)
     {

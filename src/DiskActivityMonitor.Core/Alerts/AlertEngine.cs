@@ -43,15 +43,15 @@ public sealed class AlertEngine
             TryRaise(raised, cfg, cooldown, nowUtc,
                 ruleKey: $"ssd-1h:{disk.DiskId}",
                 value: hourWrite,
-                thresholdBytes: cfg.SsdWarnGbPerHour * ByteFormat.GiB,
+                thresholdBytes: cfg.SsdWarnGbPerHour * ByteFormat.GB,
                 severity: AlertSeverity.Warning,
                 title: $"High SSD write rate on {disk.DisplayName}",
                 buildMessage: (v, t) => $"{ByteFormat.Humanize(v)} written in the last hour (threshold {ByteFormat.Humanize(t)}).");
 
             // Rolling 24-hour write volume - critical takes precedence over warning.
             var dayWrite = _repo.GetDiskTotals(disk.DiskId, nowUtc.AddHours(-24), nowUtc).Write;
-            var critThreshold = cfg.SsdCriticalGbPerDay * ByteFormat.GiB;
-            var warnThreshold = cfg.SsdWarnGbPerDay * ByteFormat.GiB;
+            var critThreshold = cfg.SsdCriticalGbPerDay * ByteFormat.GB;
+            var warnThreshold = cfg.SsdWarnGbPerDay * ByteFormat.GB;
             if (dayWrite >= critThreshold)
             {
                 TryRaise(raised, cfg, cooldown, nowUtc,
@@ -77,7 +77,7 @@ public sealed class AlertEngine
 
         // Noisiest process in the last hour.
         var topProcs = _repo.GetTopProcesses(nowUtc.AddHours(-1), nowUtc, topN: 3);
-        var procThreshold = cfg.ProcessWarnGbPerHour * ByteFormat.GiB;
+        var procThreshold = cfg.ProcessWarnGbPerHour * ByteFormat.GB;
         var snoozedProcs = _repo.GetActiveProcessSnoozes(nowUtc);
         string? physicalDiskWrites = null;
         string PhysicalDiskWrites() => physicalDiskWrites ??= FormatPhysicalDiskWrites(diskList, nowUtc);
@@ -101,7 +101,7 @@ public sealed class AlertEngine
         TryRaise(raised, cfg, cooldown, nowUtc,
             ruleKey: "procs-all-1h",
             value: allHourWrite,
-            thresholdBytes: cfg.AllProcessesWarnGbPerHour * ByteFormat.GiB,
+            thresholdBytes: cfg.AllProcessesWarnGbPerHour * ByteFormat.GB,
             severity: AlertSeverity.Warning,
             title: "All processes combined are requesting heavy file writes",
             buildMessage: (v, t) =>
@@ -255,21 +255,55 @@ public sealed class AlertEngine
         var reasons = new List<string>();
         double alertValue = 0;
         double alertThreshold = 0;
-        double tbwLowBytes = config.EffectiveTbw(disk.DiskId) * 1_000_000_000_000d;
-        double? tbwHigh = config.EffectiveTbwUpper(disk.DiskId);
-        double tbwHighBytes = (tbwHigh ?? config.EffectiveTbw(disk.DiskId)) * 1_000_000_000_000d;
+        // Replacement advice needs evidence about this drive; an assumed default TBW is not.
+        bool driveSpecificEvidence = false;
+        bool smartMentioned = false;
 
-        double? usedPercent = disk.LifetimeBytesWritten is long lifetimeWritten && tbwLowBytes > 0
-            ? lifetimeWritten / tbwLowBytes * 100.0
-            : disk.WearPercent;
-        if (threshold.EnableRemainingPercent && usedPercent is double used)
+        bool ratingConfigured = config.HasConfiguredTbw(disk.DiskId);
+        double tbwLow = config.EffectiveTbw(disk.DiskId);
+        double? tbwHigh = config.EffectiveTbwUpper(disk.DiskId);
+        double tbwLowBytes = tbwLow * ByteFormat.TB;
+        double tbwHighBytes = (tbwHigh ?? tbwLow) * ByteFormat.TB;
+        string tbwLabel = tbwHigh is double high ? $"{tbwLow:0.#} to {high:0.#} TBW" : $"{tbwLow:0.#} TBW";
+        string ratingText = ratingConfigured
+            ? $"this drive's configured {tbwLabel} rating"
+            : $"the assumed {tbwLabel} default rating";
+        int? smartWear = disk.WearPercent;
+        long? lifetimeWritten = disk.LifetimeBytesWritten;
+
+        if (threshold.EnableRemainingPercent && smartWear is int wear)
         {
-            double remaining = Math.Clamp(100.0 - used, 0, 100);
+            double remaining = Math.Clamp(100.0 - wear, 0, 100);
             if (remaining <= threshold.RemainingPercent)
             {
-                reasons.Add($"Endurance remaining is about {remaining:0.##}% ({Math.Clamp(used, 0, 100):0.##}% used); the warning threshold is {threshold.RemainingPercent:0.##}% remaining.");
+                reasons.Add($"The drive's SMART data reports {wear}% of its endurance used ({remaining:0.##}% remaining); the warning threshold is {threshold.RemainingPercent:0.##}% remaining.");
                 alertValue = remaining;
                 alertThreshold = threshold.RemainingPercent;
+                driveSpecificEvidence = true;
+                smartMentioned = true;
+            }
+        }
+
+        // The assumed default rating is only a fallback for drives that report no SMART wear.
+        if (threshold.EnableTbwConsumed
+            && lifetimeWritten is long written
+            && tbwLowBytes > 0
+            && (ratingConfigured || smartWear is null))
+        {
+            double usedOfLower = written / tbwLowBytes * 100.0;
+            if (usedOfLower >= threshold.TbwConsumedPercent)
+            {
+                string share = tbwHigh.HasValue
+                    ? $"{written / tbwHighBytes * 100.0:0.##}% to {usedOfLower:0.##}%"
+                    : $"{usedOfLower:0.##}%";
+                string basis = tbwHigh.HasValue ? "of the rating's lower bound" : "of the rating";
+                string caveat = ratingConfigured
+                    ? ""
+                    : " This drive reports no SMART wear and has no configured TBW rating, so this is only an estimate.";
+                reasons.Add($"Lifetime writes of {ByteFormat.Humanize(written)} are {share} of {ratingText}; the warning threshold is {threshold.TbwConsumedPercent:0.##}% {basis}.{caveat}");
+                alertValue = usedOfLower;
+                alertThreshold = threshold.TbwConsumedPercent;
+                driveSpecificEvidence |= ratingConfigured;
             }
         }
 
@@ -286,24 +320,51 @@ public sealed class AlertEngine
             double avgPerDay = recentRate.MonitoredBytesPerHour * 24.0;
             if (recentRate.HasHighCoverage && avgPerDay > 0)
             {
-                double consumed = disk.LifetimeBytesWritten
-                    ?? _repo.GetDiskTotals(disk.DiskId, first, nowUtc).Write;
-                double daysLow = Math.Max(0, tbwLowBytes - consumed) / avgPerDay;
-                double daysHigh = Math.Max(0, tbwHighBytes - consumed) / avgPerDay;
+                double daysLow;
+                double daysHigh;
+                string target;
+                bool smartProjection = !ratingConfigured && smartWear is > 0 && lifetimeWritten is not null;
+                if (smartProjection)
+                {
+                    // Whole-percent SMART wear means the true value lies between w and w+1.
+                    int w = smartWear!.Value;
+                    double lifetime = lifetimeWritten!.Value;
+                    daysLow = Math.Max(0, lifetime * (100.0 / (w + 1) - 1)) / avgPerDay;
+                    daysHigh = Math.Max(0, lifetime * (100.0 / w - 1)) / avgPerDay;
+                    target = $"until the drive's SMART wear reaches 100%, extrapolated from {w}% used after {ByteFormat.Humanize(lifetime)} written";
+                }
+                else
+                {
+                    double consumed = lifetimeWritten
+                        ?? _repo.GetDiskTotals(disk.DiskId, first, nowUtc).Write;
+                    daysLow = Math.Max(0, tbwLowBytes - consumed) / avgPerDay;
+                    daysHigh = Math.Max(0, tbwHighBytes - consumed) / avgPerDay;
+                    target = $"until {ratingText} is reached";
+                }
+
                 if (daysLow <= threshold.RemainingLifeDays)
                 {
-                    string projection = tbwHigh.HasValue
-                        ? $"{FormatRemainingTime(daysLow)} to {FormatRemainingTime(daysHigh)}"
-                        : FormatRemainingTime(daysLow);
-                    reasons.Add($"Projected remaining life is {projection} at {ByteFormat.Humanize(avgPerDay)}/day; the warning threshold is {FormatRemainingTime(threshold.RemainingLifeDays)}.");
+                    string projection = FormatRemainingTime(daysLow);
+                    string upper = FormatRemainingTime(daysHigh);
+                    if (upper != projection)
+                        projection += $" to {upper}";
+                    reasons.Add($"Projected remaining life is {projection} at {ByteFormat.Humanize(avgPerDay)}/day {target}; the warning threshold is {FormatRemainingTime(threshold.RemainingLifeDays)}.");
                     alertValue = daysLow;
                     alertThreshold = threshold.RemainingLifeDays;
+                    driveSpecificEvidence |= ratingConfigured || smartProjection;
+                    smartMentioned |= smartProjection;
                 }
             }
         }
 
         if (reasons.Count == 0)
             return;
+
+        if (smartWear is int reported && !smartMentioned)
+            reasons.Add($"The drive's SMART data reports {reported}% of its endurance used.");
+        reasons.Add(driveSpecificEvidence
+            ? "Back up important data and plan drive replacement."
+            : "Back up important data, and set this drive's rated TBW in Settings (or use Look up rated TBW) for an accurate estimate.");
 
         Emit(
             raised,
@@ -312,7 +373,7 @@ public sealed class AlertEngine
             ruleKey: $"endurance-health:{disk.DiskId}",
             severity: AlertSeverity.Warning,
             title: $"Endurance warning for {disk.DisplayName}",
-            message: string.Join(" ", reasons) + " Back up important data and plan drive replacement.",
+            message: string.Join(" ", reasons),
             value: alertValue,
             threshold: alertThreshold);
     }

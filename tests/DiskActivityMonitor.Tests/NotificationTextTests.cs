@@ -55,8 +55,8 @@ public sealed class NotificationTextTests
             RuleKey = ruleKey,
             Title = "Original title",
             Message = "Full stored diagnostic message",
-            Value = byteRule ? valueGbOrScalar * ByteFormat.GiB : valueGbOrScalar,
-            Threshold = byteRule ? thresholdGbOrScalar * ByteFormat.GiB : thresholdGbOrScalar,
+            Value = byteRule ? valueGbOrScalar * ByteFormat.GB : valueGbOrScalar,
+            Threshold = byteRule ? thresholdGbOrScalar * ByteFormat.GB : thresholdGbOrScalar,
         };
 
         var text = TrayController.FormatAlertToastText(alert, Windows());
@@ -144,8 +144,8 @@ public sealed class NotificationTextTests
     };
 
     private static TrayController.WriteWindowStats Windows() => new(
-        (long)ByteFormat.GiB,
-        (long)(2 * ByteFormat.GiB),
-        (long)(3 * ByteFormat.GiB),
-        (long)(24 * ByteFormat.GiB));
+        (long)ByteFormat.GB,
+        (long)(2 * ByteFormat.GB),
+        (long)(3 * ByteFormat.GB),
+        (long)(24 * ByteFormat.GB));
 }

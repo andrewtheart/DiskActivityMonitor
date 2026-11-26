@@ -186,7 +186,7 @@ public sealed class CollectorWorker : BackgroundService
         if (_procAccum.Count > 0)
         {
             // Suppress trivial writers to keep the per-process table compact.
-            long minBytes = (long)(Math.Max(0, cfg.ProcessMinMbPerMinute) * ByteFormat.MiB);
+            long minBytes = (long)(Math.Max(0, cfg.ProcessMinMbPerMinute) * ByteFormat.MB);
             var samples = _procAccum
                 .Where(kv => kv.Value.Write >= minBytes || kv.Value.Read >= minBytes)
                 .Select(kv => new ProcessIoSample { TimestampUtc = minuteUtc, ProcessName = kv.Key, ReadBytes = kv.Value.Read, WriteBytes = kv.Value.Write })
@@ -213,7 +213,7 @@ public sealed class CollectorWorker : BackgroundService
         DateTime minuteUtc,
         AppConfig cfg)
     {
-        long minBytes = (long)(Math.Max(0, cfg.FileTargetMinKbPerMinute) * 1024);
+        long minBytes = (long)(Math.Max(0, cfg.FileTargetMinKbPerMinute) * ByteFormat.KB);
         int perProcess = Math.Max(1, cfg.FileTargetsPerProcessPerMinute);
         var samples = new List<ProcessFileIoSample>();
 

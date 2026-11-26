@@ -60,7 +60,7 @@ internal sealed class AutoSuspendManager
             if (!ProcessControl.IsRunning(rule.ProcessName, rule.ExecutablePath)) continue; // nothing to act on
 
             long written = _repo.GetProcessWrite(rule.ProcessName, from, end);
-            double thresholdBytes = rule.ThresholdGbPerHour * ByteFormat.GiB;
+            double thresholdBytes = rule.ThresholdGbPerHour * ByteFormat.GB;
             if (thresholdBytes <= 0 || written < thresholdBytes) continue;
 
             if (CanAutoSuspend(rule))

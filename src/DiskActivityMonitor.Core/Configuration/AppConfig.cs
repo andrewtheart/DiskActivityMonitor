@@ -17,6 +17,8 @@ public sealed class EnduranceAlertThreshold
     public EnduranceAlertTimeUnit RemainingLifeUnit { get; set; } = EnduranceAlertTimeUnit.Years;
     public bool EnableRemainingPercent { get; set; } = true;
     public double RemainingPercent { get; set; } = 20;
+    public bool EnableTbwConsumed { get; set; } = true;
+    public double TbwConsumedPercent { get; set; } = 80;
 
     [JsonIgnore]
     public double RemainingLifeDays => RemainingLifeUnit switch
@@ -29,8 +31,8 @@ public sealed class EnduranceAlertThreshold
 
 /// <summary>
 /// User-tunable settings shared by the collector and tray app. Persisted as JSON at
-/// <see cref="Paths.ConfigPath"/>. All byte thresholds are expressed in gigabytes in the
-/// file for readability and converted to bytes by the alert engine.
+/// <see cref="Paths.ConfigPath"/>. Byte thresholds use decimal SI units in the file
+/// (1 GB = 1,000,000,000 bytes) and are converted to bytes by the alert engine.
 /// </summary>
 public sealed class AppConfig
 {
@@ -205,8 +207,19 @@ public sealed class AppConfig
             RemainingPercent = double.IsFinite(source.RemainingPercent)
                 ? Math.Clamp(source.RemainingPercent, 0, 100)
                 : 20,
+            EnableTbwConsumed = source.EnableTbwConsumed,
+            TbwConsumedPercent = double.IsFinite(source.TbwConsumedPercent) && source.TbwConsumedPercent > 0
+                ? Math.Min(source.TbwConsumedPercent, MaxTbwConsumedPercent)
+                : 80,
         };
     }
+
+    /// <summary>Upper bound accepted for the TBW-consumption alert percentage.</summary>
+    public const double MaxTbwConsumedPercent = 1000;
+
+    /// <summary>True when the user configured this disk's TBW rating, rather than relying on the assumed default.</summary>
+    public bool HasConfiguredTbw(string diskId)
+        => DiskTbwRatings.TryGetValue(diskId, out var t) && t > 0;
 
     /// <summary>Returns the effective TBW rating for a disk: its per-disk override, else the default.</summary>
     public double EffectiveTbw(string diskId)

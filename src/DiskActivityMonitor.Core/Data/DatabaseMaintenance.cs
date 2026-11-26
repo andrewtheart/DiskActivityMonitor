@@ -31,7 +31,7 @@ public sealed record CompactionResult(bool Success, long BeforeBytes, long After
 /// </remarks>
 public static class DatabaseMaintenance
 {
-    private const long BytesPerGb = 1024L * 1024 * 1024;
+    private const long BytesPerGb = 1_000_000_000L;
 
     /// <summary>Measures the database and its companion files.</summary>
     public static DatabaseSize Measure(string? databasePath = null)

@@ -73,9 +73,9 @@ public sealed class TotalWrittenTrendTests
     }
 
     [Theory]
-    [InlineData(1, 1024, "1 KB/hour")]
-    [InlineData(24 * 7, 7 * 1024, "1 KB/day")]
-    [InlineData(24 * 364, 52 * 1024, "1 KB/week")]
+    [InlineData(1, 1000, "1 KB/hour")]
+    [InlineData(24 * 7, 7 * 1000, "1 KB/day")]
+    [InlineData(24 * 364, 52 * 1000, "1 KB/week")]
     public void FormatTrendChange_UsesAReadableRateForTheRange(
         int hours,
         long increase,

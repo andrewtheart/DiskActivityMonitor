@@ -220,10 +220,13 @@ keys remain under `%LOCALAPPDATA%\DiskActivityMonitor\`.
   are saved for the current Windows user. Hover any line vertex, bar, or donut segment to see its
   exact timestamp/label and numeric value.
 - **Endurance alerts**: the all-disks default warns when any SSD has less than **1 year** of projected
-  remaining life or at most **20% endurance remaining** (more than 80% used). Remaining-life units
-  can be days, months, or years, and each disk can override both conditions. Alerts appear in Alert
-  center and as native Windows notifications; snoozing one suppresses only that disk's endurance
-  rule for the selected duration.
+  remaining life, when the drive's own **SMART wear** leaves at most **20% endurance remaining**, or
+  when **lifetime writes reach 80%** of the TBW rating. SMART wear is preferred whenever the drive
+  reports it; the assumed 150 to 600 TBW default is used only for drives without SMART wear, and
+  notifications say which measurement fired and whether the rating is configured or assumed.
+  Remaining-life units can be days, months, or years, and each disk can override every condition.
+  Alerts appear in Alert center and as native Windows notifications; snoozing one suppresses only
+  that disk's endurance rule for the selected duration.
 - **Collapsible panels**: use the quiet chevron at the top right of any dashboard or settings card
   to collapse or restore it. Panel state is remembered for the current Windows user.
 - **Top application write requests**: logical file-write bytes requested by each process over
@@ -242,7 +245,8 @@ keys remain under `%LOCALAPPDATA%\DiskActivityMonitor\`.
 
 Machine-wide collector settings live at `%ProgramData%\DiskActivityMonitor\config.json` and can
 be edited from the dashboard or by hand (the collector watches the file). Invalid or oversized
-replacements are ignored in favor of the last known-good settings. Thresholds are in GB.
+replacements are ignored in favor of the last known-good settings. Sizes use decimal SI units, like
+drive capacities and TBW ratings (1 GB = 1,000,000,000 bytes); only the live-tail limits are KiB.
 
 | Key | Meaning | Default |
 |-----|---------|---------|
@@ -263,7 +267,7 @@ replacements are ignored in favor of the last known-good settings. Thresholds ar
 | `defaultSsdTbw` / `defaultSsdTbwUpper` | Estimated SSD TBW range when the rating is unknown | 150 / 600 |
 | `diskTbwRatings` | Per-disk TBW endurance rating (TB) | none |
 | `diskTbwRatingsUpper` | Optional per-disk upper TBW; when set, endurance %/projection are shown as a range | none |
-| `defaultEnduranceAlert` | All-disks profile: enabled remaining-life value/unit and remaining-% conditions | 1 year / 20% remaining |
+| `defaultEnduranceAlert` | All-disks profile: remaining-life value/unit, SMART-reported remaining %, and lifetime writes as % of TBW | 1 year / 20% remaining / 80% of TBW |
 | `diskEnduranceAlertOverrides` | Optional full endurance-alert profile keyed by disk ID | none |
 | `tailMaxReadKb` | Maximum decoded data per live-tail poll; total file size is unrestricted | 512 |
 | `tailMaxBufferKb` | Maximum decoded text retained by the live-tail viewer | 1024 |
