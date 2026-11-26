@@ -898,7 +898,11 @@ year</strong>.</li>
 wear value.</li>
 <li><strong>Lifetime writes reach 80% of the TBW rating</strong>
 (accepted range 1-1000%). With a configured rating range, the percentage
-is measured against the lower bound.</li>
+is measured against the lower bound. Settings saved by a version before
+1.4.18, when the remaining-percentage condition also covered TBW
+consumption, inherit that choice: the condition is enabled only if the
+remaining-percentage condition was, at <code>100 - remaining%</code>
+(for example, 5% remaining becomes 95% of TBW).</li>
 </ul>
 <p>Each condition uses the most specific evidence available:</p>
 <table>
@@ -930,16 +934,22 @@ rate extrapolated to 100%; otherwise the assumed default range.</td>
 </tr>
 </tbody>
 </table>
+<p>NVMe drives keep counting wear past 100% once their rated endurance
+is exceeded (up to 255%), and those values are kept: a drive reporting
+115% used has 0% remaining.</p>
 <p>The SMART extrapolation divides lifetime writes by the reported wear.
 Because drives report whole percentages, the projection is shown as a
 range between <code>w%</code> and <code>w+1%</code> used, and the
 shorter end is compared with the threshold.</p>
 <p>Every notification names the measurement that triggered it, says
 whether a TBW rating is configured or assumed, and includes the drive’s
-SMART wear when it is reported. When the only evidence is an assumed TBW
-rating, the notification suggests setting the drive’s rated TBW (or
-using <strong>Look up rated TBW</strong>) instead of recommending
-replacement.</p>
+SMART wear when it is reported. Only SMART wear, the drive’s own
+measurement of its wear, leads to the advice to plan a replacement. A
+configured TBW rating is a write budget rather than an end-of-life
+point, so TBW-based notifications advise backing up and watching SMART
+health instead. When the only evidence is an assumed TBW rating, the
+notification suggests setting the drive’s rated TBW (or using
+<strong>Look up rated TBW</strong>).</p>
 <p>The remaining-life value accepts <strong>days</strong>,
 <strong>months</strong>, or <strong>years</strong>. Select <strong>All
 disks</strong> before opening Settings to edit the default profile.
@@ -947,12 +957,15 @@ Select one disk and enable <strong>Override defaults for this
 disk</strong> to define different conditions for only that drive.
 Removing the override immediately returns it to the global profile.</p>
 <p>TBW-based projections subtract lifetime writes when the drive exposes
-them, otherwise writes observed since monitoring began. Projections are
-evaluated only with sufficient monitoring coverage. A crossed condition
-creates an Alert center row and a native Windows notification. Both
-surfaces offer the same 5-minute, 30-minute, 1-hour, 1-day, and 1-week
-snooze choices. This snooze is scoped to that disk’s endurance rule;
-other disks and alert families continue normally.</p>
+them, otherwise writes observed since monitoring began. Writes made
+before monitoring began are then unknown, so the dashboard, the
+<code>dam endurance</code> command, and the notification all say the
+projection may be optimistic. Projections are evaluated only with
+sufficient monitoring coverage. A crossed condition creates an Alert
+center row and a native Windows notification. Both surfaces offer the
+same 5-minute, 30-minute, 1-hour, 1-day, and 1-week snooze choices. This
+snooze is scoped to that disk’s endurance rule; other disks and alert
+families continue normally.</p>
 <hr />
 <h2 id="rated-tbw-lookup">Rated-TBW lookup</h2>
 <h3 id="guided-setup">Guided setup</h3>

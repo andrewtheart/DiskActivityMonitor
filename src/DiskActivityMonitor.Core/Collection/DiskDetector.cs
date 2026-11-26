@@ -149,8 +149,9 @@ public static class DiskDetector
 
     /// <summary>
     /// Reads the drive's SMART-derived wear indicator ("Percentage Used") via the associated
-    /// MSFT_StorageReliabilityCounter. Returns 0-100, or null when the drive does not report it
-    /// or the process lacks rights (reliability counters typically require elevation).
+    /// MSFT_StorageReliabilityCounter. Returns 0-255 (NVMe allows values above 100 once rated
+    /// endurance is exceeded), or null when the drive does not report it or the process lacks
+    /// rights (reliability counters typically require elevation).
     /// </summary>
     private static int? TryReadWear(ManagementObject disk)
     {
@@ -164,7 +165,7 @@ public static class DiskDetector
                     var w = rc["Wear"];
                     if (w is null) continue;
                     int val = Convert.ToInt32(w);
-                    if (val is >= 0 and <= 100) return val;
+                    if (val is >= 0 and <= 255) return val;
                 }
             }
         }

@@ -1393,6 +1393,40 @@ public sealed class MainWindowCoverageTests : IDisposable
     }
 
     [Fact]
+    public void Settings_NonPositiveStoredTbw_IsNotPromotedToAConfiguredRatingOnUnrelatedSave()
+    {
+        RunStaAsync(() =>
+        {
+            EnsureApplication();
+            var repo = new MonitorRepository(_db); repo.EnsureSchema();
+            repo.UpsertDisks([new DiskInfo
+            {
+                DiskId = "zero", InstanceName = "zero C:", FriendlyName = "Unknown SSD", Volumes = "C:",
+                MediaType = DiskMediaType.Ssd,
+            }]);
+            using var config = new ConfigStore(_cfg);
+            config.Update(settings => settings.DiskTbwRatings["zero"] = 0);
+            var window = new MainWindow(repo, config, new UserSettingsStore(_userSettings));
+            try
+            {
+                Assert.Equal("150 to 600 TBW estimated", window.EnduranceRatedText.Text);
+                window.ShowTbwEditor(repo.GetDisks().Single());
+                Assert.Contains("default estimate", window.TbwEditCurrentText.Text);
+
+                window.TxtWarnHour.Text = "12";
+                window.Save_Click(window, new RoutedEventArgs());
+
+                Assert.Equal(12, config.Current.SsdWarnGbPerHour);
+                Assert.False(config.Current.HasConfiguredTbw("zero"));
+                Assert.Equal("150 to 600 TBW estimated", window.EnduranceRatedText.Text);
+            }
+            finally { window.ForceClose(); }
+
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
     public void RatedTbwPill_EditorSavesRangeAndSingleAndRefreshesCalculations()
     {
         RunStaAsync(() =>
@@ -1589,6 +1623,17 @@ public sealed class MainWindowCoverageTests : IDisposable
             false, "-1", EnduranceAlertTimeUnit.Years, false, "-1", true, "150", out EnduranceAlertThreshold tbwOnly, out _));
         Assert.True(tbwOnly.EnableTbwConsumed);
         Assert.Equal(150, tbwOnly.TbwConsumedPercent);
+        Assert.False(MainWindow.TryParseEnduranceAlert(
+            false, "-1", EnduranceAlertTimeUnit.Years, false, "-1", true, "0.5", out _, out _));
+
+        // A disabled condition's unreadable field must not block saving the enabled ones.
+        Assert.True(MainWindow.TryParseEnduranceAlert(
+            false, "", EnduranceAlertTimeUnit.Years, true, "20", false, "junk", out EnduranceAlertThreshold disabledJunk, out _));
+        Assert.Equal(1, disabledJunk.RemainingLifeValue);
+        Assert.Equal(80, disabledJunk.TbwConsumedPercent);
+        Assert.True(MainWindow.TryParseEnduranceAlert(
+            true, "2", EnduranceAlertTimeUnit.Years, false, "NaN", false, "", out EnduranceAlertThreshold disabledPercent, out _));
+        Assert.Equal(20, disabledPercent.RemainingPercent);
 
         Assert.False(MainWindow.TryParseChartColor(null, out _));
         Assert.False(MainWindow.TryParseChartColor("#123", out _));
@@ -1856,11 +1901,25 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Invoke(window, "UpdateEndurance", disk, end);
                 Assert.NotEqual("-", window.EnduranceProjValue.Text);
                 Assert.Contains("reaches 150 to 600 TBW", window.EnduranceProjSub.Text);
+                Assert.DoesNotContain("may be optimistic", window.EnduranceProjSub.Text);
                 Assert.Contains("20 GB read", window.SmartWearLifeText.Text);
                 Assert.Contains("Rolling 7-day monitoring coverage: 100%", window.EnduranceConsumedText.Text);
                 Assert.Contains("10,080 of 10,080 min", window.EnduranceConsumedText.Text);
                 Assert.Contains("enter or leave the rolling window", window.EnduranceConsumedText.Text);
                 Assert.NotEqual("-", window.EnduranceAvgHour.Text);
+
+                // Without a drive lifetime counter, the projection subtracts recorded writes, like the alert.
+                config.Update(value =>
+                {
+                    value.DiskTbwRatings[disk.DiskId] = 20;
+                    value.DiskTbwRatingsUpper[disk.DiskId] = 1000;
+                });
+                Invoke(window, "UpdateEndurance", new DiskInfo
+                {
+                    DiskId = disk.DiskId, InstanceName = disk.InstanceName, MediaType = DiskMediaType.Ssd,
+                }, end);
+                Assert.Equal("0.0 to 2.7 yrs", window.EnduranceProjValue.Text);
+                Assert.Contains("writes before monitoring began are unknown, so this may be optimistic", window.EnduranceProjSub.Text);
 
                 foreach (System.Windows.Controls.Primitives.ToggleButton button in new[] { window.TpBtn1h, window.TpBtn24h, window.TpBtn7d, window.TpBtn30d })
                     Invoke(window, "ThroughputRange_Click", button, new RoutedEventArgs());

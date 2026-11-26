@@ -255,8 +255,9 @@ public sealed class AlertEngine
         var reasons = new List<string>();
         double alertValue = 0;
         double alertThreshold = 0;
-        // Replacement advice needs evidence about this drive; an assumed default TBW is not.
-        bool driveSpecificEvidence = false;
+        // Only SMART wear measures this drive's actual wear; a TBW rating is a write budget, not end of life.
+        bool smartEvidence = false;
+        bool configuredRatingEvidence = false;
         bool smartMentioned = false;
 
         bool ratingConfigured = config.HasConfiguredTbw(disk.DiskId);
@@ -279,7 +280,7 @@ public sealed class AlertEngine
                 reasons.Add($"The drive's SMART data reports {wear}% of its endurance used ({remaining:0.##}% remaining); the warning threshold is {threshold.RemainingPercent:0.##}% remaining.");
                 alertValue = remaining;
                 alertThreshold = threshold.RemainingPercent;
-                driveSpecificEvidence = true;
+                smartEvidence = true;
                 smartMentioned = true;
             }
         }
@@ -303,7 +304,7 @@ public sealed class AlertEngine
                 reasons.Add($"Lifetime writes of {ByteFormat.Humanize(written)} are {share} of {ratingText}; the warning threshold is {threshold.TbwConsumedPercent:0.##}% {basis}.{caveat}");
                 alertValue = usedOfLower;
                 alertThreshold = threshold.TbwConsumedPercent;
-                driveSpecificEvidence |= ratingConfigured;
+                configuredRatingEvidence |= ratingConfigured;
             }
         }
 
@@ -348,10 +349,14 @@ public sealed class AlertEngine
                     string upper = FormatRemainingTime(daysHigh);
                     if (upper != projection)
                         projection += $" to {upper}";
-                    reasons.Add($"Projected remaining life is {projection} at {ByteFormat.Humanize(avgPerDay)}/day {target}; the warning threshold is {FormatRemainingTime(threshold.RemainingLifeDays)}.");
+                    reasons.Add($"Projected remaining life is {projection} at {ByteFormat.Humanize(avgPerDay)}/day {target}; the warning threshold is {FormatRemainingTime(threshold.RemainingLifeDays)}."
+                        + (lifetimeWritten is null
+                            ? " Writes made before monitoring began are unknown, so the actual remaining life may be shorter."
+                            : ""));
                     alertValue = daysLow;
                     alertThreshold = threshold.RemainingLifeDays;
-                    driveSpecificEvidence |= ratingConfigured || smartProjection;
+                    smartEvidence |= smartProjection;
+                    configuredRatingEvidence |= ratingConfigured;
                     smartMentioned |= smartProjection;
                 }
             }
@@ -362,9 +367,11 @@ public sealed class AlertEngine
 
         if (smartWear is int reported && !smartMentioned)
             reasons.Add($"The drive's SMART data reports {reported}% of its endurance used.");
-        reasons.Add(driveSpecificEvidence
+        reasons.Add(smartEvidence
             ? "Back up important data and plan drive replacement."
-            : "Back up important data, and set this drive's rated TBW in Settings (or use Look up rated TBW) for an accurate estimate.");
+            : configuredRatingEvidence
+                ? "Drives often keep working past their rated TBW; back up important data and watch the drive's SMART health."
+                : "Back up important data, and set this drive's rated TBW in Settings (or use Look up rated TBW) for an accurate estimate.");
 
         Emit(
             raised,

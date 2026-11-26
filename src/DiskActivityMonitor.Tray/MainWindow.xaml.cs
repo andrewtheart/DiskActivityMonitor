@@ -1005,8 +1005,8 @@ public partial class MainWindow : Window
         double pctLow = tbwHighBytes > 0 ? consumedBytes / tbwHighBytes * 100.0 : pctHigh;
 
         // Years to reach TBW at the recent rate: a higher rating yields more years.
-        double yearsLow = canProject ? Math.Max(tbwLowBytes - (lifeWritten ?? 0), tbwLowBytes * 0.001) / (avgPerDay * 365.0) : double.NaN;
-        double yearsHigh = canProject ? Math.Max(tbwHighBytes - (lifeWritten ?? 0), tbwHighBytes * 0.001) / (avgPerDay * 365.0) : double.NaN;
+        double yearsLow = canProject ? Math.Max(tbwLowBytes - consumedBytes, tbwLowBytes * 0.001) / (avgPerDay * 365.0) : double.NaN;
+        double yearsHigh = canProject ? Math.Max(tbwHighBytes - consumedBytes, tbwHighBytes * 0.001) / (avgPerDay * 365.0) : double.NaN;
         string yearsText;
         if (double.IsNaN(yearsLow)) yearsText = "-";
         else if (!ranged) yearsText = $"{FormatYearsShort(yearsLow)} yrs";
@@ -1084,9 +1084,10 @@ public partial class MainWindow : Window
         if (avgPerDay > 0 && !double.IsNaN(yearsLow))
         {
             EnduranceProjValue.Text = yearsText;
-            EnduranceProjSub.Text = ranged
+            EnduranceProjSub.Text = (ranged
                 ? $"reaches {tbwBasisLabel} at {ByteFormat.Humanize(avgPerDay)}/day"
-                : $"reaches {tbwLabel} about {DateTime.Now.AddDays(Math.Min(yearsLow, 5000) * 365.0):MMM yyyy}, at {ByteFormat.Humanize(avgPerDay)}/day";
+                : $"reaches {tbwLabel} about {DateTime.Now.AddDays(Math.Min(yearsLow, 5000) * 365.0):MMM yyyy}, at {ByteFormat.Humanize(avgPerDay)}/day")
+                + (lifeWritten is null ? "; writes before monitoring began are unknown, so this may be optimistic" : "");
         }
         else
         {
@@ -2200,7 +2201,7 @@ public partial class MainWindow : Window
         _loadedTbwDiskId = disk.DiskId;
         _loadedTbwLower = lower;
         _loadedTbwUpper = upper;
-        _loadedTbwHadOverride = cfg.DiskTbwRatings.ContainsKey(disk.DiskId);
+        _loadedTbwHadOverride = cfg.HasConfiguredTbw(disk.DiskId);
         RadTbwRange.IsChecked = upper.HasValue;
         RadTbwSingle.IsChecked = !upper.HasValue;
     }
@@ -2296,30 +2297,37 @@ public partial class MainWindow : Window
             error = "Enable at least one endurance alert condition.";
             return false;
         }
-        if (!double.TryParse(lifeValueText, NumberStyles.Float, CultureInfo.InvariantCulture, out double lifeValue)
-            || !double.IsFinite(lifeValue)
-            || (enableLife && lifeValue <= 0))
+
+        // Only enabled conditions are validated; a disabled field keeps its value when readable.
+        static bool TryReadNumber(string text, out double value)
+            => double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+               && double.IsFinite(value);
+
+        bool lifeReadable = TryReadNumber(lifeValueText, out double lifeValue);
+        if (enableLife && (!lifeReadable || lifeValue <= 0))
         {
             error = "Projected remaining life must be greater than 0.";
             return false;
         }
-        if (!double.TryParse(percentText, NumberStyles.Float, CultureInfo.InvariantCulture, out double percent)
-            || !double.IsFinite(percent)
-            || (enablePercent && percent is < 0 or > 100))
+        bool percentReadable = TryReadNumber(percentText, out double percent);
+        if (enablePercent && (!percentReadable || percent is < 0 or > 100))
         {
             error = "Endurance remaining must be between 0 and 100%.";
             return false;
         }
-        if (!double.TryParse(tbwPercentText, NumberStyles.Float, CultureInfo.InvariantCulture, out double tbwPercent)
-            || !double.IsFinite(tbwPercent)
-            || (enableTbw && tbwPercent is < 1 or > AppConfig.MaxTbwConsumedPercent))
+        bool tbwReadable = TryReadNumber(tbwPercentText, out double tbwPercent);
+        if (enableTbw && (!tbwReadable
+            || tbwPercent < AppConfig.MinTbwConsumedPercent
+            || tbwPercent > AppConfig.MaxTbwConsumedPercent))
         {
             error = "Lifetime writes must be between 1 and 1000% of the TBW rating.";
             return false;
         }
-        threshold.RemainingLifeValue = Math.Max(0, lifeValue);
-        threshold.RemainingPercent = Math.Clamp(percent, 0, 100);
-        threshold.TbwConsumedPercent = Math.Clamp(tbwPercent, 1, AppConfig.MaxTbwConsumedPercent);
+        threshold.RemainingLifeValue = lifeReadable ? Math.Max(0, lifeValue) : 1;
+        threshold.RemainingPercent = percentReadable ? Math.Clamp(percent, 0, 100) : 20;
+        threshold.TbwConsumedPercent = tbwReadable
+            ? Math.Clamp(tbwPercent, AppConfig.MinTbwConsumedPercent, AppConfig.MaxTbwConsumedPercent)
+            : 80;
         error = "";
         return true;
     }
@@ -2953,7 +2961,7 @@ public partial class MainWindow : Window
         var cfg = _config.Current;
         double lower = cfg.EffectiveTbw(disk.DiskId);
         double? upper = cfg.EffectiveTbwUpper(disk.DiskId);
-        bool savedForDrive = cfg.DiskTbwRatings.ContainsKey(disk.DiskId);
+        bool savedForDrive = cfg.HasConfiguredTbw(disk.DiskId);
 
         _tbwEditDisk = disk;
         TbwEditTargetText.Text = disk.DisplayName;
@@ -3119,7 +3127,7 @@ public partial class MainWindow : Window
         }
 
         var cfg = _config.Current;
-        if (!force && (!userSettings.EnableTbwWebLookup || cfg.DiskTbwRatings.ContainsKey(disk.DiskId)))
+        if (!force && (!userSettings.EnableTbwWebLookup || cfg.HasConfiguredTbw(disk.DiskId)))
         { TbwLookupPanel.Visibility = Visibility.Collapsed; return; }
 
         string model = (disk.FriendlyName ?? "").Trim();

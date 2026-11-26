@@ -43,20 +43,50 @@ public class AppConfigTests
     }
 
     [Fact]
-    public void EnduranceAlert_ConfigWrittenBeforeTbwCondition_LoadsDefaultsAndSanitizes()
+    public void EnduranceAlert_ConfigWrittenBeforeTbwCondition_InheritsRemainingPercentChoice()
     {
+        // Before 1.4.18 the remaining-% condition also applied to lifetime writes / TBW.
         var cfg = JsonSerializer.Deserialize<AppConfig>(
-            """{ "defaultEnduranceAlert": { "enableRemainingPercent": true, "remainingPercent": 10 } }""",
+            """
+            {
+              "defaultEnduranceAlert": { "enableRemainingPercent": true, "remainingPercent": 10 },
+              "diskEnduranceAlertOverrides": {
+                "0": { "enableProjectedLife": true, "enableRemainingPercent": false, "remainingPercent": 20 },
+                "1": { "enableRemainingPercent": true, "remainingPercent": 5 }
+              }
+            }
+            """,
             AppConfig.SerializerOptions)!;
 
         Assert.True(cfg.DefaultEnduranceAlert.EnableTbwConsumed);
-        Assert.Equal(80, cfg.DefaultEnduranceAlert.TbwConsumedPercent);
-        Assert.Equal(10, cfg.DefaultEnduranceAlert.RemainingPercent);
+        Assert.Equal(90, cfg.DefaultEnduranceAlert.TbwConsumedPercent);
+        Assert.False(cfg.EffectiveEnduranceAlert("0").EnableTbwConsumed);
+        Assert.True(cfg.EffectiveEnduranceAlert("1").EnableTbwConsumed);
+        Assert.Equal(95, cfg.EffectiveEnduranceAlert("1").TbwConsumedPercent);
 
-        Assert.Equal(80, AppConfig.CloneEnduranceAlert(new EnduranceAlertThreshold { TbwConsumedPercent = double.NaN }).TbwConsumedPercent);
-        Assert.Equal(80, AppConfig.CloneEnduranceAlert(new EnduranceAlertThreshold { TbwConsumedPercent = 0 }).TbwConsumedPercent);
-        Assert.Equal(AppConfig.MaxTbwConsumedPercent, AppConfig.CloneEnduranceAlert(new EnduranceAlertThreshold { TbwConsumedPercent = 5000 }).TbwConsumedPercent);
+        var fresh = new EnduranceAlertThreshold();
+        Assert.True(fresh.EnableTbwConsumed);
+        Assert.Equal(80, fresh.TbwConsumedPercent);
+
+        var explicitChoice = JsonSerializer.Deserialize<EnduranceAlertThreshold>(
+            """{ "enableRemainingPercent": true, "remainingPercent": 10, "enableTbwConsumed": false, "tbwConsumedPercent": 120 }""",
+            AppConfig.SerializerOptions)!;
+        Assert.False(explicitChoice.EnableTbwConsumed);
+        Assert.Equal(120, explicitChoice.TbwConsumedPercent);
+
+        string roundTrip = JsonSerializer.Serialize(AppConfig.CloneEnduranceAlert(cfg.DefaultEnduranceAlert), AppConfig.SerializerOptions);
+        Assert.Contains("\"tbwConsumedPercent\": 90", roundTrip);
     }
+
+    [Theory]
+    [InlineData(double.NaN, 80)]
+    [InlineData(0, 1)]
+    [InlineData(0.25, 1)]
+    [InlineData(-5, 1)]
+    [InlineData(150, 150)]
+    [InlineData(5000, 1000)]
+    public void EnduranceAlert_TbwConsumedPercent_IsSanitizedToEditorRange(double stored, double expected)
+        => Assert.Equal(expected, AppConfig.CloneEnduranceAlert(new EnduranceAlertThreshold { TbwConsumedPercent = stored }).TbwConsumedPercent);
 
     [Fact]
     public void HasConfiguredTbw_RequiresPositivePerDiskRating()

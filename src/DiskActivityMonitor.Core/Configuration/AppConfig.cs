@@ -17,8 +17,22 @@ public sealed class EnduranceAlertThreshold
     public EnduranceAlertTimeUnit RemainingLifeUnit { get; set; } = EnduranceAlertTimeUnit.Years;
     public bool EnableRemainingPercent { get; set; } = true;
     public double RemainingPercent { get; set; } = 20;
-    public bool EnableTbwConsumed { get; set; } = true;
-    public double TbwConsumedPercent { get; set; } = 80;
+
+    private bool? _enableTbwConsumed;
+    private double? _tbwConsumedPercent;
+
+    // Profiles saved before 1.4.18 applied RemainingPercent to TBW consumption; inherit that choice.
+    public bool EnableTbwConsumed
+    {
+        get => _enableTbwConsumed ?? EnableRemainingPercent;
+        set => _enableTbwConsumed = value;
+    }
+
+    public double TbwConsumedPercent
+    {
+        get => _tbwConsumedPercent ?? 100 - RemainingPercent;
+        set => _tbwConsumedPercent = value;
+    }
 
     [JsonIgnore]
     public double RemainingLifeDays => RemainingLifeUnit switch
@@ -208,13 +222,14 @@ public sealed class AppConfig
                 ? Math.Clamp(source.RemainingPercent, 0, 100)
                 : 20,
             EnableTbwConsumed = source.EnableTbwConsumed,
-            TbwConsumedPercent = double.IsFinite(source.TbwConsumedPercent) && source.TbwConsumedPercent > 0
-                ? Math.Min(source.TbwConsumedPercent, MaxTbwConsumedPercent)
+            TbwConsumedPercent = double.IsFinite(source.TbwConsumedPercent)
+                ? Math.Clamp(source.TbwConsumedPercent, MinTbwConsumedPercent, MaxTbwConsumedPercent)
                 : 80,
         };
     }
 
-    /// <summary>Upper bound accepted for the TBW-consumption alert percentage.</summary>
+    /// <summary>Accepted range for the TBW-consumption alert percentage.</summary>
+    public const double MinTbwConsumedPercent = 1;
     public const double MaxTbwConsumedPercent = 1000;
 
     /// <summary>True when the user configured this disk's TBW rating, rather than relying on the assumed default.</summary>

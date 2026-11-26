@@ -194,6 +194,7 @@ public class AlertEngineTests : IDisposable
         Assert.Equal(AlertSeverity.Warning, alert.Severity);
         Assert.Contains("Projected remaining life", alert.Message);
         Assert.Contains("to", alert.Message);
+        Assert.Contains("Writes made before monitoring began are unknown", alert.Message);
     }
 
     [Fact]
@@ -426,7 +427,43 @@ public class AlertEngineTests : IDisposable
         Assert.Contains("Lifetime writes of 250 TB are 83.33% of this drive's configured 300 TBW rating", alert.Message);
         Assert.Contains("the warning threshold is 80% of the rating", alert.Message);
         Assert.Contains("SMART data reports 10% of its endurance used.", alert.Message);
+        Assert.Contains("Drives often keep working past their rated TBW", alert.Message);
+        Assert.DoesNotContain("plan drive replacement", alert.Message);
+    }
+
+    [Fact]
+    public void Evaluate_SmartWearAboveOneHundred_WarnsWithZeroRemaining()
+    {
+        // NVMe Percentage Used keeps counting past 100% once rated endurance is exceeded.
+        var disk = MakeSsd(wearPercent: 115, lifetimeWritten: 900_000_000_000_000);
+
+        var alerts = _engine.Evaluate([disk], EnduranceOnlyConfig(), DateTime.UtcNow);
+
+        var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "endurance-health:0");
+        Assert.Contains("SMART data reports 115% of its endurance used (0% remaining)", alert.Message);
         Assert.Contains("plan drive replacement", alert.Message);
+        Assert.Equal(0, alert.Value);
+    }
+
+    [Theory]
+    [InlineData(100_000_000_000, AlertSeverity.Warning, 100_000_000_000)]
+    [InlineData(99_999_999_999, null, 0)]
+    [InlineData(250_000_000_000, AlertSeverity.Critical, 250_000_000_000)]
+    [InlineData(249_999_999_999, AlertSeverity.Warning, 100_000_000_000)]
+    public void Evaluate_DailyWriteThresholds_UseDecimalGigabytes(long dayWrite, AlertSeverity? expectedSeverity, double expectedThreshold)
+    {
+        var cfg = new AppConfig { SsdWarnGbPerHour = 0, SsdWarnGbPerDay = 100, SsdCriticalGbPerDay = 250 };
+        var now = new DateTime(2025, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+        _repo.AddDiskSamples([
+            new DiskSample { TimestampUtc = now.AddHours(-3), DiskId = "0", WriteBytes = dayWrite },
+        ]);
+
+        var alerts = _engine.Evaluate([MakeSsd()], cfg, now);
+
+        var alert = alerts.SingleOrDefault(a => a.RuleKey == "ssd-24h:0");
+        Assert.Equal(expectedSeverity, alert?.Severity);
+        if (alert is not null)
+            Assert.Equal(expectedThreshold, alert.Threshold);
     }
 
     [Fact]
@@ -488,6 +525,8 @@ public class AlertEngineTests : IDisposable
         var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "endurance-health:0");
         Assert.Contains("until this drive's configured 150 TBW rating is reached", alert.Message);
         Assert.Contains("SMART data reports 5% of its endurance used.", alert.Message);
+        Assert.DoesNotContain("Writes made before monitoring began", alert.Message);
+        Assert.Contains("Drives often keep working past their rated TBW", alert.Message);
     }
 
     [Fact]

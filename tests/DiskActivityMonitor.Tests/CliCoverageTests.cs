@@ -79,6 +79,54 @@ public sealed class CliCoverageTests : IDisposable
     }
 
     [Fact]
+    public void Endurance_LabelsAssumedTbwAndNeverPresentsEstimatesAsSmartWear()
+    {
+        var repo = new MonitorRepository(_db);
+        repo.EnsureSchema();
+        var now = DateTime.UtcNow;
+        var end = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
+        repo.UpsertDisks([
+            new DiskInfo
+            {
+                DiskId = "0", InstanceName = "0 C:", FriendlyName = "Lifetime SSD", Volumes = "C:",
+                MediaType = DiskMediaType.Ssd, LifetimeBytesWritten = 252_210_000_000_000,
+            },
+            new DiskInfo
+            {
+                DiskId = "1", InstanceName = "1 D:", FriendlyName = "Observed SSD", Volumes = "D:",
+                MediaType = DiskMediaType.Ssd,
+            },
+        ]);
+        repo.AddDiskSamples([
+            new DiskSample { TimestampUtc = end.AddDays(-8), DiskId = "1", WriteBytes = 1 },
+            new DiskSample { TimestampUtc = end.AddMinutes(-1), DiskId = "1", WriteBytes = 7_000_000_000_000 },
+        ]);
+        for (int minute = 7 * 24 * 60; minute >= 1; minute--)
+            repo.AddCollectorHeartbeat(end.AddMinutes(-minute));
+
+        CliRunner.RepositoryFactory = () => new MonitorRepository(_db);
+        CliRunner.ConfigFactory = () => new AppConfig { HighCoveragePercent = 90 };
+        var output = new StringWriter();
+        TextWriter original = Console.Out;
+        try
+        {
+            Console.SetOut(output);
+            Assert.Equal(0, CliRunner.Run(["endurance", "--all"]));
+        }
+        finally
+        {
+            Console.SetOut(original);
+        }
+
+        string text = output.ToString();
+        Assert.DoesNotContain("estimated from lifetime", text);
+        Assert.Equal(2, text.Split("SMART wear        : not reported by this drive").Length - 1);
+        Assert.Contains("252.21 TB written  (42.035% to 168.14% of assumed TBW)", text);
+        Assert.Contains("of assumed TBW since", text);
+        Assert.Contains("(excludes writes before monitoring began; may be optimistic)", text);
+    }
+
+    [Fact]
     public void StatusAlertsAndOneWatchIteration_RenderStandardTimes()
     {
         var repo = new MonitorRepository(_db);

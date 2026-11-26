@@ -146,7 +146,7 @@ public static class SmartLifetimeReader
         return new SmartLifetime(
             SaturatingBytes(unitsWritten),
             SaturatingBytes(unitsRead),
-            used <= 100 ? used : null,
+            used,
             temperature,
             spare <= 100 ? spare : null,
             log[0],

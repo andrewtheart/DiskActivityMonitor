@@ -46,14 +46,16 @@ public class SmartLifetimeReaderTests
     }
 
     [Theory]
-    [InlineData(0, 0)]
-    [InlineData(100, 100)]
-    [InlineData(101, null)]
-    public void ParseNvmeHealthLog_PercentBoundaries(byte value, int? expected)
+    [InlineData(0, 0, 0)]
+    [InlineData(100, 100, 100)]
+    [InlineData(101, 101, null)]
+    [InlineData(255, 255, null)]
+    public void ParseNvmeHealthLog_PercentBoundaries(byte value, int expectedUsed, int? expectedSpare)
     {
+        // NVMe Percentage Used may exceed 100 once rated endurance is passed; spare cannot.
         var parsed = SmartLifetimeReader.ParseNvmeHealthLog(Log(used: value, spare: value))!.Value;
-        Assert.Equal(expected, parsed.PercentUsed);
-        Assert.Equal(expected, parsed.AvailableSparePercent);
+        Assert.Equal(expectedUsed, parsed.PercentUsed);
+        Assert.Equal(expectedSpare, parsed.AvailableSparePercent);
     }
 
     [Fact]

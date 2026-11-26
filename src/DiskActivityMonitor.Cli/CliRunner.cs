@@ -345,23 +345,21 @@ internal static class CliRunner
             long consumed = disk.LifetimeBytesWritten ?? writtenObserved;
 
             Console.WriteLine($"  {(estimatedTbw ? "TBW estimate" : "TBW rating"),-18}: {tbwLabel}");
-            string usedPct = ranged ? $"~{consumed / tbwHighBytes * 100:0.#}% to {consumed / tbwLowBytes * 100:0.#}%" : $"~{consumed / tbwLowBytes * 100:0.#}%";
+            string tbwName = estimatedTbw ? "assumed TBW" : "TBW";
             string wearText = disk.WearPercent is int w
                 ? $"{w}% used"
-                : disk.LifetimeBytesWritten is not null && tbwLowBytes > 0
-                    ? $"{usedPct} used (estimated from lifetime / TBW)"
-                    : "not reported by this drive (or collector not elevated)";
+                : "not reported by this drive (or collector not elevated)";
             Console.WriteLine($"  SMART wear        : {wearText}");
             if (disk.LifetimeBytesWritten is long lifeW)
             {
                 string pctText = ranged ? $"{lifeW / tbwHighBytes * 100:0.###}% to {lifeW / tbwLowBytes * 100:0.###}%" : $"{lifeW / tbwLowBytes * 100:0.###}%";
                 string readPart = disk.LifetimeBytesRead is long lifeR ? $", {ByteFormat.Humanize(lifeR)} read" : "";
-                Console.WriteLine($"  Lifetime (drive)  : {ByteFormat.Humanize(lifeW)} written{readPart}  ({pctText} of {(estimatedTbw ? "assumed " : "")}TBW)");
+                Console.WriteLine($"  Lifetime (drive)  : {ByteFormat.Humanize(lifeW)} written{readPart}  ({pctText} of {tbwName})");
             }
             string trackedPct = ranged
                 ? $"{writtenObserved / tbwHighBytes * 100:0.###}% to {writtenObserved / tbwLowBytes * 100:0.###}%"
                 : $"{writtenObserved / tbwLowBytes * 100:0.###}%";
-            Console.WriteLine($"  Written (tracked) : {ByteFormat.Humanize(writtenObserved)}  ({trackedPct} of TBW since {(earliest is null ? "n/a" : LocalTimeDisplay.FormatUtcWithZone(earliest.Value, "d"))})");
+            Console.WriteLine($"  Written (tracked) : {ByteFormat.Humanize(writtenObserved)}  ({trackedPct} of {tbwName} since {(earliest is null ? "n/a" : LocalTimeDisplay.FormatUtcWithZone(earliest.Value, "d"))})");
 
             if (earliest is not null)
             {
@@ -371,15 +369,15 @@ internal static class CliRunner
                     cfg.HighCoveragePercent,
                     cfg.EnduranceCoverageWindowDays);
                 double avgPerDay = recentRate.MonitoredBytesPerHour * 24.0;
-                double yearsLow = avgPerDay > 0 ? Math.Max(tbwLowBytes - (disk.LifetimeBytesWritten ?? 0), tbwLowBytes * 0.001) / (avgPerDay * 365.0) : double.PositiveInfinity;
-                double yearsHigh = avgPerDay > 0 ? Math.Max(tbwHighBytes - (disk.LifetimeBytesWritten ?? 0), tbwHighBytes * 0.001) / (avgPerDay * 365.0) : double.PositiveInfinity;
+                double yearsLow = avgPerDay > 0 ? Math.Max(tbwLowBytes - consumed, tbwLowBytes * 0.001) / (avgPerDay * 365.0) : double.PositiveInfinity;
+                double yearsHigh = avgPerDay > 0 ? Math.Max(tbwHighBytes - consumed, tbwHighBytes * 0.001) / (avgPerDay * 365.0) : double.PositiveInfinity;
                 string projText = ranged ? $"{FormatYears(yearsLow)} to {FormatYears(yearsHigh)}" : FormatYears(yearsLow);
                 Console.WriteLine($"  Monitored average : {ByteFormat.Humanize(avgPerDay)}/day");
                 Console.WriteLine($"  Coverage ({cfg.EnduranceCoverageWindowDays}d) : {recentRate.CoveragePercent:0.#}% ({recentRate.MonitoredMinutes:N0}/{recentRate.RequestedMinutes:N0} min)");
                 if (recentRate.HasHighCoverage)
                 {
                     Console.WriteLine($"  Calendar average  : {ByteFormat.Humanize(recentRate.CalendarBytesPerHour * 24.0)}/day");
-                    Console.WriteLine($"  Projected to TBW  : ~{projText} at the monitored rate");
+                    Console.WriteLine($"  Projected to TBW  : ~{projText} at the monitored rate{(disk.LifetimeBytesWritten is null ? " (excludes writes before monitoring began; may be optimistic)" : "")}");
                 }
                 else
                 {
