@@ -59,6 +59,18 @@ public class SmartLifetimeReaderTests
         Assert.Equal(27, parsed.Value.TemperatureC);
     }
 
+    [Fact]
+    public void ParseNvmeHealthLog_PageWithOnlyMediaErrors_IsNotTreatedAsEmpty()
+    {
+        var log = new byte[512];
+        BinaryPrimitives.WriteUInt64LittleEndian(log.AsSpan(160, 8), 1);
+
+        var parsed = SmartLifetimeReader.ParseNvmeHealthLog(log);
+
+        Assert.NotNull(parsed);
+        Assert.Equal(1, parsed.Value.MediaErrors);
+    }
+
     [Theory]
     [InlineData(0, 0, 0)]
     [InlineData(100, 100, 100)]

@@ -296,16 +296,19 @@ percentages, the projection is shown as a range between `w%` and `w+1%` used, an
 compared with the threshold.
 
 Every notification names the measurement that triggered it, says whether a TBW rating is
-configured or assumed, and includes the drive's SMART wear when it is reported. Only SMART wear,
+configured or assumed, and includes the drive's SMART wear when it is reported, placed right after
+the first reason so it survives when Windows shortens a long notification. Only SMART wear,
 the drive's own measurement of its wear, leads to the advice to plan a replacement. A configured
 TBW rating is a write budget rather than an end-of-life point, so TBW-based notifications advise
 backing up and watching SMART health instead. When the only evidence is an assumed TBW rating, the
 notification suggests setting the drive's rated TBW (or using **Look up rated TBW**).
 
 When lifetime writes have already passed a TBW target, the notification and dashboard say so
-("Reached") instead of predicting a remaining time, and with a rating range they report the time
-to the upper bound once the lower bound is passed. Reaching a TBW rating is not end of life; check
-SMART wear for the drive's own measurement.
+("Reached", or "Lower bound reached" for a range) instead of predicting a remaining time. A
+crossing is a known fact, so it is reported even before there is enough monitoring coverage for a
+write-rate projection; likewise a drive whose SMART wear is already at or above 100% triggers the
+projected-time condition without needing a lifetime-write counter. Reaching a TBW rating is not
+end of life; check SMART wear for the drive's own measurement.
 
 The time value accepts **days**, **months**, or **years**. Select **All disks** before
 opening Settings to edit the default profile. Select one disk and enable **Override defaults for

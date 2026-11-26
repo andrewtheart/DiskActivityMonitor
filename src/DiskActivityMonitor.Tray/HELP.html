@@ -944,17 +944,21 @@ range between <code>w%</code> and <code>w+1%</code> used, and the
 shorter end is compared with the threshold.</p>
 <p>Every notification names the measurement that triggered it, says
 whether a TBW rating is configured or assumed, and includes the drive’s
-SMART wear when it is reported. Only SMART wear, the drive’s own
-measurement of its wear, leads to the advice to plan a replacement. A
-configured TBW rating is a write budget rather than an end-of-life
-point, so TBW-based notifications advise backing up and watching SMART
-health instead. When the only evidence is an assumed TBW rating, the
-notification suggests setting the drive’s rated TBW (or using
-<strong>Look up rated TBW</strong>).</p>
+SMART wear when it is reported, placed right after the first reason so
+it survives when Windows shortens a long notification. Only SMART wear,
+the drive’s own measurement of its wear, leads to the advice to plan a
+replacement. A configured TBW rating is a write budget rather than an
+end-of-life point, so TBW-based notifications advise backing up and
+watching SMART health instead. When the only evidence is an assumed TBW
+rating, the notification suggests setting the drive’s rated TBW (or
+using <strong>Look up rated TBW</strong>).</p>
 <p>When lifetime writes have already passed a TBW target, the
-notification and dashboard say so (“Reached”) instead of predicting a
-remaining time, and with a rating range they report the time to the
-upper bound once the lower bound is passed. Reaching a TBW rating is not
+notification and dashboard say so (“Reached”, or “Lower bound reached”
+for a range) instead of predicting a remaining time. A crossing is a
+known fact, so it is reported even before there is enough monitoring
+coverage for a write-rate projection; likewise a drive whose SMART wear
+is already at or above 100% triggers the projected-time condition
+without needing a lifetime-write counter. Reaching a TBW rating is not
 end of life; check SMART wear for the drive’s own measurement.</p>
 <p>The time value accepts <strong>days</strong>,
 <strong>months</strong>, or <strong>years</strong>. Select <strong>All

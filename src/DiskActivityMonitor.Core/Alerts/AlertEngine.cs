@@ -309,55 +309,77 @@ public sealed class AlertEngine
         }
 
         DateTime? earliest = _repo.GetEarliestSample(disk.DiskId);
-        if (threshold.EnableProjectedLife
-            && earliest is DateTime first
-            && nowUtc - first >= TimeSpan.FromHours(24))
+        if (threshold.EnableProjectedLife && tbwLowBytes > 0)
         {
-            MonitoringRateStats recentRate = _repo.GetRecentDiskWriteRate(
-                disk.DiskId,
-                nowUtc,
-                highCoveragePercent,
-                config.EnduranceCoverageWindowDays);
-            double avgPerDay = recentRate.MonitoredBytesPerHour * 24.0;
-            if (recentRate.HasHighCoverage && avgPerDay > 0)
+            // A limit that has already been passed is known without a write rate or coverage.
+            bool smartProjection = !ratingConfigured && smartWear is > 0 && (lifetimeWritten is not null || smartWear >= 100);
+            double? consumed = smartProjection
+                ? null
+                : lifetimeWritten ?? (earliest is DateTime since ? _repo.GetDiskTotals(disk.DiskId, since, nowUtc).Write : null);
+            bool limitReached = smartProjection ? smartWear >= 100 : consumed >= tbwHighBytes;
+            bool lowerBoundReached = !smartProjection && consumed >= tbwLowBytes;
+
+            double avgPerDay = 0;
+            if (earliest is DateTime first && nowUtc - first >= TimeSpan.FromHours(24))
             {
+                MonitoringRateStats recentRate = _repo.GetRecentDiskWriteRate(
+                    disk.DiskId,
+                    nowUtc,
+                    highCoveragePercent,
+                    config.EnduranceCoverageWindowDays);
+                if (recentRate.HasHighCoverage)
+                    avgPerDay = recentRate.MonitoredBytesPerHour * 24.0;
+            }
+
+            if (limitReached || lowerBoundReached || avgPerDay > 0)
+            {
+                string rate = ByteFormat.Humanize(avgPerDay);
                 double daysLow;
                 double daysHigh;
-                string rate = ByteFormat.Humanize(avgPerDay);
-                Func<string, string> describe;
-                bool smartProjection = !ratingConfigured && smartWear is > 0 && lifetimeWritten is not null;
+                string description;
                 if (smartProjection)
                 {
-                    // Whole-percent SMART wear means the true value lies between w and w+1.
                     int w = smartWear!.Value;
-                    double lifetime = lifetimeWritten!.Value;
-                    daysLow = Math.Max(0, lifetime * (100.0 / (w + 1) - 1)) / avgPerDay;
-                    daysHigh = Math.Max(0, lifetime * (100.0 / w - 1)) / avgPerDay;
-                    describe = span => daysHigh <= 0
-                        ? $"The drive's SMART wear has already reached {w}%."
-                        : $"At {rate}/day, the drive's SMART wear reaches 100% in {span}, extrapolated from {w}% used after {ByteFormat.Humanize(lifetime)} written.";
+                    if (limitReached)
+                    {
+                        daysLow = daysHigh = 0;
+                        description = $"The drive's SMART wear has already reached {w}%.";
+                    }
+                    else
+                    {
+                        // Whole-percent SMART wear means the true value lies between w and w+1.
+                        double lifetime = lifetimeWritten!.Value;
+                        daysLow = Math.Max(0, lifetime * (100.0 / (w + 1) - 1)) / avgPerDay;
+                        daysHigh = Math.Max(0, lifetime * (100.0 / w - 1)) / avgPerDay;
+                        description = $"At {rate}/day, the drive's SMART wear reaches 100% in {FormatSpan(daysLow, daysHigh)}, extrapolated from {w}% used after {ByteFormat.Humanize(lifetime)} written.";
+                    }
+                }
+                else if (limitReached)
+                {
+                    daysLow = daysHigh = 0;
+                    description = $"Lifetime writes have already passed {ratingText}.";
+                }
+                else if (lowerBoundReached)
+                {
+                    daysLow = 0;
+                    daysHigh = avgPerDay > 0 ? (tbwHighBytes - consumed!.Value) / avgPerDay : double.NaN;
+                    description = avgPerDay > 0
+                        ? $"Lifetime writes have passed the lower bound of {ratingText}; at {rate}/day the upper bound is reached in {FormatRemainingTime(daysHigh)}."
+                        : $"Lifetime writes have passed the lower bound of {ratingText}; the time to its upper bound needs more monitoring coverage.";
                 }
                 else
                 {
-                    double consumed = lifetimeWritten
-                        ?? _repo.GetDiskTotals(disk.DiskId, first, nowUtc).Write;
-                    daysLow = Math.Max(0, tbwLowBytes - consumed) / avgPerDay;
-                    daysHigh = Math.Max(0, tbwHighBytes - consumed) / avgPerDay;
-                    describe = span => daysHigh <= 0
-                        ? $"Lifetime writes have already passed {ratingText}."
-                        : daysLow <= 0
-                            ? $"Lifetime writes have passed the lower bound of {ratingText}; at {rate}/day the upper bound is reached in {FormatRemainingTime(daysHigh)}."
-                            : $"At {rate}/day, {ratingText} is reached in {span}.";
+                    double used = consumed ?? 0;
+                    daysLow = (tbwLowBytes - used) / avgPerDay;
+                    daysHigh = (tbwHighBytes - used) / avgPerDay;
+                    description = $"At {rate}/day, {ratingText} is reached in {FormatSpan(daysLow, daysHigh)}.";
                 }
 
                 if (daysLow <= threshold.RemainingLifeDays)
                 {
-                    string span = FormatRemainingTime(daysLow);
-                    string upper = FormatRemainingTime(daysHigh);
-                    if (upper != span)
-                        span += $" to {upper}";
-                    reasons.Add($"{describe(span)} The projected-time warning threshold is {FormatRemainingTime(threshold.RemainingLifeDays)}."
-                        + (lifetimeWritten is null && daysHigh > 0
+                    bool upperPending = !limitReached && avgPerDay > 0;
+                    reasons.Add($"{description} The projected-time warning threshold is {FormatRemainingTime(threshold.RemainingLifeDays)}."
+                        + (lifetimeWritten is null && upperPending
                             ? " Writes made before monitoring began are unknown, so the actual time may be shorter."
                             : ""));
                     alertValue = daysLow;
@@ -373,7 +395,7 @@ public sealed class AlertEngine
             return;
 
         if (smartWear is int reported && !smartMentioned)
-            reasons.Add($"The drive's SMART data reports {reported}% of its endurance used.");
+            reasons.Insert(1, $"The drive's SMART data reports {reported}% of its endurance used.");
         reasons.Add(smartEvidence
             ? "Back up important data and plan drive replacement."
             : configuredRatingEvidence
@@ -399,5 +421,12 @@ public sealed class AlertEngine
         if (days < 60) return $"{days:0} days";
         if (days < 730) return $"{days / (365.25 / 12.0):0.#} months";
         return $"{days / 365.25:0.#} years";
+    }
+
+    private static string FormatSpan(double daysLow, double daysHigh)
+    {
+        string low = FormatRemainingTime(daysLow);
+        string high = FormatRemainingTime(daysHigh);
+        return high == low ? low : $"{low} to {high}";
     }
 }

@@ -1007,22 +1007,33 @@ public partial class MainWindow : Window
         // Years to reach TBW at the recent rate: a higher rating yields more years.
         double yearsLow = canProject ? Math.Max(0, tbwLowBytes - consumedBytes) / (avgPerDay * 365.0) : double.NaN;
         double yearsHigh = canProject ? Math.Max(0, tbwHighBytes - consumedBytes) / (avgPerDay * 365.0) : double.NaN;
-        bool tbwReached = consumedBytes >= tbwHighBytes;
-        bool lowerTbwReached = consumedBytes >= tbwLowBytes;
+        bool tbwReached = tbwHighBytes > 0 && consumedBytes >= tbwHighBytes;
+        bool lowerTbwReached = tbwLowBytes > 0 && consumedBytes >= tbwLowBytes;
+        string rateText = ByteFormat.Humanize(avgPerDay);
+        string recordedOnlyNote = lifeWritten is null ? "; writes before monitoring began are unknown, so this may be optimistic" : "";
         string yearsText;
         if (double.IsNaN(yearsLow)) yearsText = "-";
-        else if (tbwReached) yearsText = "Reached";
         else if (!ranged) yearsText = $"{FormatYearsShort(yearsLow)} yrs";
         else if (yearsLow >= 100 && yearsHigh >= 100) yearsText = "100+ yrs";
         else yearsText = $"{FormatYearsShort(yearsLow)} to {FormatYearsShort(yearsHigh)} yrs";
 
-        // Summary card (glanceable projection).
-        if (avgPerDay > 0 && !double.IsNaN(yearsLow))
+        // A crossing already behind the drive is known without a write rate or coverage.
+        if (tbwReached)
+        {
+            WearMetric.Text = "Reached";
+            WearSub.Text = $"lifetime writes already exceed {tbwBasisLabel}";
+        }
+        else if (canProject)
         {
             WearMetric.Text = yearsText;
-            WearSub.Text = tbwReached
-                ? $"lifetime writes already exceed {tbwBasisLabel}"
-                : $"to {tbwBasisLabel} at {ByteFormat.Humanize(avgPerDay)}/day";
+            WearSub.Text = (lowerTbwReached
+                ? $"past the {tbwLow:0.#} TBW lower bound; to {tbwHigh:0.#} TBW at {rateText}/day"
+                : $"to {tbwBasisLabel} at {rateText}/day") + recordedOnlyNote;
+        }
+        else if (lowerTbwReached)
+        {
+            WearMetric.Text = "Lower bound reached";
+            WearSub.Text = $"past the {tbwLow:0.#} TBW lower bound; the time to {tbwHigh:0.#} TBW needs more monitoring coverage";
         }
         else
         {
@@ -1086,17 +1097,25 @@ public partial class MainWindow : Window
         }
 
         // Headline 2: projected time to the TBW rating at the recent average write rate.
-        if (avgPerDay > 0 && !double.IsNaN(yearsLow))
+        if (tbwReached)
+        {
+            EnduranceProjValue.Text = "Reached";
+            EnduranceProjSub.Text = $"lifetime writes already exceed {tbwBasisLabel}; a TBW rating is a write budget, so check SMART wear for remaining life";
+        }
+        else if (canProject)
         {
             EnduranceProjValue.Text = yearsText;
-            EnduranceProjSub.Text = (tbwReached
-                ? $"lifetime writes already exceed {tbwBasisLabel}; a TBW rating is a write budget, so check SMART wear for remaining life"
-                : lowerTbwReached
-                    ? $"past the {tbwLow:0.#} TBW lower bound; reaches {tbwHigh:0.#} TBW at {ByteFormat.Humanize(avgPerDay)}/day"
+            EnduranceProjSub.Text = (lowerTbwReached
+                    ? $"past the {tbwLow:0.#} TBW lower bound; reaches {tbwHigh:0.#} TBW at {rateText}/day"
                     : ranged
-                        ? $"reaches {tbwBasisLabel} at {ByteFormat.Humanize(avgPerDay)}/day"
-                        : $"reaches {tbwLabel} about {DateTime.Now.AddDays(Math.Min(yearsLow, 5000) * 365.0):MMM yyyy}, at {ByteFormat.Humanize(avgPerDay)}/day")
-                + (lifeWritten is null && !tbwReached ? "; writes before monitoring began are unknown, so this may be optimistic" : "");
+                        ? $"reaches {tbwBasisLabel} at {rateText}/day"
+                        : $"reaches {tbwLabel} about {DateTime.Now.AddDays(Math.Min(yearsLow, 5000) * 365.0):MMM yyyy}, at {rateText}/day")
+                + recordedOnlyNote;
+        }
+        else if (lowerTbwReached)
+        {
+            EnduranceProjValue.Text = "Lower bound reached";
+            EnduranceProjSub.Text = $"past the {tbwLow:0.#} TBW lower bound; the time to {tbwHigh:0.#} TBW needs more monitoring coverage";
         }
         else
         {

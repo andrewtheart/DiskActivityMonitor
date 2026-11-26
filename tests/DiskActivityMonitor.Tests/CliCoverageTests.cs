@@ -101,6 +101,11 @@ public sealed class CliCoverageTests : IDisposable
                 DiskId = "2", InstanceName = "2 E:", FriendlyName = "Exhausted SSD", Volumes = "E:",
                 MediaType = DiskMediaType.Ssd,
             },
+            new DiskInfo
+            {
+                DiskId = "3", InstanceName = "3 F:", FriendlyName = "New install SSD", Volumes = "F:",
+                MediaType = DiskMediaType.Ssd, LifetimeBytesWritten = 6_000_000_000_000,
+            },
         ]);
         repo.AddDiskSamples([
             new DiskSample { TimestampUtc = end.AddDays(-8), DiskId = "1", WriteBytes = 1 },
@@ -112,7 +117,7 @@ public sealed class CliCoverageTests : IDisposable
             repo.AddCollectorHeartbeat(end.AddMinutes(-minute));
 
         CliRunner.RepositoryFactory = () => new MonitorRepository(_db);
-        CliRunner.ConfigFactory = () => new AppConfig { HighCoveragePercent = 90, DiskTbwRatings = new() { ["2"] = 5 } };
+        CliRunner.ConfigFactory = () => new AppConfig { HighCoveragePercent = 90, DiskTbwRatings = new() { ["2"] = 5, ["3"] = 5 } };
         var output = new StringWriter();
         TextWriter original = Console.Out;
         try
@@ -127,11 +132,13 @@ public sealed class CliCoverageTests : IDisposable
 
         string text = output.ToString();
         Assert.DoesNotContain("estimated from lifetime", text);
-        Assert.Equal(3, text.Split("SMART wear        : not reported by this drive").Length - 1);
+        Assert.Equal(4, text.Split("SMART wear        : not reported by this drive").Length - 1);
         Assert.Contains("252.21 TB written  (42.035% to 168.14% of assumed TBW)", text);
         Assert.Contains("of assumed TBW since", text);
         Assert.Contains("at the monitored rate (excludes writes before monitoring began; may be optimistic)", text);
         Assert.Contains("Projected to TBW  : already reached" + Environment.NewLine, text);
+        // Disk 2 (history) and disk 3 (lifetime counter, no history) both report the known crossing.
+        Assert.Equal(2, text.Split("Projected to TBW  : already reached").Length - 1);
     }
 
     [Fact]

@@ -141,8 +141,8 @@ public static class SmartLifetimeReader
         int? temperature = kelvin is > 200 and < 500 ? kelvin - 273 : null;
         int used = log[5];
         int spare = log[3];
-        // A zero-filled page is unpopulated; zero I/O counters alone must not discard health fields.
-        if (unitsRead == 0 && unitsWritten == 0 && used == 0 && spare == 0 && temperature is null && log[0] == 0)
+        // Only a page with no populated byte is empty; zero I/O counters alone must not discard health fields.
+        if (log.IndexOfAnyExcept((byte)0) < 0)
             return null;
 
         return new SmartLifetime(

@@ -214,9 +214,10 @@ public class AlertEngineTests : IDisposable
             },
         };
         var now = new DateTime(2025, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+        // Recorded writes stay below the 150 TBW lower bound, so only a rate-based projection could fire.
         _repo.AddDiskSamples([
-            new DiskSample { TimestampUtc = now.AddDays(-8), DiskId = "0", WriteBytes = 100_000_000_000_000 },
-            new DiskSample { TimestampUtc = now.AddMinutes(-1), DiskId = "0", WriteBytes = 100_000_000_000_000 },
+            new DiskSample { TimestampUtc = now.AddDays(-8), DiskId = "0", WriteBytes = 10_000_000_000_000 },
+            new DiskSample { TimestampUtc = now.AddMinutes(-1), DiskId = "0", WriteBytes = 10_000_000_000_000 },
         ]);
 
         var alerts = _engine.Evaluate([MakeSsd()], cfg, now, highCoveragePercent: 90);
@@ -479,6 +480,7 @@ public class AlertEngineTests : IDisposable
         Assert.Contains("are 33.33% to 133.33% of the assumed 150 to 600 TBW default rating", alert.Message);
         Assert.Contains("of the rating's lower bound", alert.Message);
         Assert.Contains("only an estimate", alert.Message);
+        Assert.Contains("Lifetime writes have passed the lower bound of the assumed 150 to 600 TBW default rating; the time to its upper bound needs more monitoring coverage.", alert.Message);
         Assert.Contains("Look up rated TBW", alert.Message);
         Assert.DoesNotContain("plan drive replacement", alert.Message);
     }
@@ -488,6 +490,7 @@ public class AlertEngineTests : IDisposable
     {
         var cfg = EnduranceOnlyConfig();
         cfg.DefaultEnduranceAlert.EnableTbwConsumed = false;
+        cfg.DefaultEnduranceAlert.EnableProjectedLife = false;
         var disk = MakeSsd(wearPercent: null, lifetimeWritten: 200_000_000_000_000);
 
         var alerts = _engine.Evaluate([disk], cfg, DateTime.UtcNow);
@@ -548,6 +551,52 @@ public class AlertEngineTests : IDisposable
         Assert.Contains("SMART data reports 37% of its endurance used.", alert.Message);
         Assert.DoesNotContain("plan drive replacement", alert.Message);
         Assert.Equal(0, alert.Value);
+    }
+
+    [Fact]
+    public void Evaluate_SmartLimitReachedWithoutLifetimeCounter_ProjectionOnlyStillWarns()
+    {
+        var cfg = EnduranceOnlyConfig();
+        cfg.DefaultEnduranceAlert.EnableRemainingPercent = false;
+        cfg.DefaultEnduranceAlert.EnableTbwConsumed = false;
+        var disk = MakeSsd(wearPercent: 105, lifetimeWritten: null);
+
+        var alerts = _engine.Evaluate([disk], cfg, DateTime.UtcNow);
+
+        var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "endurance-health:0");
+        Assert.StartsWith("The drive's SMART wear has already reached 105%.", alert.Message);
+        Assert.Contains("plan drive replacement", alert.Message);
+    }
+
+    [Fact]
+    public void Evaluate_ConfiguredTbwPassedWithoutHistory_ProjectionWarnsWithoutCoverage()
+    {
+        var cfg = EnduranceOnlyConfig();
+        cfg.DiskTbwRatings["0"] = 300;
+        cfg.DefaultEnduranceAlert.EnableTbwConsumed = false;
+        var disk = MakeSsd(wearPercent: null, lifetimeWritten: 350_000_000_000_000);
+
+        var alerts = _engine.Evaluate([disk], cfg, DateTime.UtcNow);
+
+        var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "endurance-health:0");
+        Assert.StartsWith("Lifetime writes have already passed this drive's configured 300 TBW rating.", alert.Message);
+    }
+
+    [Fact]
+    public void Evaluate_SeveralReasons_PutSmartContextRightAfterTheFirstReason()
+    {
+        // Notification surfaces truncate long bodies, so the drive's own wear must not come last.
+        var cfg = EnduranceOnlyConfig();
+        cfg.DiskTbwRatings["0"] = 300;
+        var disk = MakeSsd(wearPercent: 37, lifetimeWritten: 310_000_000_000_000);
+
+        var alerts = _engine.Evaluate([disk], cfg, DateTime.UtcNow);
+
+        var alert = Assert.Single(alerts, candidate => candidate.RuleKey == "endurance-health:0");
+        int smart = alert.Message.IndexOf("The drive's SMART data reports 37% of its endurance used.", StringComparison.Ordinal);
+        Assert.StartsWith("Lifetime writes of 310 TB are 103.33% of this drive's configured 300 TBW rating", alert.Message);
+        Assert.InRange(smart, 1, 254);
+        Assert.True(smart < alert.Message.IndexOf("Lifetime writes have already passed", StringComparison.Ordinal));
     }
 
     [Fact]

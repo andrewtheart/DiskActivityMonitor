@@ -1328,6 +1328,21 @@ public sealed class MainWindowCoverageTests : IDisposable
                 Invoke(window, "UpdateEndurance", repo.GetDisks().Single(), DateTime.UtcNow);
                 Assert.Contains("lifetime writes are 47.2% of the 150 TBW default estimate", window.SmartWearText.Text);
 
+                // Crossings are known from lifetime writes even while the projection is withheld for coverage.
+                config.Update(settings =>
+                {
+                    settings.DiskTbwRatings["0"] = 50;
+                    settings.DiskTbwRatingsUpper["0"] = 1000;
+                });
+                Invoke(window, "UpdateEndurance", repo.GetDisks().Single(), coverageEnd);
+                Assert.Equal("Lower bound reached", window.EnduranceProjValue.Text);
+                Assert.Equal("Lower bound reached", window.WearMetric.Text);
+                Assert.Contains("needs more monitoring coverage", window.EnduranceProjSub.Text);
+                config.Update(settings => settings.DiskTbwRatingsUpper.Remove("0"));
+                Invoke(window, "UpdateEndurance", repo.GetDisks().Single(), coverageEnd);
+                Assert.Equal("Reached", window.EnduranceProjValue.Text);
+                Assert.Equal("Reached", window.WearMetric.Text);
+
                 Invoke(window, "UpdateEndurance", new DiskInfo
                 {
                     DiskId = "0", InstanceName = "0 C:", MediaType = DiskMediaType.Ssd, WearPercent = 2,
@@ -1932,6 +1947,8 @@ public sealed class MainWindowCoverageTests : IDisposable
                     DiskId = disk.DiskId, InstanceName = disk.InstanceName, MediaType = DiskMediaType.Ssd,
                 }, end);
                 Assert.StartsWith("past the 5 TBW lower bound; reaches 1000 TBW at", window.EnduranceProjSub.Text);
+                Assert.StartsWith("past the 5 TBW lower bound; to 1000 TBW at", window.WearSub.Text);
+                Assert.Contains("may be optimistic", window.WearSub.Text);
                 config.Update(value => value.DiskTbwRatingsUpper.Remove(disk.DiskId));
                 Invoke(window, "UpdateEndurance", new DiskInfo
                 {
