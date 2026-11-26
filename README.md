@@ -82,6 +82,14 @@ warns you when a drive or process crosses a threshold you set.
 
 <p align="center"><em>Full dashboard with per-drive totals, endurance telemetry, live read/write activity, trends, process attribution, active alerts, and suspension state.</em></p>
 
+<h3 align="center">Trace writes to the files responsible</h3>
+
+<p align="center">
+  <img src="assets/process-file-breakdown.png" alt="Per-process file breakdown for the Windows System process showing write share, activity timeline, file types, and individual written files" width="940">
+</p>
+
+<p align="center"><em>Move from a busy process to the evidence behind it: compare its share of system writes, spot bursts over time, identify file types, and inspect or act on individual targets.</em></p>
+
 <h3 align="center">Actionable notifications</h3>
 
 <p align="center">
