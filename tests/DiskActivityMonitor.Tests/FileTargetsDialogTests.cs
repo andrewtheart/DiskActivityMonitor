@@ -804,6 +804,10 @@ public sealed class FileTargetsDialogTests : IDisposable
             var window = new MainWindow(repo, config, new UserSettingsStore(_user));
             try
             {
+                // Construction measures the machine's real database, which may already exceed the threshold.
+                Invoke(window, "DatabaseSizeClose_Click", window, new RoutedEventArgs());
+                SetField<DateTime?>(window, "_lastDatabaseWarnUtc", null);
+
                 var now = new DateTime(2026, 8, 5, 12, 0, 0, DateTimeKind.Utc);
                 window.UtcNowProvider = () => now;
                 window.DatabaseMeasurer = () => new DatabaseSize(100, 20, 5);

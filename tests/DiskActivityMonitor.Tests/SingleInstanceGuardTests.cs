@@ -62,7 +62,12 @@ public sealed class SingleInstanceGuardTests
         releaseOwner.Set();
         owner.Join();
 
-        Assert.True(SingleInstanceGuard.TryAcquire(name, out var guard));
+        // Join can return before the OS thread has exited and Windows has abandoned the mutex.
+        SingleInstanceGuard? guard = null;
+        bool acquired = SpinWait.SpinUntil(
+            () => SingleInstanceGuard.TryAcquire(name, out guard), TimeSpan.FromSeconds(10));
+
+        Assert.True(acquired);
         guard!.Dispose();
         abandonedHandle!.Dispose();
     }
